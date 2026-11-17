@@ -87,6 +87,39 @@ import Testing
         }
     }
 
+    /// An empty or whitespace-only `PIPECAT_TOOLBAR_REPO` is unset: it must not become the working
+    /// directory (`URL(filePath: "")`) nor an override that throws.
+    @Test func anEmptyOrBlankOverrideIsUnset() async throws {
+        for value in ["", "   ", "\t\n"] {
+            #expect(ToolLocator.repositoryOverride(["PIPECAT_TOOLBAR_REPO": value]) == nil)
+        }
+        #expect(ToolLocator.repositoryOverride([:]) == nil)
+        #expect(ToolLocator.repositoryOverride(["PIPECAT_TOOLBAR_REPO": " /x "]) == "/x")
+
+        let (_, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        let root = tts.deletingLastPathComponent()
+        let uv = root.appending(path: "uv")
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: uv)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uv.path)
+        let paths = AppPaths(
+            supportDir: root.appending(path: "support"), cacheDir: root.appending(path: "cache"),
+            logsDir: root.appending(path: "logs"), hubDir: root.appending(path: "hub"),
+            derivedModelsDir: root.appending(path: "derived"))
+        let noTools = try #require(Bundle(path: root.path))
+        for value in ["", "  "] {
+            do {
+                _ = try await ToolLocator.locate(
+                    bundle: noTools, environment: ["PIPECAT_TOOLBAR_UV": uv.path, "PIPECAT_TOOLBAR_REPO": value],
+                    paths: paths)
+            } catch ToolLocatorError.repositoryOverrideNotFound {
+                Issue.record("a blank PIPECAT_TOOLBAR_REPO must behave as unset")
+            } catch {
+                // Any other failure (no wheel, failing uv) is the unset path.
+            }
+        }
+    }
+
     @Test func theRepositoryIsTheFallbackWhenNoToolbarRootIsFound() throws {
         let (_, tts, cleanup) = try Self.tree()
         defer { cleanup() }

@@ -50,7 +50,8 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 - `PIPECAT_TOOLBAR_REPO` pointing at a TTS source checkout no longer drops the hash-pinned STT
   constraints (they come from this repository's `constraints/`).
 - A `PIPECAT_TOOLBAR_REPO` that names neither a TTS server nor a toolbar checkout (a typo) is
-  reported at startup instead of being ignored in favour of the pinned release wheel.
+  reported at startup instead of being ignored in favour of the pinned release wheel (an empty
+  value counts as unset).
 
 ### Added
 

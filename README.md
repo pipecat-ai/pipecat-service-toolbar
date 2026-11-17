@@ -435,7 +435,7 @@ version only together with a new changelog entry. The first build from this repo
 change with its own checklist: see "Moving a server pin" in
 [docs/migration.md](docs/migration.md). Unbundled `swift run` uses the same pinned artifact
 preparation. Explicit `PIPECAT_TOOLBAR_WHEEL` and `PIPECAT_TOOLBAR_CONSTRAINTS` overrides support
-local server development; `PIPECAT_TOOLBAR_REPO` can explicitly build a TTS checkout (a path that is no checkout fails
-the tool lookup rather than falling back), and its STT
-environments still install against this repository's `constraints/` (override the folder with
+local server development; `PIPECAT_TOOLBAR_REPO` can explicitly build a TTS checkout (a path that
+is no checkout fails the tool lookup rather than falling back), and its STT environments still
+install against this repository's `constraints/` (override the folder with
 `PIPECAT_TOOLBAR_STT_CONSTRAINTS`). Bundled apps always use their bundled tools.

@@ -128,7 +128,7 @@ public enum ToolLocator {
         // An explicit checkout that matches nothing is a mistake, not a request for the pinned
         // release: without this, a typo would silently swap the intended source for the wheel
         // `findRepositoryRoot` falls back to from the executable or working directory.
-        if let explicit = environment["PIPECAT_TOOLBAR_REPO"], explicitRepositoryRoot(explicit) == nil {
+        if let explicit = repositoryOverride(environment), explicitRepositoryRoot(explicit) == nil {
             throw ToolLocatorError.repositoryOverrideNotFound(explicit)
         }
         guard let repo else { throw ToolLocatorError.wheelNotFound }
@@ -148,13 +148,22 @@ public enum ToolLocator {
         return candidates.first(where: fm.isExecutableFile(atPath:)).map { URL(filePath: $0) }
     }
 
-    /// Walks up from `PIPECAT_TOOLBAR_REPO` (when set), the executable and the working directory to
+    /// Walks up from `PIPECAT_TOOLBAR_REPO` (when set and non-empty), the executable and the working directory to
     /// this repo's root, or (only with `PIPECAT_TOOLBAR_REPO` set) a TTS source checkout.
     static func findRepositoryRoot(environment: [String: String]) -> URL? {
         var starts = [Bundle.main.executableURL?.deletingLastPathComponent()]
         starts.append(URL(filePath: FileManager.default.currentDirectoryPath))
-        if let explicit = environment["PIPECAT_TOOLBAR_REPO"] { starts.insert(URL(filePath: explicit), at: 0) }
-        return repositoryRoot(from: starts.compactMap { $0 }, acceptingTTSCheckout: environment["PIPECAT_TOOLBAR_REPO"] != nil)
+        let explicit = repositoryOverride(environment)
+        if let explicit { starts.insert(URL(filePath: explicit), at: 0) }
+        return repositoryRoot(from: starts.compactMap { $0 }, acceptingTTSCheckout: explicit != nil)
+    }
+
+    /// `PIPECAT_TOOLBAR_REPO` when set to something: an empty or whitespace-only value is unset
+    /// (`URL(filePath: "")` would otherwise resolve to the working directory).
+    static func repositoryOverride(_ environment: [String: String]) -> String? {
+        guard let value = environment["PIPECAT_TOOLBAR_REPO"] else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The checkout `PIPECAT_TOOLBAR_REPO` names (a toolbar or TTS source checkout at or above

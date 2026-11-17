@@ -87,9 +87,10 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    Its `content-sha256` header line is the SHA-256 of every other line (the `# server:` and
    `# source-commit:` lines and the pins), so `test_server_pins.py` fails on an accidental edit
    to any of them, and `scripts/prepare_tools.py` (so `just app-build` and `swift run`) refuses
-   a file whose header does not match `artifacts/tts.json` or its digest. That digest is not proof of origin: `just tts-constraints-check <path>` exits
-   non-zero when the file is not the script's output for the pinned commit, and CI runs the same
-   check against a clone of `source_repository` (the `compatibility` job, Python 3.12). The
+   a file whose header does not match `artifacts/tts.json` or its digest. That digest is not
+   proof of origin: `just tts-constraints-check <path>` exits non-zero when the file is not the
+   script's output for the pinned commit, and CI runs the same check against a clone of
+   `source_repository` (the `compatibility` job, Python 3.12). The
    output depends on the uv version: generate it with the uv CI pins (`version` in
    `.github/workflows/test.yml`), and when bumping that pin run the check and regenerate the
    file if it fails.
