@@ -1,0 +1,25 @@
+{
+  "_comment": "Where each recorded server fixture comes from. test_server_pins.py checks the releases against the pins and the digests against the files. Re-record a fixture from its source, then update its digest here (shasum -a 256 <path>).",
+  "tts": {
+    "version": "0.9.1",
+    "source_commit": "78823eeabf1f36c464243af1bd41b879d058c028",
+    "repository": "https://github.com/vr000m/pipecat-local-tts-server",
+    "fixtures": {
+      "python_tests/fixtures/upstream/tts-README.md": "a01f954c8701b23ee6b4608b47d5a0febff9799874b7483c6b8079773ba4b107",
+      "python_tests/fixtures/upstream/tts-justfile": "66e2f21629c01f69ce1802de6c52006f53df56a76c61a0580fdb5dbd5ef3c790",
+      "docs/supervised-contract.json": "7d612ff9219d6236d5a815e0a90c862f1aeb57d4af874aaace2b31e6fc0abf0b"
+    }
+  },
+  "stt": {
+    "version": "0.6.0",
+    "repository": "https://github.com/vr000m/pipecat-local-stt-server",
+    "fixtures": {
+      "python_tests/fixtures/stt_prefetch_check_lines.jsonl": "56f8796452b05219be9e8aba01ec359f24f6c295f55df9c0ef3a487bef294277",
+      "python_tests/fixtures/stt_prefetch_check_moonshine_cached_lines.jsonl": "4acbc39e95ea66b7da18f0e31a567fc8e5d71864ab0364109b6cc5539336df60",
+      "python_tests/fixtures/stt_prefetch_check_moonshine_missing_lines.jsonl": "6f12124392c8486c8a7372abbcd148eec94a45e2cf7f159e6aecfddfd44f419e",
+      "python_tests/fixtures/stt_prefetch_fetch_moonshine_lines.jsonl": "a023d7b01463c4531ecf348c6944425b2a395bec38fbe1bebb9f36c032784f06",
+      "python_tests/fixtures/stt_server_0.6.0_source.txt": "dff97bc110566a4e4e6472baff34741bdfc08c5c5fe702d0365d41152e3fb61b",
+      "python_tests/fixtures/stt_supervised_lines.jsonl": "26272a5db554cfd321ae7926c8c1f8784487cfeefd63ec46f39510f2f88a33a0"
+    }
+  }
+}
