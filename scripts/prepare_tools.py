@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Prepare the checksum-pinned TTS wheel and recorded constraints for the app."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import shutil
+import tempfile
+import urllib.request
+import zipfile
+from email.parser import BytesParser
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def verify(wheel: Path, spec: dict) -> None:
+    if hashlib.sha256(wheel.read_bytes()).hexdigest() != spec["sha256"]:
+        raise ValueError("TTS wheel SHA-256 does not match artifacts/tts.json")
+    with zipfile.ZipFile(wheel) as archive:
+        metadata = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+        if len(metadata) != 1:
+            raise ValueError("Expected exactly one wheel METADATA record")
+        fields = BytesParser().parsebytes(archive.read(metadata[0]))
+        if fields["Name"] != "pipecat-local-tts-server" or fields["Version"] != spec["version"]:
+            raise ValueError("TTS wheel package name/version does not match the pin")
+        if "tts_server/__main__.py" not in archive.namelist():
+            raise ValueError("TTS wheel does not contain the server CLI")
+
+
+def download(url: str, target: Path) -> None:
+    with urllib.request.urlopen(url, timeout=60) as response, target.open("wb") as out:
+        shutil.copyfileobj(response, out)
+
+
+def prepare(output: Path, *, root: Path = ROOT, fetch=download) -> Path:
+    spec = json.loads((root / "artifacts/tts.json").read_text())
+    filename = spec["filename"]
+    if filename != f"pipecat_local_tts_server-{spec['version']}-py3-none-any.whl":
+        raise ValueError("Unexpected TTS wheel filename")
+    if not spec["url"].startswith("https://files.pythonhosted.org/"):
+        raise ValueError("Expected a pinned PyPI artifact URL")
+    cache = root / ".build/artifacts"
+    cache.mkdir(parents=True, exist_ok=True)
+    wheel = cache / filename
+    if wheel.exists():
+        verify(wheel, spec)  # Fail closed on a corrupt cache; do not silently reuse it.
+    else:
+        with tempfile.TemporaryDirectory(prefix="wheel-", dir=cache) as temporary:
+            candidate = Path(temporary) / filename
+            fetch(spec["url"], candidate)
+            verify(candidate, spec)
+            candidate.replace(wheel)
+    output.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(wheel, output / filename)
+    shutil.copy2(root / "constraints/tts.txt", output / "constraints.txt")
+    (output / "MANIFEST").write_text(filename + "\n")
+    return output / filename
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=ROOT / ".build/tools/wheels")
+    print(prepare(parser.parse_args().output))

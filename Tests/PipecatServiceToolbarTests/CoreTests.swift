@@ -118,8 +118,8 @@ import Testing
     /// Two real lines from the released 0.6.0 `stt_server` (the Python test checks them
     /// against the contract): the app's decoder reads them.
     @Test func recordedUpstreamLinesDecode() throws {
-        let url = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "tests/fixtures/stt_supervised_lines.jsonl")
+        let url = URL(filePath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "python_tests/fixtures/stt_supervised_lines.jsonl")
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
         #expect(lines.count == 2)
         let ready = try #require(ServerCLIEvent.parse(lines[0]))
@@ -945,10 +945,10 @@ private final class RaceBox<T: Sendable>: @unchecked Sendable {
 }
 
 /// End to end against a real `serve --supervised` tone server, when the repo's
-/// dev environment exists (`uv sync --extra client` at the repo root).
+/// dev environment exists (`uv sync --locked` at the repo root).
 @Suite struct ToneServerIntegrationTests {
     static let repo = URL(filePath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
     static let python = repo.appending(path: ".venv/bin/python")
 
@@ -1213,11 +1213,11 @@ private final class RaceBox<T: Sendable>: @unchecked Sendable {
         #expect(FileManager.default.fileExists(atPath: repo.path), "deleteModel deleted a non-Hub-cache service's files")
     }
 
-    /// Real 0.6.0 `stt_server prefetch --json` output (`tests/fixtures`; the Python contract test
+    /// Real 0.6.0 `stt_server prefetch --json` output (`python_tests/fixtures`; the Python contract test
     /// checks the same files against `docs/supervised-contract.json`).
     static func recordedPrefetch(_ name: String) throws -> [String] {
-        let url = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "tests/fixtures/\(name)")
+        let url = URL(filePath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appending(path: "python_tests/fixtures/\(name)")
         return try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
     }
 

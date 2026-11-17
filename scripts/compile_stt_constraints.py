@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Regenerate ``macos/constraints/stt-<engine>.txt``: the hash-pinned constraints
+"""Regenerate ``constraints/stt-<engine>.txt``: the hash-pinned constraints
 the app installs each STT engine's environment with.
 
-    uv run python macos/scripts/compile_stt_constraints.py
+    uv run python scripts/compile_stt_constraints.py
 
 Each engine's top-level requirements are read from ``Service.swift`` (through
-``tests/_macos_catalog.py``, the parser the drift tests use) and resolved with
+``python_tests/_macos_catalog.py``, the parser the drift tests use) and resolved with
 ``uv pip compile --generate-hashes`` for the app's target: CPython 3.12
 (``EnvironmentManager.pythonVersion``) on arm64 macOS 15 (``Package.swift``),
 so the pins are what a fresh install on that floor would pick. The output is
 checked in, so an app build is reproducible; rerun this (network needed) after
-bumping a requirement in ``Service.swift`` — ``tests/test_supervised_contract.py``
+bumping a requirement in ``Service.swift`` — ``python_tests/test_supervised_contract.py``
 fails until you do. ``PIPECAT_UV`` overrides the uv binary (default: the app's pinned
 uv from ``fetch_uv.sh``).
 """
@@ -25,8 +25,8 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
-REPO = SCRIPTS.parents[1]
-OUT_DIR = REPO / "macos" / "constraints"
+REPO = SCRIPTS.parent
+OUT_DIR = REPO / "constraints"
 
 PYTHON_VERSION = "3.12"
 PLATFORM = "aarch64-apple-darwin"
@@ -35,7 +35,7 @@ MACOS_TARGET = "15.0"
 
 def _catalog():
     spec = importlib.util.spec_from_file_location(
-        "_macos_catalog", REPO / "tests" / "_macos_catalog.py"
+        "_macos_catalog", REPO / "python_tests" / "_macos_catalog.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses resolve the module by name
@@ -83,7 +83,7 @@ def main() -> int:
             body = compiled.read_text().replace(str(source), f"stt-{engine}.in")
         header = [
             f"# Hash-pinned constraints for the {engine} STT environment. GENERATED, do not edit:",
-            "#   uv run python macos/scripts/compile_stt_constraints.py",
+            "#   uv run python scripts/compile_stt_constraints.py",
             f"# python-version: {PYTHON_VERSION}",
             f"# python-platform: {PLATFORM}",
             f"# macos-deployment-target: {MACOS_TARGET}",

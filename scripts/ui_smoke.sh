@@ -279,7 +279,7 @@ assert_clean_exit "SIGTERM"
 # The script cannot open the panel or read its text, so External is read from the
 # phase line the bootstrap logs after its one discovery pass: `tone: external(8665, ...)`.
 step "External: a server started outside the app is adopted and survives Quit"
-REPO_ROOT="$(dirname "$MACOS_DIR")"
+REPO_ROOT="$MACOS_DIR"
 EXT_PY="$REPO_ROOT/.venv/bin/python"
 if lsof -nP -iTCP:"$EXT_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "  SKIP external: port $EXT_PORT is already held ($(lsof -nP -iTCP:"$EXT_PORT" -sTCP:LISTEN | awk 'NR==2{print $1" pid "$2}'))"

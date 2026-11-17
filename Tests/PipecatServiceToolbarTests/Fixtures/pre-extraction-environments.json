@@ -1,0 +1,128 @@
+[
+  {
+    "service": "tone",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "kokoro",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "phonon",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "pocket_tts",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "qwen3_tts",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "voxtral_tts",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "dia",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "fish_tts",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "kyutai",
+    "fingerprint": "pipecat-local-stt-server==0.6.0 moshi_mlx==0.3.0",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "parakeet",
+    "fingerprint": "pipecat-local-stt-server[parakeet]==0.6.0",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "nemotron",
+    "fingerprint": "pipecat-local-stt-server[nemotron]==0.6.0",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "moonshine",
+    "fingerprint": "pipecat-local-stt-server[moonshine]==0.6.0",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "phonon_q8",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "phonon_q4",
+    "fingerprint": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper_large_v3",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper_medium",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper_small",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper_base",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "whisper_tiny",
+    "fingerprint": "pipecat-local-stt-server[mlx]==0.6.0 mlx-whisper==0.4.3",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  },
+  {
+    "service": "kyutai_2_6b",
+    "fingerprint": "pipecat-local-stt-server==0.6.0 moshi_mlx==0.3.0",
+    "python": "3.12.7",
+    "createdAt": "2026-11-16T00:00:00Z"
+  }
+]

@@ -12,7 +12,7 @@ import Testing
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["PIPECAT_TOOLBAR_E2E"] == "1"))
 struct ConnectionCountLiveTests {
     static let appPid = ProcessInfo.processInfo.processIdentifier
-    static let repoRoot = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    static let repoRoot = URL(filePath: #filePath).deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
 
     /// An out-of-process client: `nc` connected to `port`, held open by an unclosed stdin pipe.
@@ -120,7 +120,7 @@ struct ConnectionCountLiveTests {
     @Test func aToneServerWithOneClientCountsOne() async throws {
         let python = Self.repoRoot.appending(path: ".venv/bin/python")
         guard FileManager.default.isExecutableFile(atPath: python.path) else {
-            Issue.record("needs the repo .venv (uv sync --extra client) for a tone server")
+            Issue.record("needs the repo .venv (uv sync --locked) for a tone server")
             return
         }
         let server = Subprocess(

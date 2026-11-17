@@ -111,7 +111,7 @@ public enum ToolLocator {
 
         let repo = findRepositoryRoot(environment: environment)
         let sttConstraints = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"].map { URL(filePath: $0) }
-            ?? repo.map { $0.appending(path: "macos/constraints") }
+            ?? repo.map { $0.appending(path: "constraints") }
 
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
             let constraints = environment["PIPECAT_TOOLBAR_CONSTRAINTS"].map { URL(filePath: $0) }
@@ -145,8 +145,12 @@ public enum ToolLocator {
         for start in starts.compactMap({ $0 }) {
             var dir = start.standardizedFileURL
             while dir.path != "/" {
+                if FileManager.default.fileExists(atPath: dir.appending(path: "artifacts/tts.json").path) {
+                    return dir
+                }
                 let pyproject = dir.appending(path: "pyproject.toml")
-                if let text = try? String(contentsOf: pyproject, encoding: .utf8),
+                if environment["PIPECAT_TOOLBAR_REPO"] != nil,
+                    let text = try? String(contentsOf: pyproject, encoding: .utf8),
                     text.contains("name = \"pipecat-local-tts-server\"")
                 {
                     return dir
@@ -165,6 +169,23 @@ public enum ToolLocator {
         try? FileManager.default.removeItem(at: out)
         try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
         let env = ProcessEnvironment.base()
+
+        // Standalone checkout: acquire the verified release without a server checkout.
+        if FileManager.default.fileExists(atPath: repo.appending(path: "artifacts/tts.json").path) {
+            let prepare = Subprocess(.init(
+                executable: uv,
+                arguments: ["run", "--no-project", "--python", "3.12", "scripts/prepare_tools.py", "--output", out.path],
+                environment: env, currentDirectory: repo))
+            let result = try await processes.collect(prepare)
+            guard result.status == 0 else {
+                throw ToolLocatorError.buildFailed(result.stderr.suffix(3).joined(separator: "\n"))
+            }
+            let name = try String(contentsOf: out.appending(path: "MANIFEST"), encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return Tools(uv: uv, wheel: out.appending(path: name),
+                         constraints: out.appending(path: "constraints.txt"),
+                         sttConstraints: sttConstraints, source: .repository)
+        }
 
         let build = Subprocess(
             .init(

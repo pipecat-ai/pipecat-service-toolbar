@@ -1,0 +1,145 @@
+{
+  "_comment": [
+    "The JSON-lines contract between a supervising app (macos/, the Pipecat Service Toolbar) and the processes it runs:",
+    "`python -m tts_server serve --supervised` / `prefetch --json` (tts_server/supervise.py, tts_server/prefetch.py) and",
+    "the upstream STT CLI `python -m stt_server serve --supervised` / `prefetch --json` (pipecat-local-stt-server 0.6.0,",
+    "stt_server/supervise.py, stt_server/prefetch.py). Both emitters are independent implementations;",
+    "tests/test_supervised_contract.py checks the TTS emitter on stub inputs, the STT emitter against recorded 0.6.0 fixtures",
+    "(tests/fixtures/stt_supervised_lines.jsonl, stt_prefetch_check_lines.jsonl, stt_prefetch_*_moonshine_*.jsonl), and the Swift consumer (PrefetchEvent.swift, PCMStreamConverter.swift) against this file.",
+    "`error_codes` is listed per emitter: each emitter's codes are exactly its own list, and the Swift SupervisedErrorCode is their union.",
+    "Field types: string | integer | boolean | null. `fields` are always present; `optional` may be present.",
+    "One object per stdout line; consumers skip lines that are not JSON objects.",
+    "`version` 2: `error_codes` became an object keyed by emitter (`tts`, `stt`); in version 1 it was one flat list."
+  ],
+  "version": 2,
+  "error_codes": {
+    "tts": [
+      "ModuleNotFoundError",
+      "EADDRINUSE",
+      "EACCES",
+      "SocketPathConflict",
+      "ModelDownloadError",
+      "ConfigError",
+      "BackendStartError"
+    ],
+    "stt": [
+      "ModuleNotFoundError",
+      "EADDRINUSE",
+      "EACCES",
+      "ModelDownloadError",
+      "ConfigError",
+      "BackendStartError",
+      "ModelInvalidError"
+    ]
+  },
+  "download_error_module_prefixes": ["huggingface_hub", "requests", "urllib3", "hf_xet", "httpx"],
+  "stt_wire_rate": 16000,
+  "serve": {
+    "ready": {
+      "fields": {
+        "event": ["string"],
+        "backend": ["string"],
+        "model": ["string", "null"],
+        "host": ["string", "null"],
+        "port": ["integer", "null"],
+        "socket_path": ["string", "null"],
+        "rate": ["integer"],
+        "pid": ["integer"]
+      }
+    },
+    "error": {
+      "fields": {
+        "event": ["string"],
+        "code": ["string"],
+        "message": ["string"],
+        "exc_type": ["string"]
+      }
+    }
+  },
+  "prefetch": {
+    "start": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "revision": ["string", "null"],
+        "kind": ["string"]
+      }
+    },
+    "progress": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "downloaded_bytes": ["integer"],
+        "total_bytes": ["integer"],
+        "files_done": ["integer"],
+        "files_total": ["integer"]
+      }
+    },
+    "done": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "path": ["string"],
+        "size_bytes": ["integer"]
+      }
+    },
+    "complete": {
+      "fields": {
+        "event": ["string"],
+        "backend": ["string", "null"],
+        "model": ["string", "null"],
+        "cached": ["boolean"],
+        "size_bytes": ["integer"]
+      }
+    },
+    "check": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "revision": ["string", "null"],
+        "kind": ["string"],
+        "required": ["boolean"],
+        "cached": ["boolean"],
+        "path": ["string", "null"],
+        "size_bytes": ["integer"]
+      }
+    },
+    "summary": {
+      "fields": {
+        "event": ["string"],
+        "backend": ["string", "null"],
+        "model": ["string", "null"],
+        "cached": ["boolean"],
+        "size_bytes": ["integer"]
+      },
+      "optional": {
+        "quantized": ["boolean"],
+        "quantized_path": ["string"]
+      }
+    },
+    "warning": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "message": ["string"]
+      }
+    },
+    "convert": {
+      "fields": {
+        "event": ["string"],
+        "repo": ["string"],
+        "bits": ["integer"],
+        "state": ["string"],
+        "path": ["string", "null"]
+      }
+    },
+    "error": {
+      "fields": {
+        "event": ["string"],
+        "code": ["string"],
+        "message": ["string"],
+        "repo": ["string", "null"]
+      }
+    }
+  }
+}
