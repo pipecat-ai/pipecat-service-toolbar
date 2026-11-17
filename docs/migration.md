@@ -99,10 +99,11 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    `python_tests/fixtures/upstream/tts-README.md` (its `README.md`) and `tts-justfile` (its
    `justfile`) byte for byte, and `docs/supervised-contract.json` (its
    `docs/supervised-contract.json`; keep this repository's `_comment`, every other field must
-   match). Update their digests and the `tts` version/commit in
-   `python_tests/fixtures/provenance.json` (the contract is under `contract`).
+   match). Update their `sha256` and the `tts` version/commit in
+   `python_tests/fixtures/provenance.json` (the contract is under `contract`; each of these
+   entries names its path in the server repository as `source`, which is what the check reads).
    `just tts-fixtures-check <path>` (run in CI, as in step 2) exits non-zero until every file
-   matches.
+   matches (the contract as canonical JSON, so a change of a value's type counts).
 5. Run `just app-test`, `uv run pytest` and `just app-build`. `RepositoryMigrationTests` then
    fails (see below).
 
@@ -116,14 +117,15 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    `--require-hashes` at install).
 3. Record `python_tests/fixtures/stt_server_<new version>_source.txt` from the release's tag (the
    tests read the excerpt named by `sttServerRequirement`, so they fail until it exists; verify it
-   with `PIPECAT_STT_SERVER_SITE`, see the README) and remove the old one; re-record the `stt_*`
-   line fixtures.
+   with `PIPECAT_STT_SERVER_SITE`, see the README) and remove the old one (`test_server_pins.py`
+   fails while an excerpt for any other release is left); re-record the `stt_*` line fixtures.
 4. `docs/supervised-contract.json` is shared: its STT half (`error_codes.stt`, `stt_wire_rate`)
    must match the new excerpt and line fixtures (`test_supervised_contract.py`). The contract is
    recorded from the TTS repository (step 4 above), so a change to it lands in
    `pipecat-local-tts-server` first and arrives here with a TTS pin move.
-5. In `provenance.json`, replace the old excerpt's entry with the new one, update every changed
-   digest (`stt` and `contract`) and the `stt` version.
+5. In `provenance.json`, replace the old excerpt's entry with the new one (an entry without its
+   file fails, as does a file without its entry), update every changed `sha256` (`stt` and
+   `contract`) and the `stt` version.
 6. Run `just app-test`, `uv run pytest` and `just app-build`; `RepositoryMigrationTests` then
    fails (see below).
 

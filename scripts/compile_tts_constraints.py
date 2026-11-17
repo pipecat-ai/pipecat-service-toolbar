@@ -29,6 +29,7 @@ import hashlib
 import io
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -56,18 +57,32 @@ def render(version: str, commit: str, pins: str) -> str:
 
 def run(args: list[str], cwd: Path | None = None) -> bytes:
     """``args``' stdout. On failure, its stderr is passed through (CI shows why git or uv failed)
-    before exiting non-zero."""
+    before exiting non-zero. ``scripts/check_tts_fixtures.py`` reads the server's files through
+    this too, so git errors are handled here once."""
     try:
         return subprocess.run(args, cwd=cwd, check=True, capture_output=True).stdout
     except subprocess.CalledProcessError as error:
         sys.stderr.write(error.stderr.decode(errors="replace"))
-        raise SystemExit(
-            f"{Path(args[0]).name} {args[1]} failed (exit {error.returncode})"
-        ) from None
+        raise SystemExit(f"{shlex.join(args)} failed (exit {error.returncode})") from None
+
+
+def require_full_commit(commit: str) -> str:
+    """``commit``, if it is a full commit id (it reaches git, so nothing option-like)."""
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise SystemExit("artifacts/tts.json needs a full 40-character source_commit")
+    return commit
+
+
+def load_artifact(root: Path = ROOT) -> dict:
+    """``artifacts/tts.json``, its ``source_commit`` checked (``require_full_commit``). Both TTS
+    provenance checks (this script and ``scripts/check_tts_fixtures.py``) read the pin here."""
+    spec = json.loads((root / "artifacts/tts.json").read_text())
+    require_full_commit(spec["source_commit"])
+    return spec
 
 
 def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
-    commit = spec["source_commit"]
+    commit = require_full_commit(spec["source_commit"])
     archive = run(["git", "-C", str(checkout), "archive", commit, "pyproject.toml", "uv.lock"])
     with tempfile.TemporaryDirectory(prefix="tts-lock-") as tmp:
         work = Path(tmp)
@@ -109,9 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=ROOT / "constraints/tts.txt")
     parser.add_argument("--check", action="store_true", help="exit 1 if --output would change")
     args = parser.parse_args(argv)
-    spec = json.loads((ROOT / "artifacts/tts.json").read_text())
-    if not re.fullmatch(r"[0-9a-f]{40}", spec["source_commit"]):
-        raise SystemExit("artifacts/tts.json needs a full 40-character source_commit")
+    spec = load_artifact()
     uv = shutil.which("uv")
     if uv is None:
         raise SystemExit("uv not found on PATH")

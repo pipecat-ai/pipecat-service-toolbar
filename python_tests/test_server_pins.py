@@ -210,6 +210,15 @@ def test_recorded_fixtures_are_for_the_pinned_server_release(server):
         assert STT_EXCERPT.name == f"stt_server_{entry['version']}_source.txt"
 
 
+def test_only_the_pinned_stt_release_has_an_excerpt():
+    """Moving the STT pin replaces the excerpt: an old release's excerpt left behind (with or
+    without its ``provenance.json`` entry, which the listing test ties to the file) fails."""
+    excerpts = {p.name for p in (ROOT / "python_tests/fixtures").glob("stt_server_*_source.txt")}
+    assert excerpts == {STT_EXCERPT.name}, (
+        "remove the old STT excerpt and its provenance.json entry (docs/migration.md)"
+    )
+
+
 def test_every_recorded_fixture_is_listed_and_unchanged():
     listed = {path for server in SECTIONS for path in PROVENANCE[server]["fixtures"]}
     on_disk = {
@@ -229,18 +238,26 @@ def test_every_recorded_fixture_is_listed_and_unchanged():
     stale = {
         path: sha256(path)
         for server in SECTIONS
-        for path, digest in PROVENANCE[server]["fixtures"].items()
-        if sha256(path) != digest
+        for path, entry in PROVENANCE[server]["fixtures"].items()
+        if sha256(path) != entry["sha256"]
     }
     assert stale == {}, "a recorded fixture changed: re-record it and update its digest"
 
 
 def test_ci_compares_every_file_recorded_from_the_tts_repository():
-    """``scripts/check_tts_fixtures.py`` (run in CI against the pinned commit) knows the source of
-    every file ``provenance.json`` records from the TTS repository, so bumping the version without
-    re-recording fails CI."""
-    recorded = {*PROVENANCE["tts"]["fixtures"], *PROVENANCE["contract"]["fixtures"]}
-    assert set(check_tts_fixtures.UPSTREAM) == recorded
+    """``scripts/check_tts_fixtures.py`` (run in CI against the pinned commit) reads each file's
+    source from ``provenance.json``, so every file recorded from the TTS repository names one, and
+    only those do (the check compares nothing else against the TTS commit)."""
+    tts = {
+        path: entry["source"]
+        for section in check_tts_fixtures.SECTIONS
+        for path, entry in PROVENANCE[section]["fixtures"].items()
+    }
+    assert check_tts_fixtures.recorded() == tts
+    assert all(isinstance(source, str) and source for source in tts.values())
+    assert set(check_tts_fixtures.OWN_KEY) <= set(tts)
+    others = [s for s in SECTIONS if s not in check_tts_fixtures.SECTIONS]
+    assert [p for s in others for p, e in PROVENANCE[s]["fixtures"].items() if "source" in e] == []
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -279,7 +296,7 @@ def test_the_tts_fixture_check_fails_on_a_fixture_that_was_not_re_recorded(tmp_p
     contract = json.loads((ROOT / "docs/supervised-contract.json").read_text())
     upstream = {
         source: (ROOT / recorded).read_bytes()
-        for recorded, source in check_tts_fixtures.UPSTREAM.items()
+        for recorded, source in check_tts_fixtures.recorded().items()
     }
     # The server's own _comment differs from the toolbar's copy; that alone is not drift.
     upstream["docs/supervised-contract.json"] = json.dumps(
@@ -297,6 +314,12 @@ def test_the_tts_fixture_check_fails_on_a_fixture_that_was_not_re_recorded(tmp_p
     assert check_tts_fixtures.drift(repo, field) == [
         f"docs/supervised-contract.json is not docs/supervised-contract.json at {field}"
     ]
+    # A change of type alone is drift too (16000 == 16000.0 in Python, not in the contract).
+    retyped = {**contract, "stt_wire_rate": float(contract["stt_wire_rate"])}
+    typed = _commit(repo, {"docs/supervised-contract.json": json.dumps(retyped).encode()})
+    assert check_tts_fixtures.drift(repo, typed) == [
+        f"docs/supervised-contract.json is not docs/supervised-contract.json at {typed}"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -312,6 +335,21 @@ def test_a_failing_git_step_shows_gits_own_error(tmp_path, capsys, call):
         call(tmp_path)
     assert "failed (exit" in str(failed.value)
     assert "not a git repository" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda d, c: compile_tts_constraints.compile_constraints(d, {"source_commit": c}, "uv"),
+        lambda d, c: check_tts_fixtures.drift(d, c),
+    ],
+    ids=["compile", "fixtures"],
+)
+@pytest.mark.parametrize("commit", ["--output=x", "HEAD", "0" * 39, "0" * 40 + "\n"])
+def test_both_checks_reject_a_commit_that_is_not_a_full_id(tmp_path, call, commit):
+    """The commit reaches git, so both checks refuse anything but a full id before running it."""
+    with pytest.raises(SystemExit, match="full 40-character source_commit"):
+        call(tmp_path, commit)
 
 
 def test_constraints_check_compares_bytes(tmp_path, monkeypatch):

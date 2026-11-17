@@ -372,8 +372,9 @@ them (`shasum -a 256 constraints/stt-*.txt`).
 
 When `ServiceCatalog.sttServerRequirement` moves, also re-record
 `python_tests/fixtures/stt_server_<version>_source.txt` from the new tag (the lean tests read the
-excerpt named by the pin, so they fail until it exists and its release line names that version),
-then check it against that release's real source;
+excerpt named by the pin, so they fail until it exists and its release line names that version)
+and remove the old release's excerpt and its `provenance.json` entry (the tests fail while either
+is left), then check it against that release's real source;
 no CI job installs the STT server, so this check is opt-in:
 
 ```bash

@@ -59,12 +59,15 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
   Git and uv errors from the script are shown, not swallowed.
 - `just tts-fixtures-check <checkout>` (`scripts/check_tts_fixtures.py`, also run in CI) fails
   unless the files recorded from the TTS server (`python_tests/fixtures/upstream/*` byte for
-  byte, `docs/supervised-contract.json` apart from its `_comment`) are the pinned commit's own.
-  CI accepts `source_repository` and `source_commit` only as a GitHub HTTPS URL and a full
+  byte, `docs/supervised-contract.json` apart from its `_comment`, as canonical JSON so a changed
+  value type counts) are the pinned commit's own. Each such file's path in the server repository
+  is its `source` in `provenance.json`, and the script shares commit validation and git error
+  reporting with `scripts/compile_tts_constraints.py`. CI accepts `source_repository` and `source_commit` only as a GitHub HTTPS URL and a full
   commit id before passing them to git.
 - `python_tests/fixtures/provenance.json` records the digests of `constraints/stt-*.txt` (which
   CI cannot regenerate) and files the shared `docs/supervised-contract.json` under `contract`.
-  The STT excerpt the tests read is named by `sttServerRequirement`, not hard-coded.
+  The STT excerpt the tests read is named by `sttServerRequirement`, not hard-coded, and an
+  excerpt left behind for any other release fails the pin checks.
 - The lean test environment is locked at the dependency versions the app installs: `[tool.uv]
   constraint-dependencies` in `pyproject.toml` holds the `constraints/tts.txt` version of every
   package they share, and the pin checks fail on a locked version that differs or on an entry
