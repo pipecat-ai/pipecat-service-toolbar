@@ -17,7 +17,8 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 | App version | Shipped as | Date |
 |---|---|---|
-| 0.4.0 | 0.9.1 (build 468; this repository's first build is 474) | 2026-11-16 |
+| 0.4.1 | New numbering; first build from this repository (build 474) | 2026-11-17 |
+| 0.4.0 | 0.9.1 (build 468) | 2026-11-16 |
 | 0.3.0 | 0.9.0 | 2026-10-31 |
 | 0.2.3 | 0.8.3 | 2026-10-28 |
 | 0.2.2 | 0.8.2 | 2026-10-27 |
@@ -27,6 +28,8 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-17
+
 ### Changed
 
 - The app moved to its own repository (`pipecat-ai/pipecat-service-toolbar`) with its Git history,
@@ -35,9 +38,8 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
   0.9.1 (build 468) copy, now numbered 0.4.0, needs no environment rebuild or model download.
 - The app version is independent of the servers (`app-version.json`; see Version history).
   It builds from the checksum-pinned TTS 0.9.1 wheel (`artifacts/tts.json`) and recorded
-  constraints; STT remains at 0.6.0. The first build from this repository, build 474, is a new
-  packaging of the released 0.4.0 (shipped as 0.9.1, build 468), not a new version: same app
-  version, higher build number.
+  constraints; STT remains at 0.6.0. The first build from this repository is 0.4.1, build 474, the
+  next release after 0.4.0 (shipped as 0.9.1, build 468).
 - `scripts/prepare_tools.py` also checks that the pinned URL names the pinned wheel and that
   `source_commit` is a full commit id, and a corrupt cached wheel now names the file to delete.
 - `scripts/prepare_tools.py` refuses to copy `constraints/tts.txt` into the app unless its

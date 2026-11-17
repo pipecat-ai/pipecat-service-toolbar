@@ -32,7 +32,7 @@ The app's version and build live only in `app-version.json`, and its release not
 unrelated numbers. Builds made before this repository existed were numbered after the TTS server
 release; the changelog renumbers them 0.1.0-0.4.0 (mapping table there), while the installed
 bundles keep reporting the old number. The build number only increases (installed builds reached
-468; the first build here is 474), so an installed copy never sees a lower `CFBundleVersion`.
+468; the first build here is 0.4.1, build 474), so an installed copy never sees a lower `CFBundleVersion`.
 An app release never changes a server pin unless its changelog entry says so.
 
 ## Build and test ownership

@@ -431,7 +431,7 @@ the check to pass, regenerating the file if it does not. `just tts-fixtures-chec
 App releases use `app-version.json` and [CHANGELOG.md](CHANGELOG.md), independently of the
 server package versions: increment the build integer for every distributed build, and bump the
 version only together with a new changelog entry. The first build from this repository is
-0.4.0 (474); builds before it were numbered after the TTS server (the installed 0.9.1 builds,
+0.4.1 (474); builds before it were numbered after the TTS server (the installed 0.9.1 builds,
 468 and earlier, are 0.4.0 and earlier in the changelog). Moving a server pin is a separate
 change with its own checklist: see "Moving a server pin" in
 [docs/migration.md](docs/migration.md). Unbundled `swift run` uses the same pinned artifact
