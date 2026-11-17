@@ -14,7 +14,9 @@ See [migration and compatibility](docs/migration.md) and [release history](CHANG
 
 ## Quickstart
 
-Requires Apple Silicon and macOS 15+. Apple Speech needs macOS 26+.
+Running the app requires Apple Silicon and macOS 15+. Apple Speech needs macOS 26+.
+Building from source requires Xcode 26+ (including the macOS 26 SDK),
+[uv](https://docs.astral.sh/uv/), and `just` for the recipes below.
 
 ```bash
 git clone https://github.com/pipecat-ai/pipecat-service-toolbar.git
@@ -29,8 +31,7 @@ rebuilds (ad hoc is cdhash-bound and resets them). Both recipes pick the identit
 `scripts/resolve_sign_identity.sh` and quit a running copy first with
 `scripts/quit_app.sh` (see the build knobs below).
 
-Without `just`: `scripts/build_app.sh`, then open the app. Building needs
-Xcode 16+ and [uv](https://docs.astral.sh/uv/).
+Without `just`: run `scripts/build_app.sh`, then open the app.
 
 Click the cat in the menu bar, then **Add Models**. Click **Get** on a model,
 then **Start**.
@@ -69,7 +70,7 @@ can run side by side. Variants share their family's Python environment.
 | Kyutai STT 2.6B (English) | 9666 | `kyutai/stt-2.6b-en-mlx` |
 
 TTS services speak the [TTS server protocol](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/protocol.md) (`tts_server`). STT services speak the
-protocol of [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server).
+[STT server protocol](https://github.com/vr000m/pipecat-local-stt-server/blob/v0.6.0/docs/protocol.md) (`stt_server`).
 Any client of either works unchanged. The ports match the launchd agents the server repositories install
 (`just tts-install` and `just stt-*`, run there, not in this checkout); see [Servers you didn't start](#servers-you-didnt-start)
 for running both.
@@ -224,7 +225,7 @@ The TTS adapter takes explicit endpoint arguments; environment variables alone
 do not configure it. To use `TTS_WS_HOST`/`TTS_WS_PORT`, resolve and pass them as
 shown in [Endpoints and authentication](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/clients.md#endpoints-and-authentication).
 For STT setup, consult the
-[STT client documentation](https://github.com/vr000m/pipecat-local-stt-server).
+[STT client and Pipecat integration guide](https://github.com/vr000m/pipecat-local-stt-server/blob/v0.6.0/docs/integration.md#pipecat-integration).
 
 ## Where things live
 

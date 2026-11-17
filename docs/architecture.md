@@ -68,7 +68,7 @@ Each service has one of three `ServiceRuntime` values:
 | Runtime | Install | Serve | Services |
 |---|---|---|---|
 | `ttsServer(extra:)` | `uv pip install "pipecat-local-tts-server[extra] @ <bundled wheel>"` with recorded constraints, then `python -m tts_server prefetch --json` | `python -m tts_server serve --supervised` | 8 TTS backends |
-| `sttHelper(engine:requirements:)` (the case name predates the helper's removal) | `uv pip install --require-hashes <pinned PyPI requirements>` with the engine's `stt-<engine>.txt` constraints, then `python -m stt_server prefetch --backend B --model R --json` (weights follow the repo's `main`) | `python -m stt_server serve --supervised --backend B` (`B` is the entry's expected backend name; Whisper is `mlx`) | Whisper, Kyutai, Parakeet, Nemotron, Moonshine (`--model <spec>`, weights from its own CDN) |
+| `sttHelper(engine:requirements:)` (the case name predates the helper's removal) | `uv pip install --require-hashes <pinned PyPI requirements>` with the engine's `stt-<engine>.txt` constraints, then `python -m stt_server prefetch --backend B --model R --json` (default Hub models are pinned upstream; other Hub models follow `main`; see [Pins](#pins)) | `python -m stt_server serve --supervised --backend B` (`B` is the entry's expected backend name; Whisper is `mlx`) | Whisper, Kyutai, Parakeet, Nemotron, Moonshine (`--model <spec>`, weights from its own CDN) |
 | `appleSpeech` | `AssetInventory` model download | `STTWebSocketServer` in-process | Apple Speech |
 
 On first use, all Python services share one uv-managed CPython 3.12, stored under
@@ -460,7 +460,7 @@ it, so an STT server on one is adopted by its hello but never app-started.
 
 ## Protocols
 
-- **TTS.** This repo's `docs/protocol.md`. Clients send JSON text, then commit.
+- **TTS.** The upstream [TTS server protocol](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/protocol.md), at the bundled release's source commit. Clients send JSON text, then commit.
   Audio streams back as base64 pcm16 deltas at the model's rate. The app's
   `TTSClient` plays it through `AVAudioEngine`, coalescing 20 ms frames into
   100 ms buffers. A Try it request's whole lifecycle is one pure reducer,
@@ -482,7 +482,7 @@ it, so an STT server on one is adopted by its hello but never app-started.
   - Stop after the commit sends `response.cancel` behind it (a cancel before the
     commit is a no-op, and the commit would hold the connection's one in-flight
     slot), and the stopped request stays `cancelling` until the server answers;
-    a Speak meanwhile waits for that (docs/protocol.md §3). So requests are serial
+    a Speak meanwhile waits for that ([TTS session lifecycle, §3](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/protocol.md#3-session-lifecycle)). So requests are serial
     on the wire and at most one commit is ever unanswered.
   - Each frame carries an `event_id` (`tryit-N.clear`, `tryit-N.append`,
     `tryit-N`); the server echoes it as `previous_event_id` on
@@ -511,11 +511,10 @@ it, so an STT server on one is adopted by its hello but never app-started.
   target can drive. It would move into Core with its own reducer if it gains
   streaming or reuse.
 
-  `docs/protocol.md` states the wire rules a reused connection must keep (clear
+  The upstream TTS protocol states the wire rules a reused connection must keep (clear
   after an abandoned refusal, cancel only after the commit it stops); clearing
   before every request, as Try it does, is the SHOULD it recommends.
-- **STT.** The protocol of
-  [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server).
+- **STT.** The upstream [STT server protocol](https://github.com/vr000m/pipecat-local-stt-server/blob/v0.6.0/docs/protocol.md), at the app's pinned 0.6.0 release.
   Clients send binary pcm16 at 16 kHz mono, then `input_audio_buffer.commit`.
   The reply is `…transcription.delta` followed by `…completed`.
   `STTWebSocketServer` covers the full event set:
@@ -727,7 +726,7 @@ union of both emitters' lists) and the stt wire rate (`STTWire.rate`) against th
 | Swift unit (`swift test`) | Line splitting, event decoding, PCM conversion and the one stt wire format, catalog ports and copy strings, variant commands, shared environments and deletion sets, the deletion roots (on disk, with symlinked leaves, backend directories and roots), logo parsing, `Subprocess` stdin and kill handling, exit-after-drain ordering and its lifecycle table (launch failure, stop before launch, descendants that obey or ignore SIGTERM), install cancel (kill escalation, cancellation vs finish, a cancelled queued install, every install ending against the variant marker, every child ending against the family lock), no probes after quit, a removal during quit keeping what a sibling may use, a reaped child's reused pid never signalled, the Try it request machine over every (state, event) cell (`Fixtures/tts_request_machine_table.txt`) and over random interleavings against a model server with its invariants asserted, real server frames driving it (`Fixtures/tts_wire_frames.json`, which also holds the request frames the server was sent), the driver's silence timeout, the lifecycle reducer's whole state space (every event against every phase, with the server current or replaced, Stop or removal under way, and quit under way) and its exits against every phase, the driver's start/ready/stop, late ready, ready timeout and supervised error, and quit during an Apple Speech install, download-size filters and pins, seamless resampling, `STTWebSocketServer` round trip, busy port, Origin rejection, stop during startup, connections outliving the server, the connection cap and one-at-a-time decodes, the unread-reply cap, which processes get `HF_TOKEN`. |
 | Live tone (needs `.venv`) | A supervised tone server, `TTSClient` speak (no `Origin` header, so no 403); `TTSRequestDriver` on one connection through a normal request, a busy refusal then retry, Stop mid-flight, Stop between append and commit, a refused voice and a dropped connection (reconnecting), and Stop while connecting. |
 | End-to-end (`PIPECAT_TOOLBAR_E2E=1`) | Real installs of tone, phonon, Phonon 8-bit beside phonon, Whisper Tiny, Kyutai, Parakeet (needs `ffmpeg`), Nemotron and Moonshine against the built bundle, then serve and use each. |
-| Python (`uv run pytest`) | `serve --supervised`, `prefetch`, a drift test that ties the app's TTS ports to the README and `justfile`, and `test_macos_catalog_drift.py`, which parses `Service.swift` (one parser, `python_tests/_macos_catalog.py`, variants included) and checks its backend names, ports (unique across variants), default model repos, streaming flags, Phonon `--model` aliases and the download-size snapshot table (against `prefetch_specs(model)`) against the Python sources and the `justfile`, and checks the Try it wire fixture against a live server; `test_supervised_contract.py`, which runs the TTS server on stub inputs and replays recorded `stt_server` 0.6.0 lines (`python_tests/fixtures/stt_supervised_lines.jsonl`), checking every JSON line, per-emitter error code (`ModelInvalidError` is STT-only; the STT list equals the `CODE_*` set of a verbatim 0.6.0 source excerpt, `python_tests/fixtures/stt_server_0.6.0_source.txt`, which also backs the STT backend names and default models in the catalog drift test), the Swift decoder's keys and `STTWire.rate` against `docs/supervised-contract.json`, and the STT constraints against each engine's requirements. |
+| Python (`uv run pytest`) | Compatibility checks against the installed pinned TTS package and recorded upstream fixtures: `test_macos_catalog_drift.py` parses `Service.swift` (one parser, `python_tests/_macos_catalog.py`, variants included) and checks its backend names, ports (unique across variants), default model repos, streaming flags, Phonon `--model` aliases and the download-size snapshot table (against `prefetch_specs(model)`) against the installed TTS package and `python_tests/fixtures/upstream/tts-justfile`, and checks the Try it wire fixture against a live tone server; the upstream README is recorded in `python_tests/fixtures/upstream/tts-README.md` for app-recipe checks; `test_supervised_contract.py` runs the TTS server on stub inputs and replays recorded `stt_server` 0.6.0 lines (`python_tests/fixtures/stt_supervised_lines.jsonl`), checking every JSON line, per-emitter error code (`ModelInvalidError` is STT-only; the STT list equals the `CODE_*` set of a verbatim 0.6.0 source excerpt, `python_tests/fixtures/stt_server_0.6.0_source.txt`, which also backs the STT backend names and default models in the catalog drift test), the Swift decoder's keys and `STTWire.rate` against `docs/supervised-contract.json`, and the STT constraints against each engine's requirements. |
 | Visual (`--snapshot <dir>`) | Renders every page in light and dark from sample states. |
 
 ## Security notes
