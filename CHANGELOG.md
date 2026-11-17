@@ -1,50 +1,82 @@
 # Changelog
 
-Changes to Pipecat Service Toolbar. Versions 0.7.0–0.9.1 below are toolbar history
-from releases of [pipecat-local-tts-server](https://github.com/vr000m/pipecat-local-tts-server/releases),
-before this repository existed. Their dates, versions, and historical paths are
-retained; they do not imply releases were published from this repository.
-Server-only changes remain in the original project's changelog.
+Changes to the Pipecat Service Toolbar, the native macOS menu bar app in this repository.
+Server-only changes belong to
+[pipecat-local-tts-server](https://github.com/vr000m/pipecat-local-tts-server/releases) and
+[pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server/releases).
+
+The app has its own version (`app-version.json`), independent of the server packages it
+installs (`artifacts/tts.json`, `Service.swift`). Releases from this repository never upgrade
+a server package implicitly; a changed server pin is listed as its own entry.
+
+## Version history
+
+Releases before this repository existed were numbered after the TTS server release they shipped
+with, and are renumbered here as the app's own history. Dates are unchanged. The installed
+`CFBundleShortVersionString` of those builds is the old number.
+
+| App version | Shipped as | Date |
+|---|---|---|
+| 0.4.0 | 0.9.1 (build 468; this repository's first build is 474) | 2026-11-16 |
+| 0.3.0 | 0.9.0 | 2026-10-31 |
+| 0.2.3 | 0.8.3 | 2026-10-28 |
+| 0.2.2 | 0.8.2 | 2026-10-27 |
+| 0.2.1 | 0.8.1 | 2026-10-27 |
+| 0.2.0 | 0.8.0 | 2026-10-27 |
+| 0.1.0 | 0.7.0 (first release) | 2026-10-25 |
 
 ## [Unreleased]
 
 ### Changed
 
-- Extract the toolbar, its Git history, build tools, tests and documentation into
-  `pipecat-ai/pipecat-service-toolbar`.
-- Build from the checksum-pinned TTS 0.9.1 wheel and recorded dependency constraints.
-  STT remains at 0.6.0. App version/build metadata is independent of server versions.
-- Preserve bundle identity and signing, saved preferences, installed environments,
-  service ports, Hugging Face and Phonon caches, and Moonshine cache handling.
-  Existing installations need no reset or model-cache migration.
-
-## [0.9.1] - 2026-11-16
-
-Inherited from [TTS release 0.9.1](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.9.1).
-
-### Added
-
-- macOS app: Moonshine STT (port 9965, English only: model spec `medium-streaming@en`). It is not a Hugging Face model, so the app passes the spec as `--model` and shows it as the model. Deleting it removes only its Python environment; its weights stay on disk (see "Model source" in `macos/docs/architecture.md`). The app forwards `MOONSHINE_VOICE_CACHE` to its child processes and never deletes that directory.
-
-### Changed
-
-- macOS app: STT installs now go through `pipecat-local-stt-server` 0.6.0 instead of 0.5.0, for all engines (constraints regenerated, source excerpt re-recorded). Regenerating also re-resolved the transitive pins of the Whisper, Parakeet and Nemotron environments.
-- macOS app: `HF_TOKEN` is now passed only to services whose weights come from the Hugging Face cache; a service whose weights live elsewhere gets no token.
-- macOS app: the detail page's Delete offers Delete Everything only for models in the Hugging Face cache. Tone, Apple Speech and Moonshine show a single Delete. Before, every model with a download offered it (see "Model source" in `macos/docs/architecture.md`).
+- The app moved to its own repository (`pipecat-ai/pipecat-service-toolbar`) with its Git history,
+  build tools, tests and documentation. Bundle identifier, signing identity, preferences, `AppPaths`
+  layout, environment fingerprints, ports and model-cache locations are unchanged: an installed
+  0.9.1 (build 468) copy, now numbered 0.4.0, needs no environment rebuild or model download.
+- The app version is independent of the servers (`app-version.json`; see Version history).
+  It builds from the checksum-pinned TTS 0.9.1 wheel (`artifacts/tts.json`) and recorded
+  constraints; STT remains at 0.6.0. The first build from this repository is 0.4.0 (474).
 
 ### Fixed
 
-- macOS app: a suggested model whose Start needs a package refresh now keeps its Running-panel row, showing the install progress and Cancel, until it is starting; Cancel in that window, including between the refresh and the read after it, stops the start. Before, the category disappeared for the length of the install. A sibling variant's environment change during the read after the refresh no longer drops that Start.
-
-## [0.9.0] - 2026-10-31
-
-Inherited from [TTS release 0.9.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.9.0).
+- `PIPECAT_TOOLBAR_REPO` pointing at a TTS source checkout no longer drops the hash-pinned STT
+  constraints (they come from this repository's `constraints/`).
 
 ### Added
 
-- macOS app: running services are restored on the next launch (preference `restoreOnLaunch`, on by default; the toggle is in the panel's gear menu).
+- Server pin checks (`python_tests/test_server_pins.py`): the TTS artifact, `pyproject.toml`,
+  `uv.lock`, `constraints/tts.txt` (now with a provenance header) and the recorded server fixtures
+  (`python_tests/fixtures/provenance.json`) must describe the same release, and the wheel's
+  requirements must be satisfied by the recorded pins. `scripts/compile_tts_constraints.py`
+  regenerates `constraints/tts.txt` from the server release's `uv.lock`.
+
+## [0.4.0] - 2026-11-16
+
+Shipped as 0.9.1 alongside [TTS server 0.9.1](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.9.1).
+
+### Added
+
+- Moonshine STT (port 9965, English only: model spec `medium-streaming@en`). It is not a Hugging Face model, so the app passes the spec as `--model` and shows it as the model. Deleting it removes only its Python environment; its weights stay on disk (see "Model source" in `docs/architecture.md`). The app forwards `MOONSHINE_VOICE_CACHE` to its child processes and never deletes that directory.
+
+### Changed
+
+- STT installs now go through `pipecat-local-stt-server` 0.6.0 instead of 0.5.0, for all engines (constraints regenerated, source excerpt re-recorded). Regenerating also re-resolved the transitive pins of the Whisper, Parakeet and Nemotron environments.
+- `HF_TOKEN` is now passed only to services whose weights come from the Hugging Face cache; a service whose weights live elsewhere gets no token.
+- the detail page's Delete offers Delete Everything only for models in the Hugging Face cache. Tone, Apple Speech and Moonshine show a single Delete. Before, every model with a download offered it (see "Model source" in `docs/architecture.md`).
+
+### Fixed
+
+- a suggested model whose Start needs a package refresh now keeps its Running-panel row, showing the install progress and Cancel, until it is starting; Cancel in that window, including between the refresh and the read after it, stops the start. Before, the category disappeared for the length of the install. A sibling variant's environment change during the read after the refresh no longer drops that Start.
+
+## [0.3.0] - 2026-10-31
+
+Shipped as 0.9.0 alongside [TTS server 0.9.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.9.0).
+
+### Added
+
+- running services are restored on the next launch (preference `restoreOnLaunch`, on by default; the toggle is in the panel's gear menu).
   A stale or busy port ends Failed and is not retried.
-- macOS app: Quit asks for confirmation when a client is connected to a server the app started.
+- Quit asks for confirmation when a client is connected to a server the app started.
   It also asks when the count cannot be read.
   Connections are counted from one bounded `lsof` call, excluding the app's own sockets.
   An `lsof` still running at its 2 s deadline is sent SIGKILL, and the count is unknown (asks).
@@ -62,23 +94,23 @@ Inherited from [TTS release 0.9.0](https://github.com/vr000m/pipecat-local-tts-s
   A manual Log Out / Restart / Shut Down check has not run.
   Half-open peers count until keepalive reaps them: about 140 s at the TTS server's keepalive defaults.
   The STT servers' keepalive is not verified here.
-- `macos/scripts/quit_app.sh` says a quit confirmation may be waiting in the app when it exits 1.
-- macOS app: Reset also clears the saved set of services to restore (`restore.wanted`), so the next
+- `scripts/quit_app.sh` says a quit confirmation may be waiting in the app when it exits 1.
+- Reset also clears the saved set of services to restore (`restore.wanted`), so the next
   launch restores none. Quitting never changes the set; a Stop during shutdown still clears that service.
-- `just app-smoke` (`macos/scripts/ui_smoke.sh`) relaunches with tone wanted and restore on.
+- `just app-smoke` (`scripts/ui_smoke.sh`) relaunches with tone wanted and restore on.
   It checks an External tone server is adopted and no server of the app's own is started.
   Every launch uses a throwaway `PIPECAT_TOOLBAR_DEFAULTS_SUITE` plus `-restoreOnLaunch` and
   `-restore.wanted` launch arguments.
   The run fails if a read-only hash of the real `restore.wanted` changed.
-- macOS app: the Running panel suggests a model for the idle category.
+- the Running panel suggests a model for the idle category.
   It appears when the other category has an active service: starting, running, stopping, external, or failed at runtime.
   It offers the model you last started there.
   Otherwise it offers the default, then the first installed model whose cache check does not refuse it.
   It never suggests `tone`, and Reset clears the last-used choice (`lastUsed.tts`, `lastUsed.stt`).
 
-## [0.8.3] - 2026-10-28
+## [0.2.3] - 2026-10-28
 
-Inherited from [TTS release 0.8.3](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.3).
+Shipped as 0.8.3 alongside [TTS server 0.8.3](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.3).
 
 ### Fixed
 
@@ -87,22 +119,22 @@ Inherited from [TTS release 0.8.3](https://github.com/vr000m/pipecat-local-tts-s
   has not quit within `QUIT_WAIT_SECS`. It now signs with the self-signed `Code Signing` identity when the
   keychain has it (ad hoc otherwise; it used to always sign ad hoc), so Microphone / Speech Recognition
   grants carry across `app-open` and `app-install`.
-- Both recipes share `macos/scripts/quit_app.sh`: one `QUIT_WAIT_SECS` deadline for the whole step,
+- Both recipes share `scripts/quit_app.sh`: one `QUIT_WAIT_SECS` deadline for the whole step,
   osascript calls included (one that ignores SIGTERM is killed). Exit 1 when the app is still running, or
   osascript gave no answer, at the deadline; exit 3 when osascript fails or answers anything but true/false,
   so whether the app runs is unknown and the recipe stops instead of reading it as "not running". No
   osascript outlives the script on any exit path.
-- Both recipes choose their default identity in `macos/scripts/resolve_sign_identity.sh`, which asks
-  `macos/scripts/has_sign_identity.sh`. That check reads only the identity lines of the keychain listing
+- Both recipes choose their default identity in `scripts/resolve_sign_identity.sh`, which asks
+  `scripts/has_sign_identity.sh`. That check reads only the identity lines of the keychain listing
   and takes an identity as codesign does: a full 40-hex SHA-1 (any case) or a case-insensitive substring of
   a name. It is advisory: two identities sharing a name still count as present, and codesign decides at
   signing. A failing `security` query stops the recipe instead of reading as "no identity". The old
   `app-install` check matched the listing's own `Policy: Code Signing` header, so it passed for
   `Code Signing` on every machine and a missing identity failed only at the last build step.
 
-## [0.8.2] - 2026-10-27
+## [0.2.2] - 2026-10-27
 
-Inherited from [TTS release 0.8.2](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.2).
+Shipped as 0.8.2 alongside [TTS server 0.8.2](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.2).
 
 ### Added
 
@@ -110,29 +142,29 @@ Inherited from [TTS release 0.8.2](https://github.com/vr000m/pipecat-local-tts-s
   identity (so Microphone / Speech Recognition grants survive rebuilds) and install it into
   `~/Applications`, replacing any installed copy.
 
-## [0.8.1] - 2026-10-27
+## [0.2.1] - 2026-10-27
 
-Inherited from [TTS release 0.8.1](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.1).
+Shipped as 0.8.1 alongside [TTS server 0.8.1](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.1).
 
 ### Changed
 
-- Pipecat Service Toolbar: the External probe waits 2 s for a server's hello (was 5 s). Measured
+- the External probe waits 2 s for a server's hello (was 5 s). Measured
   across every TTS backend mid-synthesis and every STT engine while its model loads, the slowest
   hello was 187 ms.
 
 ### Fixed
 
-- Pipecat Service Toolbar: an External row's LaunchAgent label is cut in the middle, not at the
+- an External row's LaunchAgent label is cut in the middle, not at the
   end, so `pipecat.stt-server.kyutai` / `…parakeet` / `…nemotron` stay distinguishable in the
   panel, and hovering the line shows the whole label.
 
-## [0.8.0] - 2026-10-27
+## [0.2.0] - 2026-10-27
 
-Inherited from [TTS release 0.8.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.0).
+Shipped as 0.8.0 alongside [TTS server 0.8.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.8.0).
 
 ### Added
 
-- **Pipecat Service Toolbar adopts running servers (External).** At launch and while
+- **Adopts running servers (External).** At launch and while
   the panel is open (every 15 s) the app probes the catalog ports (loopback TCP) with
   a `server.hello` and shows a matching server it did not start as **External**;
   it starts its own only when none answers. External rows offer Try it (for STT, the
@@ -149,23 +181,23 @@ Inherited from [TTS release 0.8.0](https://github.com/vr000m/pipecat-local-tts-s
   token-protected servers are not discovered.
 - **Parakeet (9765) and Nemotron (9865)** STT services, matching the
   `pipecat.stt-server.parakeet` / `nemotron` agent ports, installed against their own
-  hash-pinned `macos/constraints/stt-parakeet.txt` / `stt-nemotron.txt` (regenerate with
-  `uv run python macos/scripts/compile_stt_constraints.py`). Parakeet needs `ffmpeg` on
+  hash-pinned `constraints/stt-parakeet.txt` / `stt-nemotron.txt` (regenerate with
+  `uv run python scripts/compile_stt_constraints.py`). Parakeet needs `ffmpeg` on
   the machine (Homebrew `/opt/homebrew/bin` or `/usr/local/bin`; the app adds those to
   Parakeet's server `PATH` only); without it the server exits with `BackendStartError:
   FFmpeg is not installed or not in your PATH`.
-- `macos/scripts/ui_smoke.sh` starts a tone server outside the app on 8665, checks the
+- `scripts/ui_smoke.sh` starts a tone server outside the app on 8665, checks the
   bootstrap log reports it as External and that it is still running after Quit
   (skipped when 8665 is held, a `pipecat.tts-server.tone` LaunchAgent is loaded, or the
   repo `.venv` cannot import `tts_server`).
 
 ### Changed
 
-- Pipecat Service Toolbar: STT now runs through the upstream
+- STT now runs through the upstream
   `pipecat-local-stt-server==0.5.0` CLI (`python -m stt_server serve --supervised`,
   `prefetch --json`); the bundled `pipecat_app_helper.py`, `PIPECAT_TOOLBAR_HELPER`
   and the helper's cooperative cancel are removed, with the helper's `MODEL_REVISIONS`
-  pins and `ServiceCatalog.sttModelRevisions` (0.7.0 listed both). An STT server on an
+  pins and `ServiceCatalog.sttModelRevisions` (0.1.0 listed both). An STT server on an
   older version is adopted by its hello, but an app-started STT server needs 0.5.0.
 - STT model weights are pinned by upstream, not by the app: `pipecat-local-stt-server`
   0.5.0 pins the four default models (Whisper large-v3-turbo, Kyutai 1B, Parakeet,
@@ -175,18 +207,13 @@ Inherited from [TTS release 0.8.0](https://github.com/vr000m/pipecat-local-tts-s
 - `docs/supervised-contract.json` lists error codes per emitter (contract `version` 2;
   version 1 had one flat list); `ModelInvalidError` is emitted by the STT server only (`tts_server/supervise.py` is unchanged).
 
-## [0.7.0] - 2026-10-25
+## [0.1.0] - 2026-10-25
 
-Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.7.0).
+Shipped as 0.7.0 alongside [TTS server 0.7.0](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.7.0).
 
 ### Added
 
-- **App-path smoke** (`just smoke-supervised [backend]`, `just smoke-supervised-all`;
-  `tests/smoke/supervised_smoke.py`): drives a backend the way the menu bar app does
-  (`prefetch --json --check`, `serve --supervised` on an ephemeral loopback port with the
-  app's environment, the `ready` line, a TCP synthesis, a busy-port `EADDRINUSE`, and a
-  stdin-EOF stop with no orphan). Never downloads weights unless `--download`.
-- **Pipecat Service Toolbar** (`macos/`): native SwiftUI menu bar app that installs
+- **Pipecat Service Toolbar**: native SwiftUI menu bar app that installs
   and serves local speech services on fixed loopback ports. TTS: every backend here
   (bundled pinned `uv` + this wheel + `uv.lock` constraints; a managed CPython 3.12 and
   one venv per service). STT: Apple Speech (SpeechAnalyzer behind a native WebSocket
@@ -212,7 +239,7 @@ Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-s
   server error messages and ends cleanly when the output device changes. A cancelled queued install records
   nothing; an install step no longer waits on a grandchild holding its pipes.
   STT environments install against checked-in, hash-pinned constraints
-  (`macos/constraints/stt-<engine>.txt`, `--require-hashes`) and load model weights
+  (`constraints/stt-<engine>.txt`, `--require-hashes`) and load model weights
   pinned to a commit, which `prefetch` downloads and `serve-stt` loads; neither pin
   marks an existing environment outdated. The supervised/prefetch JSON lines both
   emitters write (this server and the STT helper) are fixed in
@@ -233,15 +260,10 @@ Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-s
 
 ### Changed
 
-- `docs/protocol.md` §3 now states the request lifecycle on a reused connection
-  (no wire change, protocol stays v0.1): every refusal of an append or commit keeps the
-  buffer, so a client MUST `input_text.clear` before its next append after any append or
-  commit that was not admitted and that it will not retry (a refusal, a failed send, or a
-  request abandoned before it was admitted), and SHOULD clear before every request; a
-  barge-in cancel must follow the commit it stops. "Try it" now does
-  both, so a refused request's text can no longer prefix the next one and Stop between
+- "Try it" clears the request buffer (`input_text.clear`) before every request and sends a
+  cancel behind the commit a Stop interrupts, so a refused request's text can no longer prefix the next one and Stop between
   append and commit no longer leaves a synthesis holding the connection.
-- Pipecat Service Toolbar internals (no change to behaviour, ports or on-disk layout):
+- Internals (no change to behaviour, ports or on-disk layout):
   the per-service lifecycle state machine moved from the app target into
   `PipecatToolbarCore` as a pure reducer (`ServiceLifecycle.reduce`) plus an effect
   runner (`ServiceDriver`) with injectable environment, process, port, Apple Speech
@@ -255,10 +277,7 @@ Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-s
 
 ### Fixed
 
-- phonon: a q8/q4 conversion killed by SIGTERM (the app's Cancel) or `os._exit` no
-  longer leaves its temp folder forever; the next conversion of the same key removes
-  temp folders whose process is gone.
-- Pipecat Service Toolbar: a late refresh (Reset, Try Again, a sibling's install, a
+- a late refresh (Reset, Try Again, a sibling's install, a
   slow cache probe) no longer hides a running server or undoes a Delete; Cancel during
   the busy-port check works and a late answer is dropped; an obsolete server's `error`
   line no longer judges the next server; an Apple Speech download already under way
@@ -268,7 +287,7 @@ Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-s
   refuses that install instead of resolving unpinned; choosing "Default voice" in
   Try it is remembered; stale audio no longer replays after an output-device change;
   `just app-open` quits the bundle id the build used.
-- Pipecat Service Toolbar: an environment from before variants keeps its builder
+- an environment from before variants keeps its builder
   installed when a sibling variant installs or is cancelled; a variant record that
   can't be written or removed now fails the install or removal instead of reporting
   success; Reset is refused while a service is running, installing or removing;
@@ -276,7 +295,7 @@ Inherited from [TTS release 0.7.0](https://github.com/vr000m/pipecat-local-tts-s
   environment manager's subprocesses (a cache probe included) and waits for a
   bootstrap or Reset in flight; Try Again and Reset no longer start a second
   bootstrap or Reset while one runs.
-- Pipecat Service Toolbar: Delete Everything on one variant keeps (and reports) the
+- Delete Everything on one variant keeps (and reports) the
   model folders when a sibling's cache check gives no answer, such as one quit stopped,
   so quitting while Phonon 8-bit is removed no longer deletes the voices Phonon still
   uses; a late bootstrap refresh after quit no longer attaches an Apple Speech install,

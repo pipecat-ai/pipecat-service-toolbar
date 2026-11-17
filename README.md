@@ -411,12 +411,14 @@ fails the build: remove that wheel from `.build/artifacts/` and retry.
 `constraints/tts.txt` records the original TTS dependency pins, while each
 `constraints/stt-*.txt` retains the existing hash-pinned STT environment.
 
-App releases use `app-version.json`; increment its build integer for each
-distributed build, independently of server package versions. The initial
-extracted build is 0.9.1 (474). Changing a server pin requires updating the
-matching artifact, constraints and compatibility fixtures, then running all gates.
-Unbundled `swift run` uses the same pinned artifact preparation. Explicit
-`PIPECAT_TOOLBAR_WHEEL` and `PIPECAT_TOOLBAR_CONSTRAINTS` overrides support local
-server development; `PIPECAT_TOOLBAR_REPO` can explicitly build a TTS checkout.
-Set `PIPECAT_TOOLBAR_STT_CONSTRAINTS` to this checkout's `constraints/` when using
-that separate source checkout override. Bundled apps always use their bundled tools.
+App releases use `app-version.json` and [CHANGELOG.md](CHANGELOG.md), independently of the
+server package versions: increment the build integer for every distributed build, and bump the
+version only together with a new changelog entry. The first build from this repository is
+0.4.0 (474); builds before it were numbered after the TTS server (the installed 0.9.1 builds,
+468 and earlier, are 0.4.0 and earlier in the changelog). Moving a server pin is a separate
+change with its own checklist: see "Moving a server pin" in
+[docs/migration.md](docs/migration.md). Unbundled `swift run` uses the same pinned artifact
+preparation. Explicit `PIPECAT_TOOLBAR_WHEEL` and `PIPECAT_TOOLBAR_CONSTRAINTS` overrides support
+local server development; `PIPECAT_TOOLBAR_REPO` can explicitly build a TTS checkout, and its STT
+environments still install against this repository's `constraints/` (override the folder with
+`PIPECAT_TOOLBAR_STT_CONSTRAINTS`). Bundled apps always use their bundled tools.

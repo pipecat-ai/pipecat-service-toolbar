@@ -43,7 +43,7 @@ wheels = [
 
 [[package]]
 name = "pipecat-service-toolbar"
-version = "0.9.1"
+version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pipecat-local-tts-server" },

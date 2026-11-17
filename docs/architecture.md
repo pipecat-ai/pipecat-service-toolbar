@@ -57,7 +57,7 @@ built `.app` always uses its bundle.
 | `PIPECAT_TOOLBAR_UV` | The `uv` binary (else `~/.local/bin`, `~/.cargo/bin`, Homebrew, `PATH`). |
 | `PIPECAT_TOOLBAR_WHEEL` | The TTS server wheel (used only if the file exists). |
 | `PIPECAT_TOOLBAR_CONSTRAINTS` | The constraints file installed with that wheel (normally `constraints/tts.txt`). |
-| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | The folder of hash-pinned `stt-<engine>.txt` constraints (else `constraints/` of the checkout). Outside the bundle a missing file installs unpinned; a bundled build refuses the install instead (`Tools.constraints(for:)` throws). |
+| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | The folder of hash-pinned `stt-<engine>.txt` constraints (else `constraints/` of this toolbar checkout, found from the executable or working directory, even when `PIPECAT_TOOLBAR_REPO` names a TTS checkout). Outside the bundle a missing file installs unpinned; a bundled build refuses the install instead (`Tools.constraints(for:)` throws). |
 | `PIPECAT_TOOLBAR_REPO` | Explicit TTS source checkout override; normal development uses this app repository's pinned artifact. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
