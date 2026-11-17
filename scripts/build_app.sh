@@ -13,7 +13,6 @@ set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
 MACOS_DIR="$(dirname "$SCRIPTS")"
-REPO_ROOT="$MACOS_DIR"
 CONFIG="${CONFIG:-release}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 APP="$MACOS_DIR/build/Pipecat Service Toolbar.app"

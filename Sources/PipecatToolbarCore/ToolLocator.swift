@@ -79,7 +79,8 @@ public enum ToolLocatorError: LocalizedError, Sendable {
 
 /// Finds the tools. Order: the app bundle, then environment overrides
 /// (`PIPECAT_TOOLBAR_UV`, `_WHEEL`, `_CONSTRAINTS`), then, when running
-/// unbundled from a checkout (`swift run`), a wheel built from the repo.
+/// unbundled from a checkout (`swift run`), the checksum-pinned wheel `scripts/prepare_tools.py`
+/// fetches for this repository, or a wheel built from the TTS checkout `PIPECAT_TOOLBAR_REPO` names.
 public enum ToolLocator {
     public static func locate(
         bundle: Bundle = .main,
@@ -111,7 +112,7 @@ public enum ToolLocator {
 
         let repo = findRepositoryRoot(environment: environment)
         let sttConstraints = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"].map { URL(filePath: $0) }
-            ?? defaultSTTConstraints(repo: repo, toolbarRoot: findToolbarRoot(environment: environment))
+            ?? defaultSTTConstraints(repo: repo, toolbarRoot: findToolbarRoot())
 
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
             let constraints = environment["PIPECAT_TOOLBAR_CONSTRAINTS"].map { URL(filePath: $0) }
@@ -164,7 +165,7 @@ public enum ToolLocator {
     /// The checkout whose `artifacts/tts.json` marks it as this toolbar repository, found from the
     /// executable and the working directory only. `PIPECAT_TOOLBAR_REPO` is deliberately not
     /// consulted: it may name a TTS source checkout, which carries none of the toolbar's pins.
-    static func findToolbarRoot(environment: [String: String]) -> URL? {
+    static func findToolbarRoot() -> URL? {
         var starts = [Bundle.main.executableURL?.deletingLastPathComponent()]
         starts.append(URL(filePath: FileManager.default.currentDirectoryPath))
         return toolbarRoot(from: starts.compactMap { $0 })
@@ -186,9 +187,15 @@ public enum ToolLocator {
     /// Where the hash-pinned STT constraints come from when `PIPECAT_TOOLBAR_STT_CONSTRAINTS` is
     /// unset: this toolbar repository's `constraints/`, even when `repo` is an explicit TTS source
     /// checkout (`PIPECAT_TOOLBAR_REPO`), so that override never installs STT environments unpinned.
-    /// `repo` is used only when no toolbar root is found (an unbundled binary run elsewhere).
+    /// `repo` is used only when no toolbar root is found (an unbundled binary run elsewhere). A `repo`
+    /// that is itself a toolbar checkout (`PIPECAT_TOOLBAR_REPO` naming another clone) wins over the
+    /// root found from the executable, so the wheel `buildFromRepository` prepares and the pins it
+    /// is installed with come from the same checkout.
     static func defaultSTTConstraints(repo: URL?, toolbarRoot: URL?) -> URL? {
-        (toolbarRoot ?? repo)?.appending(path: "constraints")
+        if let repo, FileManager.default.fileExists(atPath: repo.appending(path: "artifacts/tts.json").path) {
+            return repo.appending(path: "constraints")
+        }
+        return (toolbarRoot ?? repo)?.appending(path: "constraints")
     }
 
     static func buildFromRepository(

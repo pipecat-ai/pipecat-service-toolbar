@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Succeed when the keychain lists a code-signing identity that <identity> names.
 #
-#   macos/scripts/has_sign_identity.sh "Code Signing"
+#   scripts/has_sign_identity.sh "Code Signing"
 #
-# Private probe of macos/scripts/resolve_sign_identity.sh (its only caller, which `just
+# Private probe of scripts/resolve_sign_identity.sh (its only caller, which `just
 # app-open` and `just app-install` call); kept apart so the listing parse is testable alone.
 #
 # ADVISORY: an early "is something here that codesign might accept" check, run before the

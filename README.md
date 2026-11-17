@@ -70,8 +70,8 @@ can run side by side. Variants share their family's Python environment.
 
 TTS services speak the [TTS server protocol](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/protocol.md) (`tts_server`). STT services speak the
 protocol of [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server).
-Any client of either works unchanged. The ports match the `just tts-install`
-and `just stt-*` launchd agents; see [Servers you didn't start](#servers-you-didnt-start)
+Any client of either works unchanged. The ports match the launchd agents the server repositories install
+(`just tts-install` and `just stt-*`, run there, not in this checkout); see [Servers you didn't start](#servers-you-didnt-start)
 for running both.
 
 ## Servers you didn't start
@@ -90,8 +90,8 @@ for running both.
   signals or stops an External server, and is not blocked by one.
   **Quit leaves it running**
   (the Quit item reads "Quit" when the app owns nothing, "Stop All & Quit" when it does).
-- **Beside launchd agents.** `just tts-install` and `just stt-*` agents use the
-  same ports, so a running agent whose hello matches shows as External. If
+- **Beside launchd agents.** The server repositories' `just tts-install` and `just stt-*`
+  agents use the same ports, so a running agent whose hello matches shows as External. If
   whatever holds the port does not identify as that service (a different
   backend or model, no hello, or a token), Start reports the port busy, naming
   the holder when `launchctl` confirms it (the agent's label).
@@ -142,7 +142,8 @@ for running both.
   That is about 140 s at the TTS server's keepalive defaults (`TTS_WS_PING_INTERVAL` 20 +
   `TTS_WS_PING_TIMEOUT` 120). The STT servers' keepalive is not verified here.
 - **Updating with no dropped clients**: the app's Quit stops its servers. For a
-  zero-drop update run the TTS server as a LaunchAgent (`just tts-install <backend>`);
+  zero-drop update run the TTS server as a LaunchAgent (`just tts-install <backend>` in the
+  pipecat-local-tts-server checkout);
   the app then shows it as External and leaves it running. TTS servers only.
 
 ### Known limits / unverified

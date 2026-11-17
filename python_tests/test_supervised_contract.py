@@ -25,7 +25,7 @@ stt wire rate. The lean job has no STT server installed, so:
   * every ``"event": "<name>"`` literal in ``tts_server`` is a contract event;
   * error codes, per emitter: the ``tts`` list == ``supervise.CODE_*``; the ``stt``
     list == upstream ``stt_server.supervise.CODE_*``, read from a verbatim recorded
-    excerpt of the release the app installs (``tests/_stt_upstream.py``) and from the
+    excerpt of the release the app installs (``python_tests/_stt_upstream.py``) and from the
     live package when it is importable; Swift ``SupervisedErrorCode`` == the union;
   * the Swift decoder (``ServerCLIEvent.CodingKeys``) reads only contract fields;
   * wire rate: contract == fixture ``ready.rate`` == Swift ``STTWire.rate``;
@@ -440,7 +440,7 @@ def test_stt_codes_equal_the_live_upstream_package_when_installed():
 )
 def test_recorded_stt_excerpt_is_verbatim_upstream_source():
     """The recorded excerpt is a verbatim copy of the release it names (no CI job has that
-    source; run it locally when re-recording, see ``tests/_stt_upstream.py``)."""
+    source; run it locally when re-recording, see ``python_tests/_stt_upstream.py``)."""
     site = Path(os.environ["PIPECAT_STT_SERVER_SITE"])
     version = upstream_stt().version
     assert (site / f"pipecat_local_stt_server-{version}.dist-info").is_dir(), (

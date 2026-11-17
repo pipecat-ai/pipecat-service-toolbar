@@ -206,14 +206,18 @@ def app_child_env(inherited: dict[str, str] | None = None) -> dict[str, str]:
 
 # --- ports the smoke must never use ------------------------------------------
 
-# Same pattern as python_tests/test_backend_registry.py's ``_RESOLVE``.
+# Same pattern as python_tests/test_macos_catalog_drift.py's ``_RESOLVE``.
 _RESOLVE_PORT = re.compile(r'^\s+\w+\)\s+printf .*?"127\.0\.0\.1"\s+"(\d+)"', re.MULTILINE)
 # The app's STT services sit next to tone (macos catalog, Service.swift).
 _APP_PORT_RANGE = range(8665, 8673)
 
 
-def canonical_ports(justfile: Path = REPO / "justfile") -> frozenset[int]:
-    """Operator/app ports (justfile ``_resolve`` map + the app's 8665-8672 block)."""
+def canonical_ports(
+    justfile: Path = REPO / "python_tests/fixtures/upstream/tts-justfile",
+) -> frozenset[int]:
+    """Operator/app ports (the TTS justfile's ``_resolve`` map, recorded under
+    ``python_tests/fixtures/upstream/`` because this repository's own justfile has none, plus the
+    app's 8665-8672 block)."""
     ports = {int(p) for p in _RESOLVE_PORT.findall(justfile.read_text())}
     return frozenset(ports | set(_APP_PORT_RANGE))
 

@@ -27,6 +27,20 @@ import Testing
         #expect(chosen?.standardizedFileURL == toolbar.appending(path: "constraints").standardizedFileURL)
     }
 
+    @Test func aToolbarCheckoutOverrideBringsItsOwnSTTConstraints() throws {
+        let (toolbar, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        let other = toolbar.deletingLastPathComponent().appending(path: "other-toolbar")
+        try FileManager.default.createDirectory(at: other.appending(path: "artifacts"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: other.appending(path: "artifacts/tts.json"))
+        // `repo` is a toolbar checkout that is not the one the executable runs from.
+        let chosen = ToolLocator.defaultSTTConstraints(repo: other, toolbarRoot: toolbar)
+        #expect(chosen?.standardizedFileURL == other.appending(path: "constraints").standardizedFileURL)
+        // A TTS source checkout carries none of the pins, so the executable's toolbar root still wins.
+        let fromTTS = ToolLocator.defaultSTTConstraints(repo: tts, toolbarRoot: toolbar)
+        #expect(fromTTS?.standardizedFileURL == toolbar.appending(path: "constraints").standardizedFileURL)
+    }
+
     @Test func theToolbarRootIsNotTheTTSCheckout() throws {
         let (_, tts, cleanup) = try Self.tree()
         defer { cleanup() }

@@ -65,6 +65,11 @@ def test_the_compatibility_tests_import_the_release_the_app_ships():
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     locked = [p["version"] for p in lock["package"] if p["name"] == PACKAGE]
     assert locked == [version], "uv.lock: run `uv lock` after changing the pin"
+    # The same file, not just the same version: the lock's wheel is the artifact the app bundles.
+    (entry,) = [p for p in lock["package"] if p["name"] == PACKAGE]
+    assert [(w["url"], w["hash"]) for w in entry["wheels"]] == [
+        (ARTIFACT["url"], f"sha256:{ARTIFACT['sha256']}")
+    ], "artifacts/tts.json and uv.lock name different wheels"
     # What the drift tests actually import (a stale .venv fails here, not silently later).
     assert importlib.metadata.version(PACKAGE) == version, "run `uv sync --locked`"
 

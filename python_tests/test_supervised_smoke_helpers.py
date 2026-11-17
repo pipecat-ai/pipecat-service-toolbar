@@ -19,3 +19,13 @@ def _swift_base_env_keys() -> set[str]:
 def test_app_env_mirrors_toollocator_base():
     """The smoke's child env is the app's ``ProcessEnvironment.base()`` key for key."""
     assert sc.APP_BASE_ENV_KEYS == _swift_base_env_keys()
+
+
+def test_canonical_ports_come_from_the_recorded_tts_justfile():
+    """This repository's own justfile has no ``_resolve`` table, so the default must be the
+    recorded TTS one: every TTS family port the app serves is off limits to the smoke."""
+    from ._macos_catalog import macos_catalog
+
+    tts = {e.port for e in macos_catalog().values() if e.kind == "tts" and not e.is_variant}
+    assert tts <= sc.canonical_ports()
+    assert not sc.usable_smoke_port(8765, sc.canonical_ports())

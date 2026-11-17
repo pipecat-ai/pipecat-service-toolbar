@@ -7,7 +7,7 @@
     "fixtures": {
       "python_tests/fixtures/upstream/tts-README.md": "a01f954c8701b23ee6b4608b47d5a0febff9799874b7483c6b8079773ba4b107",
       "python_tests/fixtures/upstream/tts-justfile": "66e2f21629c01f69ce1802de6c52006f53df56a76c61a0580fdb5dbd5ef3c790",
-      "docs/supervised-contract.json": "7d612ff9219d6236d5a815e0a90c862f1aeb57d4af874aaace2b31e6fc0abf0b"
+      "docs/supervised-contract.json": "b6c0fe483b9e400827557c32b6d7013d96652734720cca8efaf5439c542144c9"
     }
   },
   "stt": {
