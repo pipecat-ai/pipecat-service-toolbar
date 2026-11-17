@@ -7,27 +7,37 @@ speech to text) and serves each one on a fixed loopback port. Point a Pipecat
 app at the port and it uses the model with no cloud API. It has no Dock icon.
 Servers the app started stop when it quits, even if it crashes; servers it didn't start are left running. Quitting also cancels running installs and downloads.
 
+The app now lives in this repository. Replacing an existing installation through
+`just app-install` retains the same application identity, settings, environments,
+and model-cache locations when signed with the same identity. No reset is needed.
+See [migration and compatibility](docs/migration.md) and [release history](CHANGELOG.md).
+
 ## Quickstart
 
 Requires Apple Silicon and macOS 15+. Apple Speech needs macOS 26+.
 
 ```bash
-git clone https://github.com/vr000m/pipecat-local-tts-server.git
-cd pipecat-local-tts-server
-just app-open      # build macos/build/Pipecat Service Toolbar.app and launch it
+git clone https://github.com/pipecat-ai/pipecat-service-toolbar.git
+cd pipecat-service-toolbar
+uv sync --locked  # lean compatibility-test environment
+just app-open      # build build/Pipecat Service Toolbar.app and launch it
 ```
 
 `just app-install` builds and installs it into `~/Applications` instead, signed with the
 self-signed `Code Signing` identity so Microphone / Speech Recognition grants survive
 rebuilds (ad hoc is cdhash-bound and resets them). Both recipes pick the identity with
-`macos/scripts/resolve_sign_identity.sh` and quit a running copy first with
-`macos/scripts/quit_app.sh` (see the build knobs below).
+`scripts/resolve_sign_identity.sh` and quit a running copy first with
+`scripts/quit_app.sh` (see the build knobs below).
 
-Without `just`: `macos/scripts/build_app.sh`, then open the app. Building needs
+Without `just`: `scripts/build_app.sh`, then open the app. Building needs
 Xcode 16+ and [uv](https://docs.astral.sh/uv/).
 
 Click the cat in the menu bar, then **Add Models**. Click **Get** on a model,
 then **Start**.
+
+![Running services](docs/images/service-toolbar-panel.png)
+
+![Toolbar settings](docs/images/service-toolbar-settings.png)
 
 ## Services
 
@@ -58,7 +68,7 @@ can run side by side. Variants share their family's Python environment.
 | Whisper Large v3, Medium, Small, Base, Tiny | 9566–9570 | `mlx-community/whisper-{large-v3,medium,small,base,tiny}-mlx` |
 | Kyutai STT 2.6B (English) | 9666 | `kyutai/stt-2.6b-en-mlx` |
 
-TTS services speak this repo's protocol (`tts_server`). STT services speak the
+TTS services speak the [TTS server protocol](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/protocol.md) (`tts_server`). STT services speak the
 protocol of [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server).
 Any client of either works unchanged. The ports match the `just tts-install`
 and `just stt-*` launchd agents; see [Servers you didn't start](#servers-you-didnt-start)
@@ -194,11 +204,11 @@ for running both.
 These are service-construction snippets, not complete bots. For TTS, run from
 this source checkout after `uv sync --extra examples`, or copy the reference
 adapter into your bot project and adjust the import. See
-[Client integration](../docs/clients.md#use-the-pipecat-adapter) for a pipeline
+[Client integration](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/clients.md#use-the-pipecat-adapter) for a pipeline
 sketch and the packaged Python client's WAV example.
 
 ```python
-# TTS: examples/pipecat_tts_service.py in this repo
+# TTS: examples/pipecat_tts_service.py in pipecat-local-tts-server
 from examples.pipecat_tts_service import LocalTTSService
 
 tts = LocalTTSService(host="127.0.0.1", port=8765)
@@ -210,7 +220,7 @@ stt = LocalWebSocketSTTService(host="127.0.0.1", port=9465)
 
 The TTS adapter takes explicit endpoint arguments; environment variables alone
 do not configure it. To use `TTS_WS_HOST`/`TTS_WS_PORT`, resolve and pass them as
-shown in [Endpoints and authentication](../docs/clients.md#endpoints-and-authentication).
+shown in [Endpoints and authentication](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/clients.md#endpoints-and-authentication).
 For STT setup, consult the
 [STT client documentation](https://github.com/vr000m/pipecat-local-stt-server).
 
@@ -230,7 +240,7 @@ App diagnostics: `log stream --predicate 'subsystem == "ai.pipecat.ServiceToolba
 ## How it works
 
 - **TTS**: `uv pip install "pipecat-local-tts-server[<backend>] @ <bundled wheel>"`,
-  pinned to `uv.lock`, then `python -m tts_server prefetch` and
+  pinned to `constraints/tts.txt`, then `python -m tts_server prefetch` and
   `serve --supervised`.
 - **Whisper, Kyutai, Parakeet, Nemotron, Moonshine**: PyPI packages hash-pinned to the last
   transitive dependency (`constraints/stt-<engine>.txt`, `uv pip install
@@ -253,7 +263,7 @@ App diagnostics: `log stream --predicate 'subsystem == "ai.pipecat.ServiceToolba
   WebSocket server that speaks the same STT protocol.
 - **Supervision**: every server prints a JSON `ready` line and exits when the
   app closes its stdin. Every event and error code is fixed in
-  [`docs/supervised-contract.json`](../docs/supervised-contract.json).
+  [`docs/supervised-contract.json`](docs/supervised-contract.json).
 
 ## Docs
 
@@ -269,8 +279,8 @@ App diagnostics: `log stream --predicate 'subsystem == "ai.pipecat.ServiceToolba
 ```bash
 just app-run     # run unbundled from the checkout (swift run)
 just app-test    # Swift tests
-PIPECAT_TOOLBAR_E2E=1 swift test --package-path macos --filter EndToEnd   # real installs
-swift run --package-path macos PipecatServiceToolbar --snapshot /tmp/shots  # render the UI
+PIPECAT_TOOLBAR_E2E=1 swift test --package-path . --filter EndToEnd   # real installs
+swift run --package-path . PipecatServiceToolbar --snapshot /tmp/shots  # render the UI
 just app-smoke   # unattended UI smoke: render, launch, quit and SIGTERM with no leftovers
 ```
 
@@ -279,8 +289,8 @@ just app-smoke   # unattended UI smoke: render, launch, quit and SIGTERM with no
 app serves, and transcribes `say` clips through `STTClient`. It needs no permission
 prompt, but it skips unless the debug binary's own speech asset is installed (assets
 are reserved per client, so the bundled app's install does not count). Once:
-`swift build --package-path macos`, then
-`macos/.build/debug/PipecatServiceToolbar --apple-speech-selftest <16 kHz mono .wav>`
+`swift build --package-path .`, then
+`.build/debug/PipecatServiceToolbar --apple-speech-selftest <16 kHz mono .wav>`
 (downloads the asset if needed); `--apple-speech-status` prints `installed` after.
 
 `just app-smoke` (`scripts/ui_smoke.sh`) needs no Accessibility or Screen Recording
@@ -326,7 +336,7 @@ To check the server side of the app's contract without the app, `just smoke-supe
 `serve --supervised` commands the app builds, with its environment, on an ephemeral
 port: `ready`, a TCP synthesis, busy-port `EADDRINUSE`, and the stdin-EOF stop. Pass
 `--python <service env>/bin/python` to test an environment the app installed. See
-[tests/smoke/README.md](../tests/smoke/README.md#app-path-supervised_smokepy).
+[tests/smoke/README.md](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/tests/smoke/README.md#app-path-supervised_smokepy).
 
 The service lifecycle (install, start, stop, delete, and each service's part of quit)
 lives in `PipecatToolbarCore` as a reducer, `ServiceLifecycle.reduce(_ state: inout
@@ -338,7 +348,7 @@ Swift tests depend on Core alone, so a lifecycle change is tested without the ap
 target (`ServiceLifecycleTests`, `ServiceDriverTests`, `AppLifecycleTests`). Download sizes come from
 `ServiceCatalog.snapshots(for:)` in `Service.swift`; when a backend's
 `prefetch_specs(model)` changes (a pin, a codec, voice files), update that table:
-`uv run pytest tests/test_macos_catalog_drift.py` fails until they match.
+`uv run pytest python_tests/test_macos_catalog_drift.py` fails until they match.
 
 Unbundled runs find their tools through `PIPECAT_TOOLBAR_UV`, `PIPECAT_TOOLBAR_WHEEL`,
 `PIPECAT_TOOLBAR_CONSTRAINTS`, `PIPECAT_TOOLBAR_STT_CONSTRAINTS`
@@ -346,21 +356,21 @@ and `PIPECAT_TOOLBAR_REPO` (see
 [Architecture](docs/architecture.md#development-overrides)); a built app uses its bundle.
 
 After changing an STT requirement in `Service.swift`, regenerate its hash-pinned
-constraints (network needed; `tests/test_supervised_contract.py` fails until you do):
+constraints (network needed; `python_tests/test_supervised_contract.py` fails until you do):
 
 ```bash
-uv run python macos/scripts/compile_stt_constraints.py   # writes macos/constraints/stt-<engine>.txt
+uv run python scripts/compile_stt_constraints.py   # writes constraints/stt-<engine>.txt
 ```
 
 When `ServiceCatalog.sttServerRequirement` moves, also re-record
-`tests/fixtures/stt_server_<version>_source.txt` from the new tag (the lean tests fail until
+`python_tests/fixtures/stt_server_<version>_source.txt` from the new tag (the lean tests fail until
 its release line names the new version), then check it against that release's real source;
 no CI job installs the STT server, so this check is opt-in:
 
 ```bash
 # a directory holding stt_server/ and pipecat_local_stt_server-<version>.dist-info
 # (a site-packages, or the app's uv cache entry)
-PIPECAT_STT_SERVER_SITE=<dir> uv run pytest tests/test_supervised_contract.py -k verbatim
+PIPECAT_STT_SERVER_SITE=<dir> uv run pytest python_tests/test_supervised_contract.py -k verbatim
 ```
 
 STT model weights are pinned by upstream, not by the app (see How it works): the
@@ -368,7 +378,7 @@ default models' commits live in `pipecat-local-stt-server`'s `PINNED_REVISIONS`,
 one means a new STT release, then bumping `ServiceCatalog.sttServerRequirement` and
 regenerating the constraints. Other STT models follow `main`.
 
-Build knobs (environment variables read by `macos/scripts/`):
+Build knobs (environment variables read by `scripts/`):
 
 | Variable | Read by | Effect |
 |---|---|---|
@@ -385,3 +395,26 @@ Build knobs (environment variables read by `macos/scripts/`):
 ## License
 
 BSD-2-Clause. Model weights carry their own licences (table above).
+
+## Development and server pins
+
+`uv sync --locked` installs the lean TTS package for compatibility and live tone
+tests. Run `uv run pytest`, `swift test`, and `just app-build`. Python tests live in
+`python_tests/`; Swift tests live in `Tests/` so they work on case-insensitive filesystems.
+
+`artifacts/tts.json` pins the TTS wheel URL, filename, version and SHA-256.
+`scripts/prepare_tools.py` checks its checksum and package metadata before use;
+the verified download is reused from `.build/artifacts/`. A corrupt cached wheel
+fails the build: remove that wheel from `.build/artifacts/` and retry.
+`constraints/tts.txt` records the original TTS dependency pins, while each
+`constraints/stt-*.txt` retains the existing hash-pinned STT environment.
+
+App releases use `app-version.json`; increment its build integer for each
+distributed build, independently of server package versions. The initial
+extracted build is 0.9.1 (474). Changing a server pin requires updating the
+matching artifact, constraints and compatibility fixtures, then running all gates.
+Unbundled `swift run` uses the same pinned artifact preparation. Explicit
+`PIPECAT_TOOLBAR_WHEEL` and `PIPECAT_TOOLBAR_CONSTRAINTS` overrides support local
+server development; `PIPECAT_TOOLBAR_REPO` can explicitly build a TTS checkout.
+Set `PIPECAT_TOOLBAR_STT_CONSTRAINTS` to this checkout's `constraints/` when using
+that separate source checkout override. Bundled apps always use their bundled tools.

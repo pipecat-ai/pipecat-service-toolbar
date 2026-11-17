@@ -516,3 +516,10 @@ Not done here, for the operator: the Phase 3 spike and manual checks (second ter
 
 - `just app-install` does not relaunch the app after replacing it; relaunching when the old copy was running would complete the "update and come back" loop.
 - "Quit but leave servers running" (zero-downtime) remains available only through a LaunchAgent, and only for the TTS servers; a first-class version would need servers that outlive the app and a persistent ownership notion.
+
+
+### Repository migration — 2026-11-16
+
+This historic plan predates the standalone toolbar repository. Its original
+source paths and decisions are preserved. Current ownership and installation
+compatibility are described in [migration.md](../migration.md).

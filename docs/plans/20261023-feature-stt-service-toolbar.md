@@ -151,3 +151,10 @@ under "Known follow-ups" in [`../architecture.md`](../architecture.md):
 - The TTS Try-it falls back to 24000 Hz when a ready line has no rate.
 - STT Try-it phase logic lives in the app target, not Core.
 - The loopback listeners have no token (`../loopback-auth.md`).
+
+
+### Repository migration — 2026-11-16
+
+This historic plan predates the standalone toolbar repository. Its original
+source paths and decisions are preserved. Current ownership and installation
+compatibility are described in [migration.md](../migration.md).

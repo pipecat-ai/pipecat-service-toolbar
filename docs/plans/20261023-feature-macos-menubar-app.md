@@ -370,3 +370,10 @@ Swift / app:
    process left; `kill -9` the app → servers exit on stdin EOF.
 8. Remove tone → `envs/tone` gone, row back to Not installed.
 9. `uv run pytest tests/test_justfile_recipes.py` still passes.
+
+
+### Repository migration — 2026-11-16
+
+This historic plan predates the standalone toolbar repository. Its original
+source paths and decisions are preserved. Current ownership and installation
+compatibility are described in [migration.md](../migration.md).

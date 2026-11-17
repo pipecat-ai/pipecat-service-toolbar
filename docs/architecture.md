@@ -30,12 +30,12 @@ flowchart LR
 | Layer | Where | Responsibility |
 |---|---|---|
 | Catalog | `PipecatToolbarCore/Service.swift` | Each service's kind, runtime, port, model, licence and copy strings. |
-| Tools | `ToolLocator.swift` | Finds `uv`, the TTS wheel, the `uv.lock` constraints: bundle first, then the overrides below, then the repo checkout. |
+| Tools | `ToolLocator.swift` | Finds `uv`, the TTS wheel, the recorded TTS constraints: bundle first, then explicit overrides, then verified release artifacts from this checkout. |
 | Environments | `EnvironmentManager.swift` (actor) | Python, venvs, packages and model prefetch. Runs the offline cache checks and removal (which also probes outdated environments, falls back to the model's folder under `AppPaths.hubDir`, and throws `RemovalError` for model folders it cannot delete). It deletes only `models--*` folders directly in `AppPaths.hubDir` and `<backend>/<key>` folders in `AppPaths.derivedModelsDir`, whatever paths the probe reports: every component above the folder must resolve, symlinks included, to exactly that root or `<root>/<backend>`, so a symlinked backend directory can't carry a deletion outside it. Builds every command line by runtime. |
 | Processes | `Subprocess.swift` | The async spawn path (one of two; the other is `PortProbe`'s blocking `posix_spawn`, see Ports). `Process` wrapper safe under Swift 6: line streams for stdout and stderr, a held stdin pipe, SIGTERM then SIGKILL to the child's process group. Its exit always resolves (`notLaunched` for a failed launch, or a `stop()` before `run()`, which refuses the launch), and `stop()` returns once no process of the group is left. |
 | Ports | `PortProbe.swift` | Whether a loopback port is free and, if not, who holds it (`lsof`, plus the entry's `launchdLabel` agent, named only when its `launchctl print` pid equals the `lsof` pid): the "port busy" failure in the README's Problems section. `clientCounts` is the second spawn path: blocking and synchronous (Quit needs the answer now), not `Subprocess`. |
 | Download sizes | `HubSizes.swift`, `ServiceCatalog.snapshots(for:)` | Approximate download size of a service from the public Hugging Face tree API (shown in Add Models before install): the sum over every snapshot its install fetches, each at its pinned revision and through its own file filter (mlx-audio's allow patterns, dia's codec patterns, pocket_tts's `embeddings/*.safetensors`, an "all but docs" filter for the STT repos, an approximation: upstream STT `prefetch` fetches the whole repo or the config-named weights). An STT default model is sized at the commit upstream pins it to (`ServiceCatalog.sttPinnedRevisions`, upstream's `PINNED_REVISIONS`), any other STT model at its `main`. The table sits in `Service.swift` next to the model repos; a lean drift test compares it with `prefetch_specs(model)`. `prefetch --check --json` can't be the source: its events carry no allow patterns, and it needs the installed environment the size is shown before. |
-| Lifecycle | `ServiceLifecycle.swift`, `ServiceDriver.swift`, `AppLifecycle.swift` | The per-service state machine and the app-wide one, UI-free. `ServiceLifecycle.reduce(_ state: inout LifecycleState, _ event: LifecycleEvent) -> [LifecycleEffect]` mutates only the state it is handed and does no I/O; it makes every phase change and guard (a ready, exit or ready timeout from a replaced server, or one after Stop or Delete, changes nothing; a requested exit only completes a Stop; an install ending during a removal leaves the phase to it). On quit each layer stops its own work: `ServiceDriver.quit()` first stops new reads and intents, then the reducer's `shutdownRequested` cancels an Apple Speech install (the app runs it; a Python install is the manager's); `EnvironmentManager.shutdown()` stops the install or prefetch step subprocess in flight and every probe, sets `shuttingDown` so no later step or probe starts (the interrupted install unwinds), and waits up to 20 s for busy families; the bootstrap's own `uv build`/`uv export` are stopped through a `ProcessRegistry`. `ServiceDriver` (`@MainActor @Observable`) runs the effects through injectable seams (`ServiceEnvironment` for `EnvironmentManager`, `ServerProcess` for `Subprocess`, `NativeSpeechServer`, the port probe, Apple Speech, the clock and the timeouts in `ServiceDependencies`) and holds the progress the UI shows. `AppLifecycle.reduce(_ phase: inout AppPhase, _ event: AppEvent) -> [AppEffect]` owns bootstrap, Reset and quit the same way ([App lifecycle](#app-lifecycle)). |
+| Lifecycle | `ServiceLifecycle.swift`, `ServiceDriver.swift`, `AppLifecycle.swift` | The per-service state machine and the app-wide one, UI-free. `ServiceLifecycle.reduce(_ state: inout LifecycleState, _ event: LifecycleEvent) -> [LifecycleEffect]` mutates only the state it is handed and does no I/O; it makes every phase change and guard (a ready, exit or ready timeout from a replaced server, or one after Stop or Delete, changes nothing; a requested exit only completes a Stop; an install ending during a removal leaves the phase to it). On quit each layer stops its own work: `ServiceDriver.quit()` first stops new reads and intents, then the reducer's `shutdownRequested` cancels an Apple Speech install (the app runs it; a Python install is the manager's); `EnvironmentManager.shutdown()` stops the install or prefetch step subprocess in flight and every probe, sets `shuttingDown` so no later step or probe starts (the interrupted install unwinds), and waits up to 20 s for busy families; the bootstrap's artifact preparation (or explicit-source `uv build`/`uv export`) are stopped through a `ProcessRegistry`. `ServiceDriver` (`@MainActor @Observable`) runs the effects through injectable seams (`ServiceEnvironment` for `EnvironmentManager`, `ServerProcess` for `Subprocess`, `NativeSpeechServer`, the port probe, Apple Speech, the clock and the timeouts in `ServiceDependencies`) and holds the progress the UI shows. `AppLifecycle.reduce(_ phase: inout AppPhase, _ event: AppEvent) -> [AppEffect]` owns bootstrap, Reset and quit the same way ([App lifecycle](#app-lifecycle)). |
 | Protocols | `TTSClient.swift`, `TTSRequestMachine.swift`, `TTSRequestDriver.swift`, `STTClient.swift`, `STTWebSocketServer.swift`, `PCMStreamConverter.swift` | WebSocket clients for both wire protocols, the TTS Try it request lifecycle (a pure state machine and the driver that runs it on a connection), plus a native stt-protocol server; `STTWire` is the one definition of the stt audio format. |
 | State | `AppModel`, `ServiceModel` (`@MainActor @Observable`) | Page navigation, delete confirmation. `AppModel` is `AppLifecycle`'s adapter: it sends the events, runs the effects (the bootstrap and Reset jobs, the quit shutdown) and reads the derived flags (`AppPhase.allowsReset`, `acceptsServiceActions`) the views enable their buttons from. `ServiceModel` is a thin adapter over its `ServiceDriver`: it publishes the driver's state, forwards intents, and is the driver's `ServiceHost` (the environment manager, paths, Try it sessions, Apple Speech). |
 | Audio | `AudioPlayer`, `TryItSession`, `STTTryItSession`, `AppleSpeech` | TTS playback, microphone and sample capture, SpeechAnalyzer. |
@@ -56,9 +56,9 @@ built `.app` always uses its bundle.
 |---|---|
 | `PIPECAT_TOOLBAR_UV` | The `uv` binary (else `~/.local/bin`, `~/.cargo/bin`, Homebrew, `PATH`). |
 | `PIPECAT_TOOLBAR_WHEEL` | The TTS server wheel (used only if the file exists). |
-| `PIPECAT_TOOLBAR_CONSTRAINTS` | The `uv.lock` constraints file installed with that wheel. |
-| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | The folder of hash-pinned `stt-<engine>.txt` constraints (else `macos/constraints/` of the checkout). Outside the bundle a missing file installs unpinned; a bundled build refuses the install instead (`Tools.constraints(for:)` throws). |
-| `PIPECAT_TOOLBAR_REPO` | The repo checkout to build the wheel from when no wheel is given. |
+| `PIPECAT_TOOLBAR_CONSTRAINTS` | The constraints file installed with that wheel (normally `constraints/tts.txt`). |
+| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | The folder of hash-pinned `stt-<engine>.txt` constraints (else `constraints/` of the checkout). Outside the bundle a missing file installs unpinned; a bundled build refuses the install instead (`Tools.constraints(for:)` throws). |
+| `PIPECAT_TOOLBAR_REPO` | Explicit TTS source checkout override; normal development uses this app repository's pinned artifact. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
 ## Runtimes
@@ -67,7 +67,7 @@ Each service has one of three `ServiceRuntime` values:
 
 | Runtime | Install | Serve | Services |
 |---|---|---|---|
-| `ttsServer(extra:)` | `uv pip install "pipecat-local-tts-server[extra] @ <bundled wheel>"` with `uv.lock` constraints, then `python -m tts_server prefetch --json` | `python -m tts_server serve --supervised` | 8 TTS backends |
+| `ttsServer(extra:)` | `uv pip install "pipecat-local-tts-server[extra] @ <bundled wheel>"` with recorded constraints, then `python -m tts_server prefetch --json` | `python -m tts_server serve --supervised` | 8 TTS backends |
 | `sttHelper(engine:requirements:)` (the case name predates the helper's removal) | `uv pip install --require-hashes <pinned PyPI requirements>` with the engine's `stt-<engine>.txt` constraints, then `python -m stt_server prefetch --backend B --model R --json` (weights follow the repo's `main`) | `python -m stt_server serve --supervised --backend B` (`B` is the entry's expected backend name; Whisper is `mlx`) | Whisper, Kyutai, Parakeet, Nemotron, Moonshine (`--model <spec>`, weights from its own CDN) |
 | `appleSpeech` | `AssetInventory` model download | `STTWebSocketServer` in-process | Apple Speech |
 
@@ -634,33 +634,34 @@ with an observed lifecycle change.
 
 ## Packaging
 
-`macos/scripts/build_app.sh` assembles `Pipecat Service Toolbar.app` in six steps:
+`scripts/build_app.sh` assembles `Pipecat Service Toolbar.app` in six steps:
 
-1. Builds the TTS wheel (`uv build`) and exports `constraints.txt` from
-   `uv.lock`.
+1. Downloads or reuses the exact TTS wheel in `artifacts/tts.json`, verifies its
+   SHA-256 and metadata, and copies the recorded `constraints/tts.txt`. App version
+   and build number come from `app-version.json`.
 2. Fetches the pinned `uv` release and verifies its SHA-256.
 3. Compiles a release build.
 4. Renders the icon from the vector catmark (`--render-icon`).
 5. Copies `uv`, the wheel, the constraints and the checked-in STT
-   constraints (`macos/constraints/stt-*.txt`) into `Contents/Resources`.
+   constraints (`constraints/stt-*.txt`) into `Contents/Resources`.
 6. Codesigns inside-out with the hardened runtime. The only entitlement is
    microphone input, for STT Try it.
 
 Python itself is not bundled, and the bundle is about 43 MB, mostly `uv`.
 
 `just app-open` and `just app-install` build with `build_app.sh`, then call
-`macos/scripts/quit_app.sh <bundle-id>`, which quits a running copy and waits for it to
+`scripts/quit_app.sh <bundle-id>`, which quits a running copy and waits for it to
 exit (the quit is asynchronous, and the app stops its servers first) before launching
 the new build or replacing the installed bundle; `QUIT_WAIT_SECS` (default 30) is one
 deadline for the whole step (the exact bound and exit codes are in the `quit_app.sh`
 header), an osascript call that ignores SIGTERM is killed, and no osascript outlives the
 script on any exit path; an osascript failure stops the recipe rather than reading as
 "not running". Before the build, both take the signing identity from
-`macos/scripts/resolve_sign_identity.sh`, where both recipes choose their default (`Code
+`scripts/resolve_sign_identity.sh`, where both recipes choose their default (`Code
 Signing`; `build_app.sh` alone keeps its ad-hoc default for `just app-build`): an
 explicit `SIGN_IDENTITY` wins; unset, `app-open` gets `Code Signing` when the keychain
 has it, else ad hoc, and `app-install` (`--require`) fails before the build. It asks the
-keychain through `macos/scripts/has_sign_identity.sh <identity>`, which reads the
+keychain through `scripts/has_sign_identity.sh <identity>`, which reads the
 identity as codesign does: exactly 40 hex digits is a SHA-1 hash, matched in any case
 against the listed hashes alone; anything else is a case-insensitive substring of the
 quoted identity names. Nothing else (the header, a partial hash, the status) matches,
@@ -673,14 +674,14 @@ the bare file name.
 
 ### Pins
 
-- **STT packages.** `macos/constraints/stt-<engine>.txt` pins every transitive
+- **STT packages.** `constraints/stt-<engine>.txt` pins every transitive
   dependency of an engine's requirements with sha256 hashes, resolved for
   CPython 3.12 on arm64 macOS 15. They are generated, checked in (so a build is
   reproducible offline) and installed with `--require-hashes` (verified for every
   dependency, mlx and torch wheels included, with uv 0.12.5). After changing a
   requirement in `Service.swift`, regenerate them (network needed):
-  `uv run python macos/scripts/compile_stt_constraints.py`. The TTS export from
-  `uv.lock` stays `--no-hashes`.
+  `uv run python scripts/compile_stt_constraints.py`. The recorded TTS constraints were exported from the source server lockfile
+  with `--no-hashes`; the wheel itself is SHA-256 pinned.
 - **STT weights are pinned upstream, not by the app.** `pipecat-local-stt-server` 0.6.0
   pins the four default models (Whisper large-v3-turbo, Kyutai 1B, Parakeet, Nemotron) to
   a recorded Hub commit in code (`PINNED_REVISIONS`); `prefetch --json` `start`/`check`
@@ -703,18 +704,18 @@ the bare file name.
 The app reads the same JSON lines from two independent emitters: `tts_server`
 (`serve --supervised`, `prefetch --json`) and the upstream `stt_server` CLI. Their events,
 fields, types and error codes are fixed in `docs/supervised-contract.json`.
-`tests/test_supervised_contract.py` runs the TTS emitter on stub inputs and checks each
+`python_tests/test_supervised_contract.py` runs the TTS emitter on stub inputs and checks each
 line against it. The lean job cannot install the STT server, so the STT side is checked
 against recorded upstream artifacts instead: a real 0.6.0 `ready` and `error` line
-(`tests/fixtures/stt_supervised_lines.jsonl`), a real 0.6.0 kyutai `prefetch --check --json`
-(`tests/fixtures/stt_prefetch_check_lines.jsonl`: the `check` row then the `summary` that
+(`python_tests/fixtures/stt_supervised_lines.jsonl`), a real 0.6.0 kyutai `prefetch --check --json`
+(`python_tests/fixtures/stt_prefetch_check_lines.jsonl`: the `check` row then the `summary` that
 `EnvironmentManager.cacheStatus` reads, recorded offline on an empty cache and re-recorded by
 the opt-in `-k verbatim` run), Moonshine's real 0.6.0 `prefetch` output
-(`tests/fixtures/stt_prefetch_*_moonshine_*.jsonl`: `--check` on an empty and a full cache,
+(`python_tests/fixtures/stt_prefetch_*_moonshine_*.jsonl`: `--check` on an empty and a full cache,
 and a fetch with the weights cached; its rows name a synthetic `moonshine-voice/<arch>-<lang>`
 repo and a path outside the Hugging Face cache, and the Swift tests replay them through
 `cacheStatus` and `remove`), and a verbatim excerpt of the 0.6.0 source
-(`tests/fixtures/stt_server_0.6.0_source.txt`: its `CODE_*` error codes and backend
+(`python_tests/fixtures/stt_server_0.6.0_source.txt`: its `CODE_*` error codes and backend
 registry, checked against the live package too where it is importable). The test also
 checks the Swift decoder (`ServerCLIEvent`), the error codes (`SupervisedErrorCode`, the
 union of both emitters' lists) and the stt wire rate (`STTWire.rate`) against the contract.
@@ -726,7 +727,7 @@ union of both emitters' lists) and the stt wire rate (`STTWire.rate`) against th
 | Swift unit (`swift test`) | Line splitting, event decoding, PCM conversion and the one stt wire format, catalog ports and copy strings, variant commands, shared environments and deletion sets, the deletion roots (on disk, with symlinked leaves, backend directories and roots), logo parsing, `Subprocess` stdin and kill handling, exit-after-drain ordering and its lifecycle table (launch failure, stop before launch, descendants that obey or ignore SIGTERM), install cancel (kill escalation, cancellation vs finish, a cancelled queued install, every install ending against the variant marker, every child ending against the family lock), no probes after quit, a removal during quit keeping what a sibling may use, a reaped child's reused pid never signalled, the Try it request machine over every (state, event) cell (`Fixtures/tts_request_machine_table.txt`) and over random interleavings against a model server with its invariants asserted, real server frames driving it (`Fixtures/tts_wire_frames.json`, which also holds the request frames the server was sent), the driver's silence timeout, the lifecycle reducer's whole state space (every event against every phase, with the server current or replaced, Stop or removal under way, and quit under way) and its exits against every phase, the driver's start/ready/stop, late ready, ready timeout and supervised error, and quit during an Apple Speech install, download-size filters and pins, seamless resampling, `STTWebSocketServer` round trip, busy port, Origin rejection, stop during startup, connections outliving the server, the connection cap and one-at-a-time decodes, the unread-reply cap, which processes get `HF_TOKEN`. |
 | Live tone (needs `.venv`) | A supervised tone server, `TTSClient` speak (no `Origin` header, so no 403); `TTSRequestDriver` on one connection through a normal request, a busy refusal then retry, Stop mid-flight, Stop between append and commit, a refused voice and a dropped connection (reconnecting), and Stop while connecting. |
 | End-to-end (`PIPECAT_TOOLBAR_E2E=1`) | Real installs of tone, phonon, Phonon 8-bit beside phonon, Whisper Tiny, Kyutai, Parakeet (needs `ffmpeg`), Nemotron and Moonshine against the built bundle, then serve and use each. |
-| Python (`uv run pytest`) | `serve --supervised`, `prefetch`, a drift test that ties the app's TTS ports to the README and `justfile`, and `test_macos_catalog_drift.py`, which parses `Service.swift` (one parser, `tests/_macos_catalog.py`, variants included) and checks its backend names, ports (unique across variants), default model repos, streaming flags, Phonon `--model` aliases and the download-size snapshot table (against `prefetch_specs(model)`) against the Python sources and the `justfile`, and checks the Try it wire fixture against a live server; `test_supervised_contract.py`, which runs the TTS server on stub inputs and replays recorded `stt_server` 0.6.0 lines (`tests/fixtures/stt_supervised_lines.jsonl`), checking every JSON line, per-emitter error code (`ModelInvalidError` is STT-only; the STT list equals the `CODE_*` set of a verbatim 0.6.0 source excerpt, `tests/fixtures/stt_server_0.6.0_source.txt`, which also backs the STT backend names and default models in the catalog drift test), the Swift decoder's keys and `STTWire.rate` against `docs/supervised-contract.json`, and the STT constraints against each engine's requirements. |
+| Python (`uv run pytest`) | `serve --supervised`, `prefetch`, a drift test that ties the app's TTS ports to the README and `justfile`, and `test_macos_catalog_drift.py`, which parses `Service.swift` (one parser, `tests/_macos_catalog.py`, variants included) and checks its backend names, ports (unique across variants), default model repos, streaming flags, Phonon `--model` aliases and the download-size snapshot table (against `prefetch_specs(model)`) against the Python sources and the `justfile`, and checks the Try it wire fixture against a live server; `test_supervised_contract.py`, which runs the TTS server on stub inputs and replays recorded `stt_server` 0.6.0 lines (`python_tests/fixtures/stt_supervised_lines.jsonl`), checking every JSON line, per-emitter error code (`ModelInvalidError` is STT-only; the STT list equals the `CODE_*` set of a verbatim 0.6.0 source excerpt, `python_tests/fixtures/stt_server_0.6.0_source.txt`, which also backs the STT backend names and default models in the catalog drift test), the Swift decoder's keys and `STTWire.rate` against `docs/supervised-contract.json`, and the STT constraints against each engine's requirements. |
 | Visual (`--snapshot <dir>`) | Renders every page in light and dark from sample states. |
 
 ## Security notes
@@ -743,7 +744,8 @@ union of both emitters' lists) and the stt wire rate (`STTWire.rate`) against th
   per-service interpreters. The hardened runtime is on.
 - **Pinned downloads.**
   - `uv` is pinned to a version and SHA-256.
-  - TTS packages follow `uv.lock`; STT packages are hash-pinned to the last
+  - The TTS wheel is SHA-256 pinned and its dependencies follow `constraints/tts.txt`;
+    STT packages are hash-pinned to the last
     transitive dependency (see Pins).
   - Phonon's weights and Pocket TTS's voice embeddings are pinned to a commit.
     Other TTS repos (Dia's codec included) follow `main`; the default STT models are
