@@ -76,7 +76,7 @@ A pin is not one file. Change them together; `python_tests/test_server_pins.py` 
 disagree. A recorded file is guarded where its source is reachable: CI compares the TTS ones with
 the pinned commit. The STT ones, whose source no CI job has, are guarded only by their digests,
 the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SERVER_SITE` check
-(see the README).
+(see [Updating STT constraints and fixtures](development.md#updating-stt-constraints-and-fixtures)).
 
 **TTS** (`pipecat-local-tts-server`):
 
@@ -120,7 +120,7 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    `--require-hashes` at install).
 3. Record `python_tests/fixtures/stt_server_<new version>_source.txt` from the release's tag (the
    tests read the excerpt named by `sttServerRequirement`, so they fail until it exists; verify it
-   with `PIPECAT_STT_SERVER_SITE`, see the README) and remove the old one (`test_server_pins.py`
+   with `PIPECAT_STT_SERVER_SITE`, see [Development](development.md#updating-stt-constraints-and-fixtures)) and remove the old one (`test_server_pins.py`
    fails while an excerpt for any other release is left); re-record the `stt_*` line fixtures.
 4. `docs/supervised-contract.json` is shared: its STT half (`error_codes.stt`, `stt_wire_rate`)
    must match the new excerpt and line fixtures (`test_supervised_contract.py`). The contract is
