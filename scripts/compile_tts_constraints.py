@@ -17,6 +17,9 @@ deliberate forgery. Provenance, that the pins are the pinned commit's own lock, 
 (CI runs it against ``source_repository``):
 
     just tts-constraints-check <path>   # exit 1 if the recorded file is not this script's output
+
+``--check`` compares bytes. The output is ``uv export``'s format, so it depends on the uv version:
+use the one ``.github/workflows/test.yml`` pins for CI.
 """
 
 from __future__ import annotations
@@ -51,13 +54,21 @@ def render(version: str, commit: str, pins: str) -> str:
     return covered + DIGEST_LINE.format(digest=digest) + pins
 
 
+def run(args: list[str], cwd: Path | None = None) -> bytes:
+    """``args``' stdout. On failure, its stderr is passed through (CI shows why git or uv failed)
+    before exiting non-zero."""
+    try:
+        return subprocess.run(args, cwd=cwd, check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        sys.stderr.write(error.stderr.decode(errors="replace"))
+        raise SystemExit(
+            f"{Path(args[0]).name} {args[1]} failed (exit {error.returncode})"
+        ) from None
+
+
 def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
     commit = spec["source_commit"]
-    archive = subprocess.run(
-        ["git", "-C", str(checkout), "archive", commit, "pyproject.toml", "uv.lock"],
-        check=True,
-        capture_output=True,
-    ).stdout
+    archive = run(["git", "-C", str(checkout), "archive", commit, "pyproject.toml", "uv.lock"])
     with tempfile.TemporaryDirectory(prefix="tts-lock-") as tmp:
         work = Path(tmp)
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
@@ -69,7 +80,7 @@ def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
                 f" pipecat-local-tts-server {spec['version']}"
             )
         out = work / "constraints.txt"
-        subprocess.run(
+        run(
             [
                 uv,
                 "export",
@@ -84,8 +95,6 @@ def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
                 str(out),
             ],
             cwd=work,
-            check=True,
-            capture_output=True,
         )
         body = out.read_text()
     # Drop uv's own header (it records the temporary output path); keep the pins and "# via".
@@ -94,12 +103,12 @@ def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
     return render(spec["version"], commit, "".join(lines[first:]))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server-checkout", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=ROOT / "constraints/tts.txt")
     parser.add_argument("--check", action="store_true", help="exit 1 if --output would change")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     spec = json.loads((ROOT / "artifacts/tts.json").read_text())
     if not re.fullmatch(r"[0-9a-f]{40}", spec["source_commit"]):
         raise SystemExit("artifacts/tts.json needs a full 40-character source_commit")
@@ -108,14 +117,16 @@ def main() -> int:
         raise SystemExit("uv not found on PATH")
     text = compile_constraints(args.server_checkout, spec, uv)
     if args.check:
-        if args.output.read_text() == text:
+        # Bytes, not text: prepare_tools.py ships the file byte for byte, so a CRLF or re-encoded
+        # copy is not the script's output either.
+        if args.output.read_bytes() == text.encode():
             return 0
         print(
             f"{args.output} is not this script's output for {spec['source_commit']}",
             file=sys.stderr,
         )
         return 1
-    args.output.write_text(text)
+    args.output.write_bytes(text.encode())
     print(args.output, file=sys.stderr)
     return 0
 

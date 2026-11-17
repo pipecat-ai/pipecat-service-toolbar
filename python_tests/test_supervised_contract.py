@@ -59,7 +59,7 @@ from ._helpers import running_server
 from ._macos_catalog import macos_catalog
 from ._prefetch_fixture import PH, _run, fake_hub  # noqa: F401 - fake_hub is a fixture
 from ._stt_upstream import FIXTURE as STT_EXCERPT
-from ._stt_upstream import excerpt_drift, upstream_stt
+from ._stt_upstream import excerpt_drift, stt_server_version, upstream_stt
 from .smoke._supervised_contract import event_errors
 
 REPO = Path(__file__).resolve().parents[1]
@@ -593,12 +593,7 @@ def _stt_entries():
 
 
 def _swift_stt_server_version() -> str:
-    m = re.search(
-        r'static let sttServerRequirement = "pipecat-local-stt-server==([^"]+)"',
-        SERVICE_SWIFT.read_text(),
-    )
-    assert m, "the parser sees ServiceCatalog.sttServerRequirement"
-    return m.group(1)
+    return stt_server_version(SERVICE_SWIFT)
 
 
 def _pins(text: str) -> dict[str, str]:

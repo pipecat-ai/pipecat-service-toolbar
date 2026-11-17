@@ -70,3 +70,8 @@ app-smoke *args:
 # source_commit in artifacts/tts.json (CHECKOUT: a pipecat-local-tts-server clone with that commit).
 tts-constraints-check checkout:
     uv run --no-project python scripts/compile_tts_constraints.py --server-checkout "{{checkout}}" --check
+
+# Exit 1 unless the files recorded from the TTS server (python_tests/fixtures/upstream/*,
+# docs/supervised-contract.json) are the pinned source_commit's own (CHECKOUT: as above).
+tts-fixtures-check checkout:
+    uv run --no-project python scripts/check_tts_fixtures.py --server-checkout "{{checkout}}"

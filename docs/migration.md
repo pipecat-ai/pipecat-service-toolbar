@@ -72,7 +72,10 @@ user installations or model caches.
 ## Moving a server pin
 
 A pin is not one file. Change them together; `python_tests/test_server_pins.py` fails when they
-disagree, and the recorded server fixtures cannot go stale silently.
+disagree. A recorded file is guarded where its source is reachable: CI compares the TTS ones with
+the pinned commit. The STT ones, whose source no CI job has, are guarded only by their digests,
+the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SERVER_SITE` check
+(see the README).
 
 **TTS** (`pipecat-local-tts-server`):
 
@@ -84,23 +87,45 @@ disagree, and the recorded server fixtures cannot go stale silently.
    `# source-commit:` lines and the pins), so `test_server_pins.py` fails on an accidental edit
    to any of them. That digest is not proof of origin: `just tts-constraints-check <path>` exits
    non-zero when the file is not the script's output for the pinned commit, and CI runs the same
-   check against a clone of `source_repository` (the `compatibility` job, Python 3.12).
+   check against a clone of `source_repository` (the `compatibility` job, Python 3.12). The
+   output depends on the uv version: generate it with the uv CI pins (`version` in
+   `.github/workflows/test.yml`), and when bumping that pin run the check and regenerate the
+   file if it fails.
 3. Update the dependency in `pyproject.toml`, and set `[tool.uv] constraint-dependencies` to the
    new `constraints/tts.txt` versions of the packages the lean environment shares with it, and
    remove any entry `constraints/tts.txt` no longer pins (the tests list both). Then `uv lock`
    and `uv sync --locked`.
-4. Re-record `python_tests/fixtures/upstream/*` and `docs/supervised-contract.json` against the new
-   release (`tts_server/supervise.py`, justfile ports, README), then update their digests and the
-   `tts` version/commit in `python_tests/fixtures/provenance.json`.
+4. Re-record the files copied from the server at the new `source_commit`:
+   `python_tests/fixtures/upstream/tts-README.md` (its `README.md`) and `tts-justfile` (its
+   `justfile`) byte for byte, and `docs/supervised-contract.json` (its
+   `docs/supervised-contract.json`; keep this repository's `_comment`, every other field must
+   match). Update their digests and the `tts` version/commit in
+   `python_tests/fixtures/provenance.json` (the contract is under `contract`).
+   `just tts-fixtures-check <path>` (run in CI, as in step 2) exits non-zero until every file
+   matches.
 5. Run `just app-test`, `uv run pytest` and `just app-build`. `RepositoryMigrationTests` then
    fails (see below).
 
-**STT** (`pipecat-local-stt-server`): change `ServiceCatalog.sttServerRequirement` and every
-engine's requirement in `Service.swift`, run `scripts/compile_stt_constraints.py`, re-record
-`python_tests/fixtures/stt_server_<version>_source.txt` and the `stt_*` line fixtures from the
-release (verify with `PIPECAT_STT_SERVER_SITE`, see the README), then update their digests and
-the `stt` version in `provenance.json`. Run `just app-test`, `uv run pytest` and
-`just app-build`; `RepositoryMigrationTests` then fails (see below).
+**STT** (`pipecat-local-stt-server`):
+
+1. Change `ServiceCatalog.sttServerRequirement` and every engine's requirement in
+   `Service.swift`.
+2. Regenerate `constraints/stt-*.txt` with `scripts/compile_stt_constraints.py` (network
+   needed). CI cannot rerun that resolver, so their digests in `provenance.json` are what makes
+   any edit deliberate (a dropped transitive pin would otherwise pass CI and fail
+   `--require-hashes` at install).
+3. Record `python_tests/fixtures/stt_server_<new version>_source.txt` from the release's tag (the
+   tests read the excerpt named by `sttServerRequirement`, so they fail until it exists; verify it
+   with `PIPECAT_STT_SERVER_SITE`, see the README) and remove the old one; re-record the `stt_*`
+   line fixtures.
+4. `docs/supervised-contract.json` is shared: its STT half (`error_codes.stt`, `stt_wire_rate`)
+   must match the new excerpt and line fixtures (`test_supervised_contract.py`). The contract is
+   recorded from the TTS repository (step 4 above), so a change to it lands in
+   `pipecat-local-tts-server` first and arrives here with a TTS pin move.
+5. In `provenance.json`, replace the old excerpt's entry with the new one, update every changed
+   digest (`stt` and `contract`) and the `stt` version.
+6. Run `just app-test`, `uv run pytest` and `just app-build`; `RepositoryMigrationTests` then
+   fails (see below).
 
 **Installed environments.** An intentional pin change changes the environment fingerprint (TTS:
 the wheel filename in `artifacts/tts.json`; STT: each engine's requirements, which carry

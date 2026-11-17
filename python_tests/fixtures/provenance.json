@@ -1,12 +1,17 @@
 {
-  "_comment": "Where each recorded server fixture comes from. test_server_pins.py checks the releases against the pins and the digests against the files. Re-record a fixture from its source, then update its digest here (shasum -a 256 <path>).",
+  "_comment": "Where each recorded server file comes from. test_server_pins.py checks the releases against the pins and the digests against the files. Re-record a fixture from its source (regenerate constraints/stt-*.txt with scripts/compile_stt_constraints.py), then update its digest here (shasum -a 256 <path>).",
   "tts": {
     "version": "0.9.1",
     "source_commit": "78823eeabf1f36c464243af1bd41b879d058c028",
     "repository": "https://github.com/vr000m/pipecat-local-tts-server",
     "fixtures": {
       "python_tests/fixtures/upstream/tts-README.md": "a01f954c8701b23ee6b4608b47d5a0febff9799874b7483c6b8079773ba4b107",
-      "python_tests/fixtures/upstream/tts-justfile": "66e2f21629c01f69ce1802de6c52006f53df56a76c61a0580fdb5dbd5ef3c790",
+      "python_tests/fixtures/upstream/tts-justfile": "66e2f21629c01f69ce1802de6c52006f53df56a76c61a0580fdb5dbd5ef3c790"
+    }
+  },
+  "contract": {
+    "_comment": "Shared by both servers: recorded from the TTS repository at tts.source_commit (scripts/check_tts_fixtures.py compares every field but _comment), while its STT half (error_codes.stt, stt_wire_rate) is checked against the STT excerpt and fixtures by test_supervised_contract.py. Moving either pin may change it.",
+    "fixtures": {
       "docs/supervised-contract.json": "b6c0fe483b9e400827557c32b6d7013d96652734720cca8efaf5439c542144c9"
     }
   },
@@ -14,6 +19,11 @@
     "version": "0.6.0",
     "repository": "https://github.com/vr000m/pipecat-local-stt-server",
     "fixtures": {
+      "constraints/stt-kyutai.txt": "c284a41ae0ef16a0b578f303635d147dcc56f2c5c3d86f2aa9730a1b4e309228",
+      "constraints/stt-moonshine.txt": "de1ab19b21278d84d6df51861f4091ef8552dba23caf5d1cb228745f9034f0d6",
+      "constraints/stt-nemotron.txt": "3a0abc3430a03bc907adee5f5d746405ded4e0c6a36acdee9700523c17ed87bd",
+      "constraints/stt-parakeet.txt": "07f522316347a732eba19552a5ea27c609c9d9c3954f84be77e18479a2da4fb6",
+      "constraints/stt-whisper.txt": "0fe65d812b6c882451af453959f9e7625d62da3c107e028e80e1a89273f78843",
       "python_tests/fixtures/stt_prefetch_check_lines.jsonl": "56f8796452b05219be9e8aba01ec359f24f6c295f55df9c0ef3a487bef294277",
       "python_tests/fixtures/stt_prefetch_check_moonshine_cached_lines.jsonl": "4acbc39e95ea66b7da18f0e31a567fc8e5d71864ab0364109b6cc5539336df60",
       "python_tests/fixtures/stt_prefetch_check_moonshine_missing_lines.jsonl": "6f12124392c8486c8a7372abbcd148eec94a45e2cf7f159e6aecfddfd44f419e",

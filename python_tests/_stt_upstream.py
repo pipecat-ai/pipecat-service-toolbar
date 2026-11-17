@@ -3,7 +3,8 @@
 The lean job cannot install ``pipecat-local-stt-server``, so its ``supervise.CODE_*``
 error codes and its backend registry (``BACKENDS``, each backend's default model) are
 recorded verbatim in ``python_tests/fixtures/stt_server_<version>_source.txt``, with the tag and
-commit they came from. The drift tests compare the contract and the macOS catalog with
+commit they came from; ``<version>`` is read from ``sttServerRequirement``, so every reader
+follows the pin. The drift tests compare the contract and the macOS catalog with
 this excerpt (not with a hand-typed copy), and with the live package when it is
 importable. Re-record it from the new tag whenever ``sttServerRequirement`` moves.
 
@@ -23,7 +24,26 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "stt_server_0.6.0_source.txt"
+HERE = Path(__file__).resolve().parent
+SERVICE_SWIFT = HERE.parent / "Sources" / "PipecatToolbarCore" / "Service.swift"
+
+
+def stt_server_version(service_swift: Path = SERVICE_SWIFT) -> str:
+    """The release ``ServiceCatalog.sttServerRequirement`` pins (what the app installs)."""
+    match = re.search(
+        r'static let sttServerRequirement = "pipecat-local-stt-server==([^"]+)"',
+        service_swift.read_text(),
+    )
+    assert match, "the parser sees ServiceCatalog.sttServerRequirement"
+    return match.group(1)
+
+
+def excerpt_for(service_swift: Path = SERVICE_SWIFT) -> Path:
+    """The recorded excerpt of the pinned release, so moving the pin moves every reader with it."""
+    return HERE / "fixtures" / f"stt_server_{stt_server_version(service_swift)}_source.txt"
+
+
+FIXTURE = excerpt_for()
 
 
 @dataclass(frozen=True)
@@ -64,6 +84,7 @@ def _parse(text: str, name: str) -> tuple[frozenset[str], dict[str, str | None],
 
 
 def upstream_stt(path: Path = FIXTURE) -> UpstreamSTT:
+    assert path.is_file(), f"record {path.name} for the pinned STT release (docs/migration.md)"
     text = path.read_text()
     release = re.search(
         r"^# release: pipecat-local-stt-server (\S+) \(tag v\1, commit [0-9a-f]{40}\)$",

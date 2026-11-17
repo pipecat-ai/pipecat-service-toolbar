@@ -3,10 +3,12 @@
 A TTS release is described by several files that nothing else keeps in step:
 ``artifacts/tts.json`` (what the app ships), ``pyproject.toml``/``uv.lock`` (the copy the
 compatibility tests import), ``constraints/tts.txt`` (what the wheel installs with) and the
-recorded fixtures (``python_tests/fixtures/provenance.json``). ``uv.lock`` and
+recorded fixtures (``python_tests/fixtures/provenance.json``; CI compares the TTS ones with the
+pinned commit, ``scripts/check_tts_fixtures.py``). ``uv.lock`` and
 ``constraints/tts.txt`` also agree on every package they share, so the compatibility tests run
 the dependency versions the app installs. The STT server's pin is the Swift
-catalog's ``sttServerRequirement``; its recorded fixtures are checked against it here too.
+catalog's ``sttServerRequirement``; its recorded fixtures and hash-pinned
+``constraints/stt-*.txt`` are digested in ``provenance.json`` and checked against it here too.
 
 Moving a pin: see "Moving a server pin" in ``docs/migration.md``.
 """
@@ -17,6 +19,7 @@ import hashlib
 import importlib.metadata
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -24,6 +27,11 @@ import pytest
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import Version
+
+from scripts import check_tts_fixtures, compile_tts_constraints
+
+from ._stt_upstream import FIXTURE as STT_EXCERPT
+from ._stt_upstream import excerpt_for, stt_server_version, upstream_stt
 
 ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT = json.loads((ROOT / "artifacts/tts.json").read_text())
@@ -48,12 +56,7 @@ def sha256(path: str) -> str:
 
 
 def stt_version() -> str:
-    match = re.search(
-        r'static let sttServerRequirement = "pipecat-local-stt-server==([^"]+)"',
-        SERVICE_SWIFT.read_text(),
-    )
-    assert match, "the parser sees ServiceCatalog.sttServerRequirement"
-    return match.group(1)
+    return stt_server_version(SERVICE_SWIFT)
 
 
 def pins(text: str) -> dict[str, Version]:
@@ -191,6 +194,9 @@ def _extras(requirement: Requirement) -> set[str]:
     return set(re.findall(r'extra\s*==\s*"([^"]+)"', str(requirement.marker or "")))
 
 
+SECTIONS = ("tts", "contract", "stt")
+
+
 @pytest.mark.parametrize("server", ["tts", "stt"])
 def test_recorded_fixtures_are_for_the_pinned_server_release(server):
     entry = PROVENANCE[server]
@@ -200,16 +206,21 @@ def test_recorded_fixtures_are_for_the_pinned_server_release(server):
     else:
         assert entry["version"] == stt_version(), "re-record the STT fixtures"
         assert (ROOT / f"python_tests/fixtures/stt_server_{entry['version']}_source.txt").is_file()
+        # Every reader of the excerpt follows the pin (not a hard-coded release).
+        assert STT_EXCERPT.name == f"stt_server_{entry['version']}_source.txt"
 
 
 def test_every_recorded_fixture_is_listed_and_unchanged():
-    listed = {path for server in ("tts", "stt") for path in PROVENANCE[server]["fixtures"]}
+    listed = {path for server in SECTIONS for path in PROVENANCE[server]["fixtures"]}
     on_disk = {
         str(p.relative_to(ROOT))
         for pattern in (
             "python_tests/fixtures/upstream/*",
             "python_tests/fixtures/stt_*",
             "docs/supervised-contract.json",
+            # Hash-pinned by a network resolver, so CI cannot regenerate them: a digest here makes
+            # any edit (a dropped transitive pin included) a deliberate provenance update.
+            "constraints/stt-*.txt",
         )
         for p in ROOT.glob(pattern)
         if p.is_file()
@@ -217,8 +228,111 @@ def test_every_recorded_fixture_is_listed_and_unchanged():
     assert on_disk == listed, "list every recorded fixture in python_tests/fixtures/provenance.json"
     stale = {
         path: sha256(path)
-        for server in ("tts", "stt")
+        for server in SECTIONS
         for path, digest in PROVENANCE[server]["fixtures"].items()
         if sha256(path) != digest
     }
     assert stale == {}, "a recorded fixture changed: re-record it and update its digest"
+
+
+def test_ci_compares_every_file_recorded_from_the_tts_repository():
+    """``scripts/check_tts_fixtures.py`` (run in CI against the pinned commit) knows the source of
+    every file ``provenance.json`` records from the TTS repository, so bumping the version without
+    re-recording fails CI."""
+    recorded = {*PROVENANCE["tts"]["fixtures"], *PROVENANCE["contract"]["fixtures"]}
+    assert set(check_tts_fixtures.UPSTREAM) == recorded
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _commit(repo: Path, files: dict[str, bytes]) -> str:
+    for path, data in files.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_bytes(data)
+    _git(repo, "add", *files)
+    _git(repo, "commit", "-q", "-m", "record")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_the_tts_fixture_check_fails_on_a_fixture_that_was_not_re_recorded(tmp_path):
+    repo = tmp_path / "server"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    contract = json.loads((ROOT / "docs/supervised-contract.json").read_text())
+    upstream = {
+        source: (ROOT / recorded).read_bytes()
+        for recorded, source in check_tts_fixtures.UPSTREAM.items()
+    }
+    # The server's own _comment differs from the toolbar's copy; that alone is not drift.
+    upstream["docs/supervised-contract.json"] = json.dumps(
+        {**contract, "_comment": ["the server's own wording"]}, indent=2
+    ).encode()
+    same = _commit(repo, upstream)
+    assert check_tts_fixtures.drift(repo, same) == []
+    readme = _commit(repo, {"README.md": upstream["README.md"] + b"\n"})
+    assert check_tts_fixtures.drift(repo, readme) == [
+        f"python_tests/fixtures/upstream/tts-README.md is not README.md at {readme}"
+    ]
+    _commit(repo, {"README.md": upstream["README.md"]})
+    changed = {**contract, "stt_wire_rate": contract["stt_wire_rate"] + 1}
+    field = _commit(repo, {"docs/supervised-contract.json": json.dumps(changed).encode()})
+    assert check_tts_fixtures.drift(repo, field) == [
+        f"docs/supervised-contract.json is not docs/supervised-contract.json at {field}"
+    ]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda d: compile_tts_constraints.run(["git", "-C", str(d), "archive", "HEAD"]),
+        lambda d: check_tts_fixtures.drift(d, "0" * 40),
+    ],
+    ids=["compile", "fixtures"],
+)
+def test_a_failing_git_step_shows_gits_own_error(tmp_path, capsys, call):
+    with pytest.raises(SystemExit) as failed:
+        call(tmp_path)
+    assert "failed (exit" in str(failed.value)
+    assert "not a git repository" in capsys.readouterr().err
+
+
+def test_constraints_check_compares_bytes(tmp_path, monkeypatch):
+    """``--check`` passes only on the exact bytes the script writes: a CRLF copy is not them."""
+    text = CONSTRAINTS.read_text()
+    monkeypatch.setattr(compile_tts_constraints, "compile_constraints", lambda *_: text)
+    monkeypatch.setattr(compile_tts_constraints.shutil, "which", lambda _: "uv")
+    exact, crlf = tmp_path / "exact.txt", tmp_path / "crlf.txt"
+    exact.write_bytes(text.encode())
+    crlf.write_bytes(text.replace("\n", "\r\n").encode())
+    check = ["--server-checkout", str(tmp_path), "--check", "--output"]
+    assert compile_tts_constraints.main([*check, str(exact)]) == 0
+    assert compile_tts_constraints.main([*check, str(crlf)]) == 1
+
+
+def test_the_stt_excerpt_follows_the_pin(tmp_path):
+    swift = tmp_path / "Service.swift"
+    swift.write_text(
+        '    public static let sttServerRequirement = "pipecat-local-stt-server==9.8.7"\n'
+    )
+    assert excerpt_for(swift).name == "stt_server_9.8.7_source.txt"
+    assert STT_EXCERPT == excerpt_for(SERVICE_SWIFT)
+    with pytest.raises(AssertionError, match="record stt_server_9.8.7_source.txt"):
+        upstream_stt(excerpt_for(swift))
