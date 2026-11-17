@@ -8,12 +8,17 @@ commit recorded as ``source_commit`` in ``artifacts/tts.json`` (``git archive``,
 checkout's working tree and current branch are irrelevant). Update ``artifacts/tts.json``
 first, then run this. The output starts with a provenance header that
 ``python_tests/test_server_pins.py`` checks against the artifact, so pins from one release
-cannot sit next to another release's wheel.
+cannot sit next to another release's wheel. The header's ``body-sha256`` is the SHA-256 of
+every byte below it, so a hand edit to the pins (which ``scripts/prepare_tools.py`` copies into
+the app unchanged) fails that test until this script regenerates the file.
+
+    just tts-constraints-check <path>   # exit 1 if the recorded file is not this script's output
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -31,7 +36,13 @@ HEADER = (
     " scripts/compile_tts_constraints.py.\n"
     "# server: pipecat-local-tts-server=={version}\n"
     "# source-commit: {commit}\n"
+    "# body-sha256: {digest}\n"
 )
+
+
+def body_digest(body: bytes) -> str:
+    """SHA-256 of the pins below the header, exactly as written."""
+    return hashlib.sha256(body).hexdigest()
 
 
 def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
@@ -74,7 +85,9 @@ def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
     # Drop uv's own header (it records the temporary output path); keep the pins and "# via".
     lines = body.splitlines(keepends=True)
     first = next(i for i, line in enumerate(lines) if not line.startswith("#"))
-    return HEADER.format(version=spec["version"], commit=commit) + "".join(lines[first:])
+    pins = "".join(lines[first:])
+    digest = body_digest(pins.encode())
+    return HEADER.format(version=spec["version"], commit=commit, digest=digest) + pins
 
 
 def main() -> int:

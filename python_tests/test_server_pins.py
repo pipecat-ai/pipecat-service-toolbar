@@ -3,7 +3,9 @@
 A TTS release is described by several files that nothing else keeps in step:
 ``artifacts/tts.json`` (what the app ships), ``pyproject.toml``/``uv.lock`` (the copy the
 compatibility tests import), ``constraints/tts.txt`` (what the wheel installs with) and the
-recorded fixtures (``python_tests/fixtures/provenance.json``). The STT server's pin is the Swift
+recorded fixtures (``python_tests/fixtures/provenance.json``). ``uv.lock`` and
+``constraints/tts.txt`` also agree on every package they share, so the compatibility tests run
+the dependency versions the app installs. The STT server's pin is the Swift
 catalog's ``sttServerRequirement``; its recorded fixtures are checked against it here too.
 
 Moving a pin: see "Moving a server pin" in ``docs/migration.md``.
@@ -27,7 +29,18 @@ ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT = json.loads((ROOT / "artifacts/tts.json").read_text())
 PROVENANCE = json.loads((ROOT / "python_tests/fixtures/provenance.json").read_text())
 SERVICE_SWIFT = ROOT / "Sources/PipecatToolbarCore/Service.swift"
+CONSTRAINTS = ROOT / "constraints/tts.txt"
 PACKAGE = "pipecat-local-tts-server"
+# The app's target: the bundled uv installs the TTS server on arm64 macOS, CPython 3.12.
+TARGET = {
+    "sys_platform": "darwin",
+    "platform_system": "Darwin",
+    "platform_machine": "arm64",
+    "os_name": "posix",
+    "python_version": "3.12",
+    "python_full_version": "3.12.0",
+    "implementation_name": "cpython",
+}
 
 
 def sha256(path: str) -> str:
@@ -44,10 +57,27 @@ def stt_version() -> str:
 
 
 def pins(text: str) -> dict[str, Version]:
-    return {
-        canonicalize_name(name): Version(version)
-        for name, version in re.findall(r"^([A-Za-z0-9_.\-]+)==(\S+)", text, re.MULTILINE)
-    }
+    """The ``name==version`` pins whose environment marker holds on ``TARGET``.
+
+    A package may be pinned once per environment (``numpy`` has one pin below CPython 3.13 and
+    one from it); two pins that both apply would leave the installed version to chance."""
+    found: dict[str, Version] = {}
+    clashes = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        requirement = Requirement(line)
+        if requirement.marker is not None and not requirement.marker.evaluate(TARGET):
+            continue
+        (specifier,) = requirement.specifier
+        assert specifier.operator == "==", f"not an exact pin: {line}"
+        name = canonicalize_name(requirement.name)
+        if name in found:
+            clashes.append(name)
+        found[name] = Version(specifier.version)
+    assert clashes == [], f"more than one pin applies on the app's target: {clashes}"
+    return found
 
 
 def test_the_artifact_describes_one_release():
@@ -74,33 +104,49 @@ def test_the_compatibility_tests_import_the_release_the_app_ships():
     assert importlib.metadata.version(PACKAGE) == version, "run `uv sync --locked`"
 
 
+def test_the_compatibility_tests_lock_the_dependency_versions_the_app_installs():
+    """Every package ``uv.lock`` shares with an applicable pin in ``constraints/tts.txt`` is
+    locked at that pin, so the tests (and the Swift tone-server tests that launch ``.venv``)
+    exercise what the bundled server installs with."""
+    recorded = pins(CONSTRAINTS.read_text())
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    drift = {
+        package["name"]: f"locked {package['version']}, shipped {recorded[name]}"
+        for package in lock["package"]
+        if (name := canonicalize_name(package["name"])) in recorded
+        and Version(package["version"]) != recorded[name]
+    }
+    assert drift == {}, (
+        "set these to the shipped version in [tool.uv] constraint-dependencies in pyproject.toml,"
+        " then run `uv lock` and `uv sync --locked`"
+    )
+
+
 def test_the_recorded_constraints_belong_to_the_artifact():
-    head = (ROOT / "constraints/tts.txt").read_text().splitlines()[:3]
+    # The header is four lines; the pins are every byte after the fourth newline.
+    *head, body = CONSTRAINTS.read_bytes().split(b"\n", 4)
+    head = [line.decode() for line in head]
     assert head[1] == f"# server: {PACKAGE}=={ARTIFACT['version']}"
     assert head[2] == f"# source-commit: {ARTIFACT['source_commit']}", (
         "regenerate with scripts/compile_tts_constraints.py"
+    )
+    # scripts/prepare_tools.py copies the file unchanged: a hand-edited pin must not pass.
+    assert head[3] == f"# body-sha256: {hashlib.sha256(body).hexdigest()}", (
+        "constraints/tts.txt differs from what scripts/compile_tts_constraints.py wrote:"
+        " regenerate it, do not edit the pins by hand"
     )
 
 
 def test_the_recorded_constraints_satisfy_the_wheels_requirements():
     """Every requirement the wheel declares, for every extra, on the app's target (arm64 macOS,
     CPython 3.12), has a pin in ``constraints/tts.txt`` inside its version range."""
-    recorded = pins((ROOT / "constraints/tts.txt").read_text())
+    recorded = pins(CONSTRAINTS.read_text())
     requirements = [Requirement(r) for r in importlib.metadata.requires(PACKAGE) or []]
     extras = sorted({e for r in requirements for e in _extras(r)})
-    environment = {
-        "sys_platform": "darwin",
-        "platform_system": "Darwin",
-        "platform_machine": "arm64",
-        "os_name": "posix",
-        "python_version": "3.12",
-        "python_full_version": "3.12.0",
-        "implementation_name": "cpython",
-    }
     missing = []
     for requirement in requirements:
         if not any(
-            requirement.marker is None or requirement.marker.evaluate({**environment, "extra": e})
+            requirement.marker is None or requirement.marker.evaluate({**TARGET, "extra": e})
             for e in ["", *extras]
         ):
             continue

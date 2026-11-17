@@ -78,13 +78,21 @@ disagree, and the recorded server fixtures cannot go stale silently.
 
 1. Update `artifacts/tts.json`: `version`, `filename`, `url`, `sha256` (from PyPI) and the release
    tag's full `source_commit`.
-2. Update the dependency in `pyproject.toml`, then `uv lock` and `uv sync --locked`.
-3. `uv run --no-project python scripts/compile_tts_constraints.py --server-checkout <path>`
-   regenerates `constraints/tts.txt` from that commit's `uv.lock`.
+2. `uv run --no-project python scripts/compile_tts_constraints.py --server-checkout <path>`
+   regenerates `constraints/tts.txt` from that commit's `uv.lock`. Its header records the
+   SHA-256 of the pins below it, so never edit the pins by hand; `just tts-constraints-check
+   <path>` exits non-zero when the file is not the script's output for the pinned commit.
+3. Update the dependency in `pyproject.toml`, and set `[tool.uv] constraint-dependencies` to the
+   new `constraints/tts.txt` versions of the packages the lean environment shares with it (the
+   test lists any that differ). Then `uv lock` and `uv sync --locked`.
 4. Re-record `python_tests/fixtures/upstream/*` and `docs/supervised-contract.json` against the new
    release (`tts_server/supervise.py`, justfile ports, README), then update their digests and the
    `tts` version/commit in `python_tests/fixtures/provenance.json`.
-5. Run `just app-test`, `uv run pytest` and `just app-build`.
+5. Run `just app-test`, `uv run pytest` and `just app-build`. `RepositoryMigrationTests` then
+   fails with "Existing environment would refresh": that is the signal that installed
+   environments will refresh their packages. Edit its baseline fixture
+   (`Tests/PipecatServiceToolbarTests/Fixtures/pre-extraction-environments.json`) only when that
+   refresh is intended, and say so in the changelog.
 
 **STT** (`pipecat-local-stt-server`): change `ServiceCatalog.sttServerRequirement` and every
 engine's requirement in `Service.swift`, run `scripts/compile_stt_constraints.py`, re-record

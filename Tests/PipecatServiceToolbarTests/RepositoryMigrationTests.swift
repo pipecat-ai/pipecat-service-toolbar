@@ -10,10 +10,20 @@ import Testing
         let createdAt: String
     }
 
+    struct Artifact: Decodable {
+        let filename: String
+    }
+
+    /// The fixture records environments installed from the shipped baseline. The wheel is the one
+    /// this checkout builds with (`artifacts/tts.json`), so moving the TTS pin fails here: that
+    /// failure means installed environments will refresh (docs/migration.md).
     @Test func everyExistingEnvironmentRemainsReadyWithoutReinstallation() throws {
-        let fixture = URL(filePath: #filePath).deletingLastPathComponent()
-            .appending(path: "Fixtures/pre-extraction-environments.json")
+        let tests = URL(filePath: #filePath).deletingLastPathComponent()
+        let fixture = tests.appending(path: "Fixtures/pre-extraction-environments.json")
         let rows = try JSONDecoder().decode([Installed].self, from: Data(contentsOf: fixture))
+        let repo = tests.deletingLastPathComponent().deletingLastPathComponent()
+        let wheel = try JSONDecoder().decode(
+            Artifact.self, from: Data(contentsOf: repo.appending(path: "artifacts/tts.json"))).filename
         #expect(Set(rows.map(\.service)) == Set(Service.allCases.filter { $0 != .appleSpeech }.map(\.rawValue)))
         for row in rows {
             let service = try #require(Service(rawValue: row.service))
@@ -30,7 +40,7 @@ import Testing
             let bytes = try JSONSerialization.data(withJSONObject: oldMarker, options: [.sortedKeys])
             try bytes.write(to: paths.marker(service))
             let tools = Tools(uv: URL(filePath: "/usr/bin/false"),
-                              wheel: root.appending(path: "pipecat_local_tts_server-0.9.1-py3-none-any.whl"), constraints: nil, source: .repository)
+                              wheel: root.appending(path: wheel), constraints: nil, source: .repository)
             let manager = EnvironmentManager(paths: paths, tools: tools)
             guard case .ready = manager.environmentStatus(service) else {
                 Issue.record("Existing environment would refresh: \(row.service)")
