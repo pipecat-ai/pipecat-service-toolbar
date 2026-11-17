@@ -25,7 +25,7 @@ uv sync --locked  # lean compatibility-test environment
 just app-open      # build build/Pipecat Service Toolbar.app and launch it
 ```
 
-`just app-install` builds and installs it into `~/Applications` instead, signed with the
+`just app-install` builds, installs it into `~/Applications` and launches it, signed with the
 self-signed `Code Signing` identity so Microphone / Speech Recognition grants survive
 rebuilds (ad hoc is cdhash-bound and resets them). Both recipes pick the identity with
 `scripts/resolve_sign_identity.sh` and quit a running copy first with

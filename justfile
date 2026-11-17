@@ -26,7 +26,7 @@ app-open:
 # every rebuild. scripts/resolve_sign_identity.sh --require fails before the build when
 # the keychain lacks it. Quits a running copy first (scripts/quit_app.sh, by the id the
 # build wrote) and waits up to QUIT_WAIT_SECS for it.
-# Build, then install into ~/Applications (APP_INSTALL_DIR overrides), replacing any installed copy.
+# Build, then install into ~/Applications (APP_INSTALL_DIR overrides), replacing any installed copy, and launch it.
 app-install:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -53,6 +53,7 @@ app-install:
     mv "$stage/$name" "$dest/$name"
     echo "installed $dest/$name"
     codesign -dr - "$dest/$name" 2>&1 | tail -1
+    open "$dest/$name"
 
 # Run the app unbundled from the checkout (prepares the pinned server wheel; uses your uv).
 app-run *args:
