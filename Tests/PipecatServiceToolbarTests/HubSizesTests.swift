@@ -4,7 +4,7 @@ import Testing
 @testable import PipecatToolbarCore
 
 /// The download-size estimate follows `ServiceCatalog.snapshots(for:)`, which
-/// `tests/test_macos_catalog_drift.py` keeps equal to the Python `prefetch_specs`.
+/// `python_tests/test_macos_catalog_drift.py` keeps equal to the Python `prefetch_specs`.
 @Suite struct HubSizesTests {
     /// `fnmatch` without FNM_PATHNAME, like `snapshot_download(allow_patterns=)`.
     @Test func patternsMatchLikeHuggingFace() {

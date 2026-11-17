@@ -1,5 +1,5 @@
 # Hash-pinned constraints for the kyutai STT environment. GENERATED, do not edit:
-#   uv run python macos/scripts/compile_stt_constraints.py
+#   uv run python scripts/compile_stt_constraints.py
 # python-version: 3.12
 # python-platform: aarch64-apple-darwin
 # macos-deployment-target: 15.0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Quit a running app by bundle id and wait until it has exited.
 #
-#   macos/scripts/quit_app.sh ai.pipecat.ServiceToolbar
+#   scripts/quit_app.sh ai.pipecat.ServiceToolbar
 #
 # Used by `just app-open` and `just app-install`. The quit is asynchronous (the
 # toolbar stops its servers first) and can be refused, so a bare `osascript quit`

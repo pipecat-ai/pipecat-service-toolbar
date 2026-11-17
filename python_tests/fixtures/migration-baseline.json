@@ -8,7 +8,7 @@
     "Sources/PipecatToolbarCore/PreferencesDomain.swift": "de6f15ccddcefc84fdb1b3202057eae3c7f2913766578d9ad43522215d587992",
     "scripts/Info.plist": "452d9b9e11d40fc1601ef6472cfef970d07016cbd09eb627b7cbc6831f640fda",
     "scripts/has_sign_identity.sh": "7ecce52abbd0c24920b886ec4e6bd7cc4d978a2395b3774f8a12abebe2a17ad0",
-    "scripts/resolve_sign_identity.sh": "fe4d9b3d0a444bc416b9c98a08e3511979d09b9295ffffb14cedfbb13202c8a8",
+    "scripts/resolve_sign_identity.sh": "c2682bfa19a35b1e300e9fd6c73e91cd460c935465878c24918884d36a9faac8",
     "scripts/PipecatServiceToolbar.entitlements": "26778635212b348342c32105002fe86e443e6a2c950b1a5d274dd855bb0a950d"
   }
 }

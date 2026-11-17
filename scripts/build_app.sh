@@ -8,7 +8,7 @@
 #   scripts/build_app.sh            # release build, ad-hoc signed
 #   SIGN_IDENTITY="Developer ID Application: …" scripts/build_app.sh
 #
-# Output: macos/build/Pipecat Service Toolbar.app
+# Output: build/Pipecat Service Toolbar.app
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"

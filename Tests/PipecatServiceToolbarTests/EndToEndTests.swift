@@ -8,13 +8,13 @@ import Testing
 /// because it downloads Python, packages and model weights (phonon ~100 MB,
 /// Whisper Tiny ~75 MB, Kyutai ~2.4 GB, Parakeet and Nemotron ~1 to 2.5 GB; weights are shared with the Hugging Face cache):
 ///
-///     PIPECAT_TOOLBAR_E2E=1 swift test --package-path macos --filter EndToEnd
+///     PIPECAT_TOOLBAR_E2E=1 swift test --filter EndToEnd
 ///
-/// Uses the built bundle's tools when `macos/build/Pipecat Service Toolbar.app`
+/// Uses the built bundle's tools when `build/Pipecat Service Toolbar.app`
 /// exists (exactly what the app ships), else builds them from the repo.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["PIPECAT_TOOLBAR_E2E"] == "1"))
 struct EndToEndTests {
-    static let macosDir = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    static let repoRoot = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
     static func makeManager() async throws -> (EnvironmentManager, AppPaths) {
@@ -23,9 +23,9 @@ struct EndToEndTests {
         // Fresh support dir; the real uv cache so repeat runs are fast.
         let paths = AppPaths(supportDir: root.appending(path: "support"), cacheDir: real.cacheDir, logsDir: root.appending(path: "logs"))
         try paths.prepare()
-        let bundleResources = macosDir.appending(path: "build/Pipecat Service Toolbar.app/Contents/Resources")
+        let bundleResources = repoRoot.appending(path: "build/Pipecat Service Toolbar.app/Contents/Resources")
         let tools: Tools
-        if let bundle = Bundle(url: macosDir.appending(path: "build/Pipecat Service Toolbar.app")),
+        if let bundle = Bundle(url: repoRoot.appending(path: "build/Pipecat Service Toolbar.app")),
             FileManager.default.fileExists(atPath: bundleResources.appending(path: "bin/uv").path)
         {
             tools = try await ToolLocator.locate(bundle: bundle, paths: paths)

@@ -12,14 +12,14 @@ import Testing
 /// app's own client. `AppleSpeech` lives in the executable target, which this
 /// test target does not link; running the binary avoids that.
 ///
-///     swift build --package-path macos      # the debug app binary
-///     PIPECAT_TOOLBAR_E2E=1 swift test --package-path macos --filter AppleSpeechEndToEnd
+///     swift build      # the debug app binary
+///     PIPECAT_TOOLBAR_E2E=1 swift test --filter AppleSpeechEndToEnd
 ///
 /// Skips (with the reason) unless: macOS 26+, an English locale resolved the way
 /// the app resolves it, and the debug binary's speech asset installed. It never
 /// downloads the asset. `AssetInventory` reserves assets per client, so the
 /// bundled app's install does not count for the debug binary; install once with
-/// `macos/.build/debug/PipecatServiceToolbar --apple-speech-selftest <16k-mono.wav>`.
+/// `.build/debug/PipecatServiceToolbar --apple-speech-selftest <16k-mono.wav>`.
 /// No privacy prompt is involved: SpeechAnalyzer's on-device transcription does
 /// not go through Speech Recognition authorization (ran unattended from a
 /// terminal-launched `swift test`, macOS 26.6).
@@ -28,7 +28,7 @@ struct AppleSpeechEndToEndTests {
     /// `PIPECAT_TOOLBAR_APP_BINARY`, else the debug build next to this package.
     static var appBinary: URL {
         if let explicit = ProcessInfo.processInfo.environment["PIPECAT_TOOLBAR_APP_BINARY"] { return URL(filePath: explicit) }
-        return EndToEndTests.macosDir.appending(path: ".build/debug/PipecatServiceToolbar")
+        return EndToEndTests.repoRoot.appending(path: ".build/debug/PipecatServiceToolbar")
     }
 
     /// True when the app binary reports its speech asset installed and the locale
@@ -71,7 +71,7 @@ struct AppleSpeechEndToEndTests {
     }
 
     @Test(
-        .enabled("needs the debug app binary: swift build --package-path macos") {
+        .enabled("needs the debug app binary: swift build") {
             FileManager.default.isExecutableFile(atPath: AppleSpeechEndToEndTests.appBinary.path)
         },
         .enabled(

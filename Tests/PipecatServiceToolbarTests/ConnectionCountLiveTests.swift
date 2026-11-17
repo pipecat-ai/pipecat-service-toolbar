@@ -5,7 +5,7 @@ import Testing
 
 /// `PortProbe.clientCounts` against real sockets and the real `lsof`. Opt-in like `EndToEndTests`:
 ///
-///     PIPECAT_TOOLBAR_E2E=1 swift test --package-path macos --filter ConnectionCountLiveTests
+///     PIPECAT_TOOLBAR_E2E=1 swift test --filter ConnectionCountLiveTests
 ///
 /// The Apple Speech shape: the server is in this process (its rows are owned by the app pid), a
 /// client in another process (`nc`) is counted, one in this process (the app's own) is not.

@@ -2,8 +2,8 @@
 # Unattended UI smoke for "Pipecat Service Toolbar": what can be checked without
 # granting this terminal Accessibility or Screen Recording.
 #
-#   macos/scripts/ui_smoke.sh             # build if missing, then all checks
-#   macos/scripts/ui_smoke.sh --build     # rebuild the bundle first (build_app.sh)
+#   scripts/ui_smoke.sh             # build if missing, then all checks
+#   scripts/ui_smoke.sh --build     # rebuild the bundle first (build_app.sh)
 #
 # 1. Render: the debug binary's `--snapshot` mode draws every scripted panel
 #    state (light + dark) and the menu bar icon; each PNG must exist and be non-empty.
@@ -34,7 +34,7 @@
 # never shadow writes, so a write is not read back during the run). The script also compares the real
 # domain's `restore.wanted` before and after and fails if it changed.
 #
-# Not covered (needs Accessibility, see macos/README.md "Manual UI checklist"):
+# Not covered (needs Accessibility, see README.md "Manual UI checklist"):
 # opening the panel, clicking Install/Start, and the port a started service opens.
 # A launch uses your real ~/Library/{Application Support,Logs}/Pipecat Service Toolbar
 # (it installs nothing); it refuses to run while another copy is running.

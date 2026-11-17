@@ -14,7 +14,7 @@ smoke script itself (same-directory top-level import, like ``_gate_helpers``).
   for (backend, model, loopback host, the real port, the child's pid).
 - :data:`APP_BASE_ENV_KEYS` / :func:`app_child_env` mirror the environment the
   macOS app gives its children (``ProcessEnvironment.base()`` /
-  ``huggingFace()`` in ``macos/Sources/PipecatToolbarCore/ToolLocator.swift``;
+  ``huggingFace()`` in ``Sources/PipecatToolbarCore/ToolLocator.swift``;
   drift-tested).
 """
 
@@ -206,7 +206,7 @@ def app_child_env(inherited: dict[str, str] | None = None) -> dict[str, str]:
 
 # --- ports the smoke must never use ------------------------------------------
 
-# Same pattern as tests/test_backend_registry.py's ``_RESOLVE``.
+# Same pattern as python_tests/test_backend_registry.py's ``_RESOLVE``.
 _RESOLVE_PORT = re.compile(r'^\s+\w+\)\s+printf .*?"127\.0\.0\.1"\s+"(\d+)"', re.MULTILINE)
 # The app's STT services sit next to tone (macos catalog, Service.swift).
 _APP_PORT_RANGE = range(8665, 8673)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Print the code-signing identity the app recipes sign with.
 #
-#   SIGN_IDENTITY="$(macos/scripts/resolve_sign_identity.sh)"            # just app-open
-#   SIGN_IDENTITY="$(macos/scripts/resolve_sign_identity.sh --require)"  # just app-install
+#   SIGN_IDENTITY="$(scripts/resolve_sign_identity.sh)"            # just app-open
+#   SIGN_IDENTITY="$(scripts/resolve_sign_identity.sh --require)"  # just app-install
 #
 # Where `just app-open` and `just app-install` choose their default identity (build_app.sh,
 # run alone by `just app-build`, keeps its own ad-hoc "-" default). An explicit SIGN_IDENTITY
@@ -14,7 +14,7 @@
 #   (no flag)  unset: "Code Signing" when the keychain has it, else "-" (ad hoc).
 #              explicit: printed as is, the keychain is not asked.
 #   --require  no ad-hoc fallback: the identity (explicit, or the default when unset) must be
-#              in the keychain (macos/scripts/has_sign_identity.sh), checked before the build
+#              in the keychain (scripts/has_sign_identity.sh), checked before the build
 #              because signing is its last step.
 #              An explicit "-" is printed as is.
 #

@@ -31,7 +31,7 @@ let package = Package(
             // Core only: the lifecycle state machine lives there (`ServiceLifecycle`, `ServiceDriver`).
             dependencies: ["PipecatToolbarCore"],
             path: "Tests/PipecatServiceToolbarTests",
-            // Read by path: real server frames, verified by tests/test_macos_catalog_drift.py.
+            // Read by path: real server frames, verified by python_tests/test_macos_catalog_drift.py.
             exclude: ["Fixtures"]
         ),
     ]

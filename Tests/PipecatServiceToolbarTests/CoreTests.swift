@@ -23,7 +23,7 @@ import Testing
 
 @Suite struct CatalogTests {
     /// TTS ports must match the tts repo's `justfile` `_resolve` table
-    /// (`tests/test_macos_catalog_drift.py` checks the Swift source against it).
+    /// (`python_tests/test_macos_catalog_drift.py` checks the Swift source against it).
     @Test func canonicalPorts() {
         let expected: [Service: Int] = [
             .tone: 8665, .kokoro: 8765, .voxtralTTS: 8865, .pocketTTS: 8965,

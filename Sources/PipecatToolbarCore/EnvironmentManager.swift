@@ -224,7 +224,7 @@ public actor EnvironmentManager {
 
     /// Reads `prefetch --check --json` output: one `check` row per snapshot, then
     /// a `summary`. The TTS server and the upstream STT server write the same events
-    /// (`docs/supervised-contract.json`, enforced by `tests/test_supervised_contract.py`).
+    /// (`docs/supervised-contract.json`, enforced by `python_tests/test_supervised_contract.py`).
     ///
     /// Repo ids and folders are kept only for a service whose weights are in the Hugging Face
     /// cache (`info.weightsInHubCache`): Moonshine's rows name a synthetic, Hub-shaped repo id
@@ -651,7 +651,7 @@ public actor EnvironmentManager {
     /// (`deletionTarget`), so a model the backend fetches outside the Hub cache
     /// (`WeightsLocation.backendManaged`: Moonshine's) stays on disk whatever `deleteModel` is:
     /// the flag is honoured only in `weightsLocation`'s `.hubCache(repo:)` case, here, not left to
-    /// the UI or to `deletionTarget` (macos/docs/architecture.md, "Model source").
+    /// the UI or to `deletionTarget` (docs/architecture.md, "Model source").
     ///
     /// Invariant: a folder is deleted only when every installed sibling's check
     /// answered, in full, and named none of it. A sibling whose check gave no

@@ -207,7 +207,7 @@ extension ServerHello {
 
 // MARK: - Random interleavings against a model server
 
-/// The server side of one connection, as `tests/test_request_lifecycle.py`
+/// The server side of one connection, as the TTS server's `tests/test_request_lifecycle.py`
 /// pins it: frames in order, the buffer kept on every refusal, `K=1`, a
 /// bare cancel cancelling the active response or doing nothing.
 struct ModelServer {
@@ -592,7 +592,7 @@ struct World {
 
 // MARK: - Real server frames
 
-/// Frames the real TTS server sent (`tests/test_macos_catalog_drift.py` checks
+/// Frames the real TTS server sent (`python_tests/test_macos_catalog_drift.py` checks
 /// the fixture against a live server on every Python run).
 @Suite struct WireFixtureTests {
     static func frames() throws -> [String: String] {

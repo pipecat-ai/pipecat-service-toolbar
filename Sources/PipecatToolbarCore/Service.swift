@@ -70,7 +70,7 @@ public enum ServiceRuntime: Sendable, Equatable {
     /// Pinned PyPI requirements (built on `pipecat-local-stt-server`), run with the
     /// upstream CLI: `python -m stt_server serve --supervised --backend <b>`, where
     /// `<b>` is the entry's `expectedBackendName`. `engine` names the environment's
-    /// hash-pinned constraints file (`macos/constraints/stt-<engine>.txt`).
+    /// hash-pinned constraints file (`constraints/stt-<engine>.txt`).
     case sttHelper(engine: String, requirements: [String])
     /// Apple's on-device SpeechAnalyzer, served by the app itself (macOS 26+).
     case appleSpeech
@@ -111,7 +111,7 @@ public enum WeightsLicence: Sendable, Equatable {
     }
 }
 
-/// Where a service's weights come from (macos/docs/architecture.md, "Model source"). The catalog
+/// Where a service's weights come from (docs/architecture.md, "Model source"). The catalog
 /// states it per entry; `ServiceInfo`'s derived properties turn it into every model policy.
 public enum ModelSource: Equatable, Sendable {
     /// Nothing to download (tone, Apple Speech).
@@ -169,7 +169,7 @@ public struct ServiceInfo: Sendable, Equatable {
 
     public var family: Service { service.family }
 
-    // MARK: Model policies, each derived from `model` (macos/docs/architecture.md, "Model source")
+    // MARK: Model policies, each derived from `model` (docs/architecture.md, "Model source")
 
     // Two canonical properties switch on `model`: `weightsLocation` (where the weights live) and
     // `expectedModel` (the model's name on the wire). Every other policy is read off those two.
@@ -322,7 +322,7 @@ public enum ServiceCatalog {
     /// TTS mirrors `prefetch_specs(model)` in the backend module (run with the app's
     /// `--model`, no `PIPECAT_TTS_PHONON_VOICES`), STT the upstream `python -m stt_server prefetch --backend <b> --model <repo>`
     /// (at upstream's pin for a default model, `sttPinnedRevisions`).
-    /// `tests/test_macos_catalog_drift.py` compares this table with both.
+    /// `python_tests/test_macos_catalog_drift.py` compares this table with both.
     /// Kept above `info(for:)`: the drift tests' parser reads that switch to the end.
     public static func snapshots(for service: Service) -> [HubSnapshot] {
         guard let repo = info(for: service).hubRepo else { return [] }
