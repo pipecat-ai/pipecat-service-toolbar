@@ -1,0 +1,8 @@
+{
+  "version": "0.9.1",
+  "filename": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+  "url": "https://files.pythonhosted.org/packages/55/e0/9e18e24c2d6ef496d67ae2f5b2e68cc3ce6f1363209bac41cf8d1bd9e3ab/pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+  "sha256": "d9e6d15eed78009eb6ca5384ef45dd314e9343670d9149c2902715ee9ae7d5f1",
+  "source_repository": "https://github.com/vr000m/pipecat-local-tts-server",
+  "source_commit": "78823eeabf1f36c464243af1bd41b879d058c028"
+}

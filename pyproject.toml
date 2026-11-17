@@ -1,0 +1,30 @@
+[project]
+name = "pipecat-service-toolbar"
+version = "0.0.0"  # not the app version: see app-version.json
+description = "Development and compatibility tests for the native Pipecat Service Toolbar"
+requires-python = ">=3.12"
+dependencies = ["pipecat-local-tts-server==0.9.1"]
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "ruff==0.15.19"]
+
+[tool.uv]
+package = false
+# The versions constraints/tts.txt installs the bundled server with, for every package this lean
+# environment shares with it (python_tests/test_server_pins.py checks uv.lock against them).
+constraint-dependencies = [
+    "packaging==26.2",
+    "pygments==2.20.0",
+    "typing-extensions==4.15.0",
+    "websockets==16.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["python_tests"]
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100

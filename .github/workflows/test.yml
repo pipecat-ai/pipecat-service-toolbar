@@ -1,0 +1,68 @@
+name: test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          # constraints/tts.txt is compared byte for byte with this uv's `uv export` output: bump it
+          # only with `just tts-constraints-check` passing (regenerate the file if it does not).
+          version: "0.13.8"
+          python-version: ${{ matrix.python-version }}
+      - uses: extractions/setup-just@v3
+      - run: uv sync --locked --python ${{ matrix.python-version }}
+      - run: uv run --no-sync --python ${{ matrix.python-version }} ruff format --check .
+      - run: uv run --no-sync --python ${{ matrix.python-version }} ruff check .
+      - run: uv run --no-sync --python ${{ matrix.python-version }} pytest
+      - run: uv run --no-sync --python ${{ matrix.python-version }} python scripts/prepare_tools.py
+      # Provenance: constraints/tts.txt is exactly scripts/compile_tts_constraints.py's output for
+      # the source_commit in artifacts/tts.json, and the files recorded from the TTS repository are
+      # that commit's (the test suite's digests only catch edits after recording).
+      - name: constraints/tts.txt and the recorded TTS files are the pinned server commit's own
+        if: matrix.python-version == '3.12'
+        run: |
+          repo=$(jq -r .source_repository artifacts/tts.json)
+          commit=$(jq -r .source_commit artifacts/tts.json)
+          # Both come from a file a pull request can edit and reach git: accept only a GitHub
+          # HTTPS repository and a full commit id (no option-like or multi-line values).
+          repo_re='^https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+(\.git)?$'
+          commit_re='^[0-9a-f]{40}$'
+          [[ "$repo" =~ $repo_re ]] || { echo "::error::artifacts/tts.json: bad source_repository"; exit 1; }
+          [[ "$commit" =~ $commit_re ]] || { echo "::error::artifacts/tts.json: bad source_commit"; exit 1; }
+          checkout="$RUNNER_TEMP/pipecat-local-tts-server"
+          git clone --filter=blob:none --no-checkout -- "$repo" "$checkout"
+          git -C "$checkout" cat-file -e "$commit^{commit}" \
+            || git -C "$checkout" fetch --filter=blob:none --end-of-options origin "$commit"
+          uv run --no-sync --python 3.12 python scripts/compile_tts_constraints.py \
+            --server-checkout "$checkout" --check
+          uv run --no-sync --python 3.12 python scripts/check_tts_fixtures.py \
+            --server-checkout "$checkout"
+  macos-app:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: latest-stable
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Shell lifecycle tests under macOS Bash 3.2
+        run: uv run pytest python_tests/test_app_recipes.py
+      - name: Require live tone-server prerequisites
+        run: .venv/bin/python -c "import tts_server"
+      - run: swift test
+      - name: Build complete app with pinned artifacts
+        run: scripts/build_app.sh

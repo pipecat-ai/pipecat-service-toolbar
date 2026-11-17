@@ -1,0 +1,14 @@
+{
+  "_comment": "Identity and layout bytes carried over from the extraction source: bundle identity, signing, entitlements, AppPaths layout and preference keys. A change here is an identity change for every installed copy: review it as one, then update the digest. Everything else is covered by behavioural tests (RepositoryMigrationTests, test_app_recipes, test_supervised_contract).",
+  "source_commit": "78823eeabf1f36c464243af1bd41b879d058c028",
+  "files": {
+    "Sources/PipecatToolbarCore/WantedServiceStore.swift": "e64ef5a68b3b100c7d7e4f3f1b46abae597283ba69c5e008fdc5254389932789",
+    "Sources/PipecatToolbarCore/AppPaths.swift": "a909f2a468aef32c403e23d716e7bfb93ce6755d1596496183572446bf5ec4e7",
+    "Sources/PipecatToolbarCore/LastUsedStore.swift": "3d7bf136a5bf796dbce03b057387925b9bd6c0f4c015994b80f3ebe2ef3d5465",
+    "Sources/PipecatToolbarCore/PreferencesDomain.swift": "de6f15ccddcefc84fdb1b3202057eae3c7f2913766578d9ad43522215d587992",
+    "scripts/Info.plist": "452d9b9e11d40fc1601ef6472cfef970d07016cbd09eb627b7cbc6831f640fda",
+    "scripts/has_sign_identity.sh": "4819ba0481af6b8333e8c1ec212ae3617140824472f64e103398681a4776eece",
+    "scripts/resolve_sign_identity.sh": "c2682bfa19a35b1e300e9fd6c73e91cd460c935465878c24918884d36a9faac8",
+    "scripts/PipecatServiceToolbar.entitlements": "26778635212b348342c32105002fe86e443e6a2c950b1a5d274dd855bb0a950d"
+  }
+}

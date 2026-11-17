@@ -60,3 +60,17 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Standalone toolbar build and development state
+.build/
+build/
+.swiftpm/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.deep-review/
+.review-plan/
+.gauntlet/
+
+.DS_Store
