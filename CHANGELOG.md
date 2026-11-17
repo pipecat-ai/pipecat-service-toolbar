@@ -32,57 +32,24 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 ### Changed
 
-- The app moved to its own repository (`pipecat-ai/pipecat-service-toolbar`) with its Git history,
-  build tools, tests and documentation. Bundle identifier, signing identity, preferences, `AppPaths`
-  layout, environment fingerprints, ports and model-cache locations are unchanged: an installed
-  0.9.1 (build 468) copy, now numbered 0.4.0, needs no environment rebuild or model download.
-- The app version is independent of the servers (`app-version.json`; see Version history).
-  It builds from the checksum-pinned TTS 0.9.1 wheel (`artifacts/tts.json`) and recorded
-  constraints; STT remains at 0.6.0. The first build from this repository is 0.4.1, build 474, the
-  next release after 0.4.0 (shipped as 0.9.1, build 468).
-- `scripts/prepare_tools.py` also checks that the pinned URL names the pinned wheel and that
-  `source_commit` is a full commit id, and a corrupt cached wheel now names the file to delete.
-- `scripts/prepare_tools.py` refuses to copy `constraints/tts.txt` into the app unless its
-  header names the pinned version and `source_commit` and its `content-sha256` matches, so an app
-  build (which runs no tests) cannot ship one release's wheel with another release's pins. The
-  check is `verify_header` in `scripts/compile_tts_constraints.py`, which writes the header.
+- The app moved to `pipecat-ai/pipecat-service-toolbar`, retaining its Git history, build tools,
+  tests, and documentation. Upgrading from 0.9.1 (build 468, now numbered 0.4.0) with the same
+  signing identity preserves preferences, permissions, environments, ports, and model caches;
+  no environment rebuild or model download is needed. See [migration and compatibility](docs/migration.md).
+- App versions are now independent of server versions. This first standalone build is 0.4.1
+  (build 474); the server pins remain TTS 0.9.1 and STT 0.6.0.
 
 ### Fixed
 
-- `PIPECAT_TOOLBAR_REPO` pointing at a TTS source checkout no longer drops the hash-pinned STT
-  constraints (they come from this repository's `constraints/`).
-- A `PIPECAT_TOOLBAR_REPO` that names neither a TTS server nor a toolbar checkout (a typo) is
-  reported at startup instead of being ignored in favour of the pinned release wheel (an empty
-  value counts as unset).
+- A TTS source override through `PIPECAT_TOOLBAR_REPO` now retains the hash-pinned STT
+  dependencies. Invalid checkout paths report an error at startup; an empty value counts as unset.
+- A corrupt cached TTS wheel now reports which file to delete.
 
 ### Added
 
-- Server pin checks (`python_tests/test_server_pins.py`): the TTS artifact, `pyproject.toml`,
-  `uv.lock`, `constraints/tts.txt` (now with a provenance header) and the recorded server fixtures
-  (`python_tests/fixtures/provenance.json`) must describe the same release, and the wheel's
-  requirements must be satisfied by the recorded pins. `scripts/compile_tts_constraints.py`
-  regenerates `constraints/tts.txt` from the server release's `uv.lock`.
-- `constraints/tts.txt` carries a `content-sha256` header line (the SHA-256 of every other line,
-  the `# server:` and `# source-commit:` lines included), so an accidental hand edit fails the
-  pin checks. `just tts-constraints-check <checkout>` proves provenance: it exits non-zero unless
-  the file is the script's output for the pinned `source_commit` (compared byte for byte), and CI
-  runs it against a clone of `source_repository` with a pinned uv (the export format is uv's).
-  Git and uv errors from the script are shown, not swallowed.
-- `just tts-fixtures-check <checkout>` (`scripts/check_tts_fixtures.py`, also run in CI) fails
-  unless the files recorded from the TTS server (`python_tests/fixtures/upstream/*` byte for
-  byte, `docs/supervised-contract.json` apart from its `_comment`, as canonical JSON so a changed
-  value type counts) are the pinned commit's own. Each such file's path in the server repository
-  is its `source` in `provenance.json`, and the script shares commit validation and git error
-  reporting with `scripts/compile_tts_constraints.py`. CI accepts `source_repository` and
-  `source_commit` only as a GitHub HTTPS URL and a full commit id before passing them to git.
-- `python_tests/fixtures/provenance.json` records the digests of `constraints/stt-*.txt` (which
-  CI cannot regenerate) and files the shared `docs/supervised-contract.json` under `contract`.
-  The STT excerpt the tests read is named by `sttServerRequirement`, not hard-coded, and an
-  excerpt left behind for any other release fails the pin checks.
-- The lean test environment is locked at the dependency versions the app installs: `[tool.uv]
-  constraint-dependencies` in `pyproject.toml` holds the `constraints/tts.txt` version of every
-  package they share, and the pin checks fail on a locked version that differs or on an entry
-  `constraints/tts.txt` no longer pins.
+- Build and CI checks verify the pinned TTS wheel, dependency constraints, and recorded server
+  fixtures, and keep shared test dependencies aligned with the app's pins. See
+  [Moving a server pin](docs/migration.md#moving-a-server-pin) for the checks and regeneration steps.
 
 ## [0.4.0] - 2026-11-16
 
@@ -90,17 +57,23 @@ Shipped as 0.9.1 alongside [TTS server 0.9.1](https://github.com/vr000m/pipecat-
 
 ### Added
 
-- Moonshine STT (port 9965, English only: model spec `medium-streaming@en`). It is not a Hugging Face model, so the app passes the spec as `--model` and shows it as the model. Deleting it removes only its Python environment; its weights stay on disk (see "Model source" in `docs/architecture.md`). The app forwards `MOONSHINE_VOICE_CACHE` to its child processes and never deletes that directory.
+- Moonshine STT on port 9965, using the English-only `medium-streaming@en` model. Deleting it
+  removes its Python environment but keeps its weights; `MOONSHINE_VOICE_CACHE` is respected
+  and never deleted. See [Model source](docs/architecture.md#model-source).
 
 ### Changed
 
-- STT installs now go through `pipecat-local-stt-server` 0.6.0 instead of 0.5.0, for all engines (constraints regenerated, source excerpt re-recorded). Regenerating also re-resolved the transitive pins of the Whisper, Parakeet and Nemotron environments.
-- `HF_TOKEN` is now passed only to services whose weights come from the Hugging Face cache; a service whose weights live elsewhere gets no token.
-- the detail page's Delete offers Delete Everything only for models in the Hugging Face cache. Tone, Apple Speech and Moonshine show a single Delete. Before, every model with a download offered it (see "Model source" in `docs/architecture.md`).
+- All STT engines now install `pipecat-local-stt-server` 0.6.0 instead of 0.5.0, with refreshed
+  dependency pins for Whisper, Parakeet, and Nemotron.
+- `HF_TOKEN` is passed only to services that use Hugging Face model weights.
+- Delete Everything is offered only for Hugging Face models. Tone, Apple Speech, and Moonshine
+  show a single Delete action.
 
 ### Fixed
 
-- a suggested model whose Start needs a package refresh now keeps its Running-panel row, showing the install progress and Cancel, until it is starting; Cancel in that window, including between the refresh and the read after it, stops the start. Before, the category disappeared for the length of the install. A sibling variant's environment change during the read after the refresh no longer drops that Start.
+- Suggested models remain visible with progress and Cancel while Start refreshes their packages.
+  Cancellation stops the pending start, and a sibling variant's environment update no longer
+  causes the start to be dropped.
 
 ## [0.3.0] - 2026-10-31
 
@@ -108,39 +81,20 @@ Shipped as 0.9.0 alongside [TTS server 0.9.0](https://github.com/vr000m/pipecat-
 
 ### Added
 
-- running services are restored on the next launch (preference `restoreOnLaunch`, on by default; the toggle is in the panel's gear menu).
-  A stale or busy port ends Failed and is not retried.
-- Quit asks for confirmation when a client is connected to a server the app started.
-  It also asks when the count cannot be read.
-  Connections are counted from one bounded `lsof` call, excluding the app's own sockets.
-  An `lsof` still running at its 2 s deadline is sent SIGKILL, and the count is unknown (asks).
-  The killed `lsof` is reaped within 0.2 s, else by a background reaper.
-  A launch failure, signal death or any stderr also asks. So does an exit other than 0 (or 1 with no output).
-  So does a pipe held open past the deadline.
-  So does any malformed or unknown `lsof` line, or a process with no readable socket.
-  So does a line not ended by `\n`, or an empty line. So does a pid or fd with a sign or leading zero.
-  So does a socket name that is not two whole IPv4 or bracketed IPv6 endpoints joined by one `->`.
-  IPv6 may use `::`, a dotted IPv4 tail or a `%scope`.
-  Endpoints are checked without a C parser: ASCII only, no leading zero in an octet or port.
-  Exit 1 with no output is zero.
-  System-initiated quits are not asked. That exemption rests on a provisional quit-reason code table.
-  The table holds the documented Apple Event codes, not yet observed.
-  A manual Log Out / Restart / Shut Down check has not run.
-  Half-open peers count until keepalive reaps them: about 140 s at the TTS server's keepalive defaults.
-  The STT servers' keepalive is not verified here.
-- `scripts/quit_app.sh` says a quit confirmation may be waiting in the app when it exits 1.
-- Reset also clears the saved set of services to restore (`restore.wanted`), so the next
-  launch restores none. Quitting never changes the set; a Stop during shutdown still clears that service.
-- `just app-smoke` (`scripts/ui_smoke.sh`) relaunches with tone wanted and restore on.
-  It checks an External tone server is adopted and no server of the app's own is started.
-  Every launch uses a throwaway `PIPECAT_TOOLBAR_DEFAULTS_SUITE` plus `-restoreOnLaunch` and
-  `-restore.wanted` launch arguments.
-  The run fails if a read-only hash of the real `restore.wanted` changed.
-- the Running panel suggests a model for the idle category.
-  It appears when the other category has an active service: starting, running, stopping, external, or failed at runtime.
-  It offers the model you last started there.
-  Otherwise it offers the default, then the first installed model whose cache check does not refuse it.
-  It never suggests `tone`, and Reset clears the last-used choice (`lastUsed.tts`, `lastUsed.stt`).
+- Running services are restored on the next launch (`restoreOnLaunch`), enabled by default with
+  a toggle in the panel's gear menu. A stale or busy port reports Failed without retrying;
+  Reset clears the saved services, while Quit preserves them.
+- Quit asks for confirmation when clients are connected to an app-started server or their count
+  cannot be determined. Quit scripts warn when confirmation may be waiting in the app.
+- System-initiated quits bypass confirmation, using provisional reason codes that had not yet
+  been manually verified for Log Out, Restart, or Shut Down. Disconnected clients may still
+  count until keepalive expires (about 140 seconds for TTS; STT timing was unverified).
+  See [Restore and quit guard](docs/architecture.md#restore-and-quit-guard).
+- The Running panel suggests a model for the idle category when the other category has an active
+  service, preferring the last-used model, then the default or an installed model. Tone is never
+  suggested, and Reset clears the last-used choice.
+- Smoke checks cover service restoration and adoption of External servers using isolated
+  preferences, while checking that the real restore preferences remain unchanged.
 
 ## [0.2.3] - 2026-10-28
 
@@ -148,23 +102,13 @@ Shipped as 0.8.3 alongside [TTS server 0.8.3](https://github.com/vr000m/pipecat-
 
 ### Fixed
 
-- `just app-open` waits for a running Pipecat Service Toolbar to exit before launching (the quit is
-  asynchronous, so `open` used to re-activate the old copy) and stops, without launching, when the old copy
-  has not quit within `QUIT_WAIT_SECS`. It now signs with the self-signed `Code Signing` identity when the
-  keychain has it (ad hoc otherwise; it used to always sign ad hoc), so Microphone / Speech Recognition
-  grants carry across `app-open` and `app-install`.
-- Both recipes share `scripts/quit_app.sh`: one `QUIT_WAIT_SECS` deadline for the whole step,
-  osascript calls included (one that ignores SIGTERM is killed). Exit 1 when the app is still running, or
-  osascript gave no answer, at the deadline; exit 3 when osascript fails or answers anything but true/false,
-  so whether the app runs is unknown and the recipe stops instead of reading it as "not running". No
-  osascript outlives the script on any exit path.
-- Both recipes choose their default identity in `scripts/resolve_sign_identity.sh`, which asks
-  `scripts/has_sign_identity.sh`. That check reads only the identity lines of the keychain listing
-  and takes an identity as codesign does: a full 40-hex SHA-1 (any case) or a case-insensitive substring of
-  a name. It is advisory: two identities sharing a name still count as present, and codesign decides at
-  signing. A failing `security` query stops the recipe instead of reading as "no identity". The old
-  `app-install` check matched the listing's own `Policy: Code Signing` header, so it passed for
-  `Code Signing` on every machine and a missing identity failed only at the last build step.
+- `just app-open` waits for the previous app to quit before launching the new build. Both
+  `app-open` and `app-install` stop if quitting times out or the app's running state is unknown.
+- `app-open` uses the self-signed `Code Signing` identity when available, preserving Microphone
+  and Speech Recognition permissions across rebuilds and installs; otherwise it uses ad hoc signing.
+- Signing checks in `has_sign_identity.sh` no longer mistake the keychain listing's header for
+  an available identity. A keychain query failure stops the build instead of being treated as a
+  missing identity.
 
 ## [0.2.2] - 2026-10-27
 
@@ -182,15 +126,12 @@ Shipped as 0.8.1 alongside [TTS server 0.8.1](https://github.com/vr000m/pipecat-
 
 ### Changed
 
-- the External probe waits 2 s for a server's hello (was 5 s). Measured
-  across every TTS backend mid-synthesis and every STT engine while its model loads, the slowest
-  hello was 187 ms.
+- External-server detection waits up to 2 seconds for a response, down from 5 seconds.
 
 ### Fixed
 
-- an External row's LaunchAgent label is cut in the middle, not at the
-  end, so `pipecat.stt-server.kyutai` / `…parakeet` / `…nemotron` stay distinguishable in the
-  panel, and hovering the line shows the whole label.
+- External-server LaunchAgent labels truncate in the middle so engine names remain distinguishable.
+  Hovering shows the full label.
 
 ## [0.2.0] - 2026-10-27
 
@@ -198,48 +139,26 @@ Shipped as 0.8.0 alongside [TTS server 0.8.0](https://github.com/vr000m/pipecat-
 
 ### Added
 
-- **Adopts running servers (External).** At launch and while
-  the panel is open (every 15 s) the app probes the catalog ports (loopback TCP) with
-  a `server.hello` and shows a matching server it did not start as **External**;
-  it starts its own only when none answers. External rows offer Try it (for STT, the
-  test clip only, never the microphone) and Copy but no per-service Stop, Delete, Get
-  or Install (the app-wide Reset deletes only the app's own environments and layout
-  file, never signals an External server, and is not blocked by one), show the
-  LaunchAgent label when `launchctl`
-  confirms it holds the port (else `127.0.0.1:<port>`), and **Quit leaves them
-  running** ("Stop All & Quit" appears only when the app started a server). The app
-  only signals, stops or deletes processes it started. An app-started server and a
-  `just tts-install` / `just stt-*` agent on one port: a matching agent is adopted;
-  a holder that does not identify as that service makes Start report the port busy,
-  naming it when `launchctl` confirms it. Unix sockets, LAN endpoints and
-  token-protected servers are not discovered.
-- **Parakeet (9765) and Nemotron (9865)** STT services, matching the
-  `pipecat.stt-server.parakeet` / `nemotron` agent ports, installed against their own
-  hash-pinned `constraints/stt-parakeet.txt` / `stt-nemotron.txt` (regenerate with
-  `uv run python scripts/compile_stt_constraints.py`). Parakeet needs `ffmpeg` on
-  the machine (Homebrew `/opt/homebrew/bin` or `/usr/local/bin`; the app adds those to
-  Parakeet's server `PATH` only); without it the server exits with `BackendStartError:
-  FFmpeg is not installed or not in your PATH`.
-- `scripts/ui_smoke.sh` starts a tone server outside the app on 8665, checks the
-  bootstrap log reports it as External and that it is still running after Quit
-  (skipped when 8665 is held, a `pipecat.tts-server.tone` LaunchAgent is loaded, or the
-  repo `.venv` cannot import `tts_server`).
+- Adopts running servers that match catalog services on their ports as External, with Try it and Copy
+  actions (STT testing uses a clip, not the microphone). The app leaves these servers running
+  on Quit, never stops or deletes them, and limits Reset to its own environments and layout.
+- External discovery supports local TCP ports only; Unix sockets, LAN endpoints, and
+  token-protected servers are not discovered. An unrecognised port holder makes Start report
+  the port busy. See [External servers](docs/architecture.md#external-servers).
+- Parakeet STT on port 9765 and Nemotron STT on port 9865, with hash-pinned dependencies.
+  Parakeet requires `ffmpeg` installed through Homebrew in `/opt/homebrew/bin` or `/usr/local/bin`.
+- Smoke checks verify that an External tone server remains running after the app quits.
 
 ### Changed
 
-- STT now runs through the upstream
-  `pipecat-local-stt-server==0.5.0` CLI (`python -m stt_server serve --supervised`,
-  `prefetch --json`); the bundled `pipecat_app_helper.py`, `PIPECAT_TOOLBAR_HELPER`
-  and the helper's cooperative cancel are removed, with the helper's `MODEL_REVISIONS`
-  pins and `ServiceCatalog.sttModelRevisions` (0.1.0 listed both). An STT server on an
-  older version is adopted by its hello, but an app-started STT server needs 0.5.0.
-- STT model weights are pinned by upstream, not by the app: `pipecat-local-stt-server`
-  0.5.0 pins the four default models (Whisper large-v3-turbo, Kyutai 1B, Parakeet,
-  Nemotron) to a recorded Hub commit in code (`prefetch --json` reports it as
-  `revision`). It has no revision flag, so the app passes none; any other `--model`
-  (the other Whisper sizes, Kyutai 2.6B) follows the repo's `main`.
-- `docs/supervised-contract.json` lists error codes per emitter (contract `version` 2;
-  version 1 had one flat list); `ModelInvalidError` is emitted by the STT server only (`tts_server/supervise.py` is unchanged).
+- App-started STT services now use `pipecat-local-stt-server` 0.5.0, replacing the bundled helper
+  and removing the `PIPECAT_TOOLBAR_HELPER` override. Compatible older servers can still be
+  adopted as External.
+- The STT server now owns model-revision pins for the four default models: Whisper large-v3-turbo,
+  Kyutai 1B, Parakeet, and Nemotron. Other Whisper sizes and Kyutai 2.6B follow their model
+  repository's `main` revision.
+- The supervised protocol contract moves to version 2, separating TTS and STT error codes;
+  `ModelInvalidError` is STT-only.
 
 ## [0.1.0] - 2026-10-25
 
@@ -247,93 +166,44 @@ Shipped as 0.7.0 alongside [TTS server 0.7.0](https://github.com/vr000m/pipecat-
 
 ### Added
 
-- **Pipecat Service Toolbar**: native SwiftUI menu bar app that installs
-  and serves local speech services on fixed loopback ports. TTS: every backend here
-  (bundled pinned `uv` + this wheel + `uv.lock` constraints; a managed CPython 3.12 and
-  one venv per service). STT: Apple Speech (SpeechAnalyzer behind a native WebSocket
-  server), Whisper and Kyutai (`moshi_mlx`), all on the `pipecat-local-stt-server` wire
-  protocol. Running-only main menu, an Add Models catalog, copy URL / Pipecat service /
-  env from a right-click menu, model deletion, and "Try it" for both directions.
-  Quitting stops the install or download step in flight (and the bootstrap's wheel
-  build), lets no later step start, and waits up to 20 s for installs and removals to
-  unwind; deleting a service with "Delete Everything" removes its model weights even
-  when its environment is outdated, and reports any it could not delete. An abandoned
-  Kyutai transcription releases the backend (cancelled per 80 ms frame). Cancel
-  always ends an install (SIGKILL 5 s after SIGTERM) and never counts as a finished
-  one; deleting a service mid-install cancels the install first; model deletion only
-  touches `models--*` folders in the Hugging Face hub cache and the server's own
-  derived-weights folder; a startup error is never lost to the server's exit; the
-  TTS "Try it" request lifecycle is one pure state machine (`TTSRequestMachine`,
-  tested over every state x event cell, random interleavings against a model server
-  and a live tone server): requests go out one at a time on a reused connection,
-  each starting with `input_text.clear`; Stop before the commit sends no commit and
-  Stop after it sends `response.cancel` behind it; a frame acts only on the request
-  its `response_id` / `previous_event_id` names; each request reports its outcome
-  once; a request the server goes silent on times out and reconnects. It shows
-  server error messages and ends cleanly when the output device changes. A cancelled queued install records
-  nothing; an install step no longer waits on a grandchild holding its pipes.
-  STT environments install against checked-in, hash-pinned constraints
-  (`constraints/stt-<engine>.txt`, `--require-hashes`) and load model weights
-  pinned to a commit, which `prefetch` downloads and `serve-stt` loads; neither pin
-  marks an existing environment outdated. The supervised/prefetch JSON lines both
-  emitters write (this server and the STT helper) are fixed in
-  `docs/supervised-contract.json` and drift-tested from both sides.
-  `HF_TOKEN` reaches only `prefetch` and `serve`, never `uv`. The Apple Speech
-  server caps clients at 8 and decodes one at a time, and survives Stop with a
-  decode in flight; microphone audio is resampled without per-buffer seams.
-  Model deletion refuses a path whose backend directory is a symlink out of the
-  cache; stopping a subprocess also ends its descendants (process group) and never
-  hangs on a failed or refused launch; a server exit reported after a removal no
-  longer marks the service installed; quit cancels an Apple Speech model install;
-  the Apple Speech server closes a client that stops reading its replies.
-  `just app-build` / `app-open` / `app-run` / `app-test`. Right-click a running
-  service for **Test Voice** (speaks "Hello world, this is the Pipecat test server
-  using the <model> model.") or **Test Transcription** (a bundled spoken clip, no
-  microphone, checked against its sentence); the STT Try it "Test Clip" button uses
-  the same clip instead of a live system-voice synthesis.
+- Native SwiftUI menu bar app for local TTS and STT on fixed loopback ports, with a Running panel,
+  Add Models catalog, model deletion, and copyable URLs, Pipecat snippets, and environment settings.
+  Supports the TTS server's backends plus Apple Speech, Whisper, and Kyutai STT.
+- Managed Python environments with pinned dependencies and STT model revisions. Adding these
+  pins does not mark existing environments outdated; `HF_TOKEN` reaches model download and
+  serving processes, never the package installer.
+- Try it for speech synthesis and transcription, plus Test Voice and Test Transcription shortcuts.
+  Transcription tests use a bundled spoken clip without requiring the microphone.
+- Build and run commands: `just app-build`, `app-open`, `app-run`, and `app-test`.
 
 ### Changed
 
-- "Try it" clears the request buffer (`input_text.clear`) before every request and sends a
-  cancel behind the commit a Stop interrupts, so a refused request's text can no longer prefix the next one and Stop between
-  append and commit no longer leaves a synthesis holding the connection.
-- Internals (no change to behaviour, ports or on-disk layout):
-  the per-service lifecycle state machine moved from the app target into
-  `PipecatToolbarCore` as a pure reducer (`ServiceLifecycle.reduce`) plus an effect
-  runner (`ServiceDriver`) with injectable environment, process, port, Apple Speech
-  and clock seams; `ServiceModel` is now a thin `@Observable` adapter and the Swift
-  tests depend on Core only. Add Models' download size now counts every snapshot an
-  install fetches at its pinned revision (Phonon's pin, dia's codec, pocket_tts's
-  voice embeddings, the STT helper's file filter at its `MODEL_REVISIONS` pin, which
-  `ServiceCatalog.sttModelRevisions` repeats) from `ServiceCatalog.snapshots(for:)`,
-  which a lean drift test compares with each backend's `prefetch_specs(model)` and
-  with the helper's pins.
+- TTS Try it clears previous text before each request and cancels interrupted synthesis, preventing
+  rejected text from leaking into the next request. Silent servers time out and reconnect.
+- Service lifecycle handling moved into a separately tested core without changing behaviour,
+  ports, or storage layout. Model download sizes now include all snapshots an install fetches.
 
 ### Fixed
 
-- a late refresh (Reset, Try Again, a sibling's install, a
-  slow cache probe) no longer hides a running server or undoes a Delete; Cancel during
-  the busy-port check works and a late answer is dropped; an obsolete server's `error`
-  line no longer judges the next server; an Apple Speech download already under way
-  is attached to (progress and Cancel work); a fresh install cancelled during setup
-  reads as not installed; Delete Everything also removes partially downloaded repos
-  and reports any folder it refused; a bundled app missing an STT engine's hash pins
-  refuses that install instead of resolving unpinned; choosing "Default voice" in
-  Try it is remembered; stale audio no longer replays after an output-device change;
-  `just app-open` quits the bundle id the build used.
-- an environment from before variants keeps its builder
-  installed when a sibling variant installs or is cancelled; a variant record that
-  can't be written or removed now fails the install or removal instead of reporting
-  success; Reset is refused while a service is running, installing or removing;
-  Stop and quit stop a busy-port probe (`lsof`) in flight; quit always stops the
-  environment manager's subprocesses (a cache probe included) and waits for a
-  bootstrap or Reset in flight; Try Again and Reset no longer start a second
-  bootstrap or Reset while one runs.
-- Delete Everything on one variant keeps (and reports) the
-  model folders when a sibling's cache check gives no answer, such as one quit stopped,
-  so quitting while Phonon 8-bit is removed no longer deletes the voices Phonon still
-  uses; a late bootstrap refresh after quit no longer attaches an Apple Speech install,
-  and the download-size lookup no longer starts after quit; Stop cancels a busy-port
-  probe at once instead of after its re-read; Get, Start and Delete wait while Reset
-  or a bootstrap runs (a Start during Reset no longer fails with "missing the STT
-  helper"); a stop after a process was reaped never signals a reused pid's group.
+- Late refreshes and obsolete server events no longer hide running services, undo deletion, or
+  overwrite a newer service's state. Startup errors remain visible after a server exits.
+- Cancel and Quit stop pending installs, downloads, probes, and their child processes without
+  reporting cancelled work as installed. Quitting waits for cleanup and prevents further work;
+  stopping a finished process cannot signal an unrelated process that reused its identifier.
+- Shared model variants retain their environment and weights when a sibling still needs them,
+  including when its cache check cannot complete. Failed variant-record updates report failure.
+- Delete Everything removes partial downloads and reports anything it cannot delete, including
+  for outdated environments. Deletion stays within model-cache locations and refuses symlinks
+  that lead outside the cache.
+- Reset is refused while services are running, installing, or being removed. Setup and Reset
+  cannot run twice concurrently, and model actions wait for them to finish.
+- STT installs refuse to proceed without their bundled dependency hash pins. Existing Apple Speech
+  downloads can be reattached with progress and Cancel support; Quit cancels them.
+- Try it remembers Default voice and avoids stale playback after an output-device change.
+  Apple Speech handles cancellation during decoding and disconnects clients that stop reading;
+  abandoned Kyutai transcriptions release the backend.
+- `just app-open` quits the bundle identifier used by the build.
+
+See [architecture and lifecycle details](docs/architecture.md) for the implementation and
+[the original release](https://github.com/vr000m/pipecat-local-tts-server/releases/tag/v0.7.0)
+for the inherited release record.
