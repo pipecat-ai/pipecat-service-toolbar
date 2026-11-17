@@ -79,28 +79,36 @@ disagree, and the recorded server fixtures cannot go stale silently.
 1. Update `artifacts/tts.json`: `version`, `filename`, `url`, `sha256` (from PyPI) and the release
    tag's full `source_commit`.
 2. `uv run --no-project python scripts/compile_tts_constraints.py --server-checkout <path>`
-   regenerates `constraints/tts.txt` from that commit's `uv.lock`. Its header records the
-   SHA-256 of the pins below it, so never edit the pins by hand; `just tts-constraints-check
-   <path>` exits non-zero when the file is not the script's output for the pinned commit.
+   regenerates `constraints/tts.txt` from that commit's `uv.lock`; never edit the file by hand.
+   Its `content-sha256` header line is the SHA-256 of every other line (the `# server:` and
+   `# source-commit:` lines and the pins), so `test_server_pins.py` fails on an accidental edit
+   to any of them. That digest is not proof of origin: `just tts-constraints-check <path>` exits
+   non-zero when the file is not the script's output for the pinned commit, and CI runs the same
+   check against a clone of `source_repository` (the `compatibility` job, Python 3.12).
 3. Update the dependency in `pyproject.toml`, and set `[tool.uv] constraint-dependencies` to the
-   new `constraints/tts.txt` versions of the packages the lean environment shares with it (the
-   test lists any that differ). Then `uv lock` and `uv sync --locked`.
+   new `constraints/tts.txt` versions of the packages the lean environment shares with it, and
+   remove any entry `constraints/tts.txt` no longer pins (the tests list both). Then `uv lock`
+   and `uv sync --locked`.
 4. Re-record `python_tests/fixtures/upstream/*` and `docs/supervised-contract.json` against the new
    release (`tts_server/supervise.py`, justfile ports, README), then update their digests and the
    `tts` version/commit in `python_tests/fixtures/provenance.json`.
 5. Run `just app-test`, `uv run pytest` and `just app-build`. `RepositoryMigrationTests` then
-   fails with "Existing environment would refresh": that is the signal that installed
-   environments will refresh their packages. Edit its baseline fixture
-   (`Tests/PipecatServiceToolbarTests/Fixtures/pre-extraction-environments.json`) only when that
-   refresh is intended, and say so in the changelog.
+   fails (see below).
 
 **STT** (`pipecat-local-stt-server`): change `ServiceCatalog.sttServerRequirement` and every
 engine's requirement in `Service.swift`, run `scripts/compile_stt_constraints.py`, re-record
 `python_tests/fixtures/stt_server_<version>_source.txt` and the `stt_*` line fixtures from the
 release (verify with `PIPECAT_STT_SERVER_SITE`, see the README), then update their digests and
-the `stt` version in `provenance.json`.
+the `stt` version in `provenance.json`. Run `just app-test`, `uv run pytest` and
+`just app-build`; `RepositoryMigrationTests` then fails (see below).
 
-An intentional pin change changes the environment fingerprint, so installed environments refresh
-their packages on next start (models stay cached). `RepositoryMigrationTests` records the shipped
-0.9.1/0.6.0 baseline; when a new baseline ships, record its fingerprints beside the old ones and
-say in the changelog that existing environments will refresh.
+**Installed environments.** An intentional pin change changes the environment fingerprint (TTS:
+the wheel filename in `artifacts/tts.json`; STT: each engine's requirements, which carry
+`sttServerRequirement`), so installed environments refresh their packages on next start (models
+stay cached). `RepositoryMigrationTests` fails with "Existing environment would refresh" for
+every affected service: that is the signal. Its fixture
+(`Tests/PipecatServiceToolbarTests/Fixtures/pre-extraction-environments.json`) is a record of
+what is installed today (the shipped 0.9.1/0.6.0 baseline), and every row must be ready under
+the current pins. Change it only when that refresh is intended: replace the affected rows with
+the fingerprints the new build writes (never add rows beside the old ones, which would then
+fail) and say in the changelog that existing environments will refresh.

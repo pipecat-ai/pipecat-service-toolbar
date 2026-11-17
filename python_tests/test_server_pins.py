@@ -123,17 +123,47 @@ def test_the_compatibility_tests_lock_the_dependency_versions_the_app_installs()
 
 
 def test_the_recorded_constraints_belong_to_the_artifact():
-    # The header is four lines; the pins are every byte after the fourth newline.
-    *head, body = CONSTRAINTS.read_bytes().split(b"\n", 4)
-    head = [line.decode() for line in head]
+    lines = CONSTRAINTS.read_bytes().splitlines(keepends=True)
+    head = [line.decode().rstrip("\n") for line in lines[:4]]
     assert head[1] == f"# server: {PACKAGE}=={ARTIFACT['version']}"
     assert head[2] == f"# source-commit: {ARTIFACT['source_commit']}", (
         "regenerate with scripts/compile_tts_constraints.py"
     )
-    # scripts/prepare_tools.py copies the file unchanged: a hand-edited pin must not pass.
-    assert head[3] == f"# body-sha256: {hashlib.sha256(body).hexdigest()}", (
-        "constraints/tts.txt differs from what scripts/compile_tts_constraints.py wrote:"
-        " regenerate it, do not edit the pins by hand"
+    # scripts/prepare_tools.py copies the file unchanged, so a hand edit to any line (the
+    # provenance lines above included) must not pass: the fourth line is the SHA-256 of every
+    # other line, in file order. It is an unkeyed accidental-edit check, not proof of origin;
+    # `just tts-constraints-check <checkout>` (run in CI) proves the pins are the release's lock.
+    covered = b"".join(lines[:3] + lines[4:])
+    assert head[3] == f"# content-sha256: {hashlib.sha256(covered).hexdigest()}", (
+        "constraints/tts.txt was edited after scripts/compile_tts_constraints.py wrote it"
+        " (content-sha256 does not match the other lines): regenerate it, do not edit it by hand"
+    )
+
+
+def test_the_lean_lock_constrains_only_what_the_server_pins():
+    """Every ``[tool.uv] constraint-dependencies`` entry in ``pyproject.toml`` is an applicable
+    pin of ``constraints/tts.txt`` at the same version, so a pin move cannot leave a stale entry
+    holding the lean environment at a version the bundled server no longer installs."""
+    recorded = pins(CONSTRAINTS.read_text())
+    entries = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["uv"].get(
+        "constraint-dependencies", []
+    )
+    stale = []
+    for entry in entries:
+        requirement = Requirement(entry)
+        specifiers = list(requirement.specifier)
+        pinned = recorded.get(canonicalize_name(requirement.name))
+        if (
+            requirement.marker is not None
+            or len(specifiers) != 1
+            or specifiers[0].operator != "=="
+            or pinned is None
+            or Version(specifiers[0].version) != pinned
+        ):
+            stale.append(f"{entry} (constraints/tts.txt: {pinned})")
+    assert stale == [], (
+        "remove these from [tool.uv] constraint-dependencies in pyproject.toml (or set them to the"
+        " constraints/tts.txt version), then run `uv lock` and `uv sync --locked`"
     )
 
 

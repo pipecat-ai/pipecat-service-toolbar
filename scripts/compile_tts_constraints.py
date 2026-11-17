@@ -8,9 +8,13 @@ commit recorded as ``source_commit`` in ``artifacts/tts.json`` (``git archive``,
 checkout's working tree and current branch are irrelevant). Update ``artifacts/tts.json``
 first, then run this. The output starts with a provenance header that
 ``python_tests/test_server_pins.py`` checks against the artifact, so pins from one release
-cannot sit next to another release's wheel. The header's ``body-sha256`` is the SHA-256 of
-every byte below it, so a hand edit to the pins (which ``scripts/prepare_tools.py`` copies into
-the app unchanged) fails that test until this script regenerates the file.
+cannot sit next to another release's wheel. The header's ``content-sha256`` is the SHA-256 of
+every other byte of the file in order (the title, ``# server:`` and ``# source-commit:`` lines
+and the pins; only the ``content-sha256`` line itself is left out), so a hand edit to any of
+them (``scripts/prepare_tools.py`` copies the file into the app unchanged) fails that test until
+this script regenerates the file. The digest is unkeyed: it catches accidental edits, not a
+deliberate forgery. Provenance, that the pins are the pinned commit's own lock, is this check
+(CI runs it against ``source_repository``):
 
     just tts-constraints-check <path>   # exit 1 if the recorded file is not this script's output
 """
@@ -31,18 +35,20 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HEADER = (
+TITLE = (
     "# Recorded pins for the bundled TTS server wheel. Regenerate with"
     " scripts/compile_tts_constraints.py.\n"
-    "# server: pipecat-local-tts-server=={version}\n"
-    "# source-commit: {commit}\n"
-    "# body-sha256: {digest}\n"
 )
+PROVENANCE = "# server: pipecat-local-tts-server=={version}\n# source-commit: {commit}\n"
+DIGEST_LINE = "# content-sha256: {digest}\n"
 
 
-def body_digest(body: bytes) -> str:
-    """SHA-256 of the pins below the header, exactly as written."""
-    return hashlib.sha256(body).hexdigest()
+def render(version: str, commit: str, pins: str) -> str:
+    """The file: title, provenance, the digest line, then the pins. The digest is the SHA-256 of
+    every other line of the file, exactly as written and in file order."""
+    covered = TITLE + PROVENANCE.format(version=version, commit=commit)
+    digest = hashlib.sha256((covered + pins).encode()).hexdigest()
+    return covered + DIGEST_LINE.format(digest=digest) + pins
 
 
 def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
@@ -85,9 +91,7 @@ def compile_constraints(checkout: Path, spec: dict, uv: str) -> str:
     # Drop uv's own header (it records the temporary output path); keep the pins and "# via".
     lines = body.splitlines(keepends=True)
     first = next(i for i, line in enumerate(lines) if not line.startswith("#"))
-    pins = "".join(lines[first:])
-    digest = body_digest(pins.encode())
-    return HEADER.format(version=spec["version"], commit=commit, digest=digest) + pins
+    return render(spec["version"], commit, "".join(lines[first:]))
 
 
 def main() -> int:
@@ -104,7 +108,13 @@ def main() -> int:
         raise SystemExit("uv not found on PATH")
     text = compile_constraints(args.server_checkout, spec, uv)
     if args.check:
-        return 0 if args.output.read_text() == text else 1
+        if args.output.read_text() == text:
+            return 0
+        print(
+            f"{args.output} is not this script's output for {spec['source_commit']}",
+            file=sys.stderr,
+        )
+        return 1
     args.output.write_text(text)
     print(args.output, file=sys.stderr)
     return 0

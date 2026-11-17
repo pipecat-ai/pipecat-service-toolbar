@@ -14,9 +14,13 @@ import Testing
         let filename: String
     }
 
-    /// The fixture records environments installed from the shipped baseline. The wheel is the one
-    /// this checkout builds with (`artifacts/tts.json`), so moving the TTS pin fails here: that
-    /// failure means installed environments will refresh (docs/migration.md).
+    /// The fixture records environments installed from the shipped baseline: a record of what is
+    /// installed today. Every row must be ready under this checkout's fingerprints: the TTS wheel
+    /// filename (`artifacts/tts.json`) and each STT engine's requirements (which carry
+    /// `ServiceCatalog.sttServerRequirement`). So moving the TTS pin or the STT pin fails here, and
+    /// that failure means installed environments will refresh. Replace the rows with the new
+    /// fingerprints only when that refresh is intended; never add rows beside the old ones
+    /// (docs/migration.md, "Moving a server pin").
     @Test func everyExistingEnvironmentRemainsReadyWithoutReinstallation() throws {
         let tests = URL(filePath: #filePath).deletingLastPathComponent()
         let fixture = tests.appending(path: "Fixtures/pre-extraction-environments.json")

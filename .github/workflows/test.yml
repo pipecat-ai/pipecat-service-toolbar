@@ -23,6 +23,19 @@ jobs:
       - run: uv run --no-sync --python ${{ matrix.python-version }} ruff check .
       - run: uv run --no-sync --python ${{ matrix.python-version }} pytest
       - run: uv run --no-sync --python ${{ matrix.python-version }} python scripts/prepare_tools.py
+      # Provenance: constraints/tts.txt is exactly scripts/compile_tts_constraints.py's output for
+      # the source_commit in artifacts/tts.json (the test suite's digest only catches hand edits).
+      - name: constraints/tts.txt is the pinned server commit's own lock
+        if: matrix.python-version == '3.12'
+        run: |
+          repo=$(jq -r .source_repository artifacts/tts.json)
+          commit=$(jq -r .source_commit artifacts/tts.json)
+          checkout="$RUNNER_TEMP/pipecat-local-tts-server"
+          git clone --filter=blob:none --no-checkout "$repo" "$checkout"
+          git -C "$checkout" cat-file -e "$commit^{commit}" \
+            || git -C "$checkout" fetch --filter=blob:none origin "$commit"
+          uv run --no-sync --python 3.12 python scripts/compile_tts_constraints.py \
+            --server-checkout "$checkout" --check
   macos-app:
     runs-on: macos-15
     steps:

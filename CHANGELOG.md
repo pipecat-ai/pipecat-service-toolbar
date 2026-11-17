@@ -51,6 +51,15 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
   (`python_tests/fixtures/provenance.json`) must describe the same release, and the wheel's
   requirements must be satisfied by the recorded pins. `scripts/compile_tts_constraints.py`
   regenerates `constraints/tts.txt` from the server release's `uv.lock`.
+- `constraints/tts.txt` carries a `content-sha256` header line (the SHA-256 of every other line,
+  the `# server:` and `# source-commit:` lines included), so an accidental hand edit fails the
+  pin checks. `just tts-constraints-check <checkout>` proves provenance: it exits non-zero unless
+  the file is the script's output for the pinned `source_commit`, and CI runs it against a clone
+  of `source_repository`.
+- The lean test environment is locked at the dependency versions the app installs: `[tool.uv]
+  constraint-dependencies` in `pyproject.toml` holds the `constraints/tts.txt` version of every
+  package they share, and the pin checks fail on a locked version that differs or on an entry
+  `constraints/tts.txt` no longer pins.
 
 ## [0.4.0] - 2026-11-16
 

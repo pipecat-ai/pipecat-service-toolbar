@@ -1,7 +1,7 @@
 # Recorded pins for the bundled TTS server wheel. Regenerate with scripts/compile_tts_constraints.py.
 # server: pipecat-local-tts-server==0.9.1
 # source-commit: 78823eeabf1f36c464243af1bd41b879d058c028
-# body-sha256: af0c5e3246cff7d7279535f8b33b3a931576f8bcdbb6ddbfe080ffccf494814b
+# content-sha256: 6d105b99430d92e5eef850982306aa68e953e0f025d41104bfa0be280647fd5d
 addict==2.4.0
     # via misaki
 aiofiles==25.1.0
