@@ -201,9 +201,10 @@ for running both.
 
 ## Use a service from Pipecat
 
-These are service-construction snippets, not complete bots. For TTS, run from
-this source checkout after `uv sync --extra examples`, or copy the reference
-adapter into your bot project and adjust the import. See
+These are service-construction snippets, not complete bots. For TTS, use the
+[pipecat-local-tts-server checkout](https://github.com/vr000m/pipecat-local-tts-server)
+after running `uv sync --extra examples` there, or copy its reference adapter into
+your bot project and adjust the import. See
 [Client integration](https://github.com/vr000m/pipecat-local-tts-server/blob/78823eeabf1f36c464243af1bd41b879d058c028/docs/clients.md#use-the-pipecat-adapter) for a pipeline
 sketch and the packaged Python client's WAV example.
 
@@ -331,8 +332,9 @@ Manual UI checklist, for what needs a person (or a terminal granted Accessibilit
    and `lsof -nP -iTCP:8665` print nothing. (With no client connected, Quit does not ask.)
 5. Tone > Delete: the row returns to Install.
 
-To check the server side of the app's contract without the app, `just smoke-supervised
-[backend]` (or `just smoke-supervised-all`) runs the same `prefetch --json --check` and
+To check the server side of the app's contract, run `just smoke-supervised [backend]`
+(or `just smoke-supervised-all`) from the **pipecat-local-tts-server checkout**.
+These recipes run the same `prefetch --json --check` and
 `serve --supervised` commands the app builds, with its environment, on an ephemeral
 port: `ready`, a TCP synthesis, busy-port `EADDRINUSE`, and the stdin-EOF stop. Pass
 `--python <service env>/bin/python` to test an environment the app installed. See
