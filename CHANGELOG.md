@@ -30,6 +30,12 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 ## [0.4.1] - 2026-11-17
 
+### Added
+
+- Build and CI checks verify the pinned TTS wheel, dependency constraints, and recorded server
+  fixtures, and keep shared test dependencies aligned with the app's pins. See
+  [Moving a server pin](docs/migration.md#moving-a-server-pin) for the checks and regeneration steps.
+
 ### Changed
 
 - The app moved to `pipecat-ai/pipecat-service-toolbar`, retaining its Git history, build tools,
@@ -38,18 +44,13 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
   no environment rebuild or model download is needed. See [migration and compatibility](docs/migration.md).
 - App versions are now independent of server versions. This first standalone build is 0.4.1
   (build 474); the server pins remain TTS 0.9.1 and STT 0.6.0.
+- `just app-install` launches the installed app after copying it.
 
 ### Fixed
 
 - A TTS source override through `PIPECAT_TOOLBAR_REPO` now retains the hash-pinned STT
   dependencies. Invalid checkout paths report an error at startup; an empty value counts as unset.
 - A corrupt cached TTS wheel now reports which file to delete.
-
-### Added
-
-- Build and CI checks verify the pinned TTS wheel, dependency constraints, and recorded server
-  fixtures, and keep shared test dependencies aligned with the app's pins. See
-  [Moving a server pin](docs/migration.md#moving-a-server-pin) for the checks and regeneration steps.
 
 ## [0.4.0] - 2026-11-16
 
