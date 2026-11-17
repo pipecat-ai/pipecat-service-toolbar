@@ -1,0 +1,20 @@
+# Documentation
+
+Start with the [project README](../README.md) to build the app and connect Pipecat.
+
+| Guide | Use it to… |
+|---|---|
+| [Using the toolbar](usage.md) | Manage models, test speech, work with external servers, find caches and logs |
+| [Services and models](services.md) | Choose a model and find its port, licence and runtime requirements |
+| [Development](development.md) | Build and sign the app, run tests, update constraints and verify fixtures |
+| [Architecture](architecture.md) | Understand lifecycle state, supervision, protocols and packaging |
+| [Migration and compatibility](migration.md) | Preserve an existing installation or move a server pin |
+| [Loopback authentication](loopback-auth.md) | Understand local access and the decision not to require tokens |
+
+## Reference and history
+
+- [Supervised contract](supervised-contract.json): JSON events and error codes shared with the servers.
+- [Test ownership](test-ownership.json): coverage retained when the toolbar moved into this repository.
+- [Release history](../CHANGELOG.md): app releases, independent of server package versions.
+- [Development plans](plans/): implementation decisions and verification records. Older plans retain
+  their original paths and release numbers, with repository-migration notes.

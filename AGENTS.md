@@ -1,7 +1,8 @@
 # Pipecat Service Toolbar
 
-Native SwiftUI menu bar app for local TTS/STT. Human docs: README.md; architecture:
-docs/architecture.md; extraction provenance and compatibility: docs/migration.md.
+Native SwiftUI menu bar app for local TTS/STT. Quickstart: README.md; documentation index: docs/README.md; usage: docs/usage.md;
+build and tests: docs/development.md; architecture: docs/architecture.md;
+extraction provenance and compatibility: docs/migration.md.
 
 - Work on feature branches. Keep focused commits, stage explicit paths, and use regular merges.
 - `uv sync --locked` creates the lean Python environment. Never add model extras to CI's base environment.
