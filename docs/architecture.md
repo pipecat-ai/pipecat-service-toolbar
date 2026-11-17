@@ -380,8 +380,8 @@ during the alert.
   running ("Quit" when `ServiceCounts.owned == 0`, else "Stop All & Quit"), and waits
   for the discovery pass it cancels (`SerialPass`), so no probe or owner lookup
   outlives the app.
-- **Support floor.** STT is app-started through `pipecat-local-stt-server==0.6.0`;
-  older STT servers are adopted by hello only.
+- **STT pin.** STT is app-started through `pipecat-local-stt-server==0.6.0`, the current
+  pin; an STT server on another version is adopted by hello only.
 - **Beside LaunchAgents.** The server repositories' `just tts-install` and `just stt-*` agents use the same
   ports, so they show as External; the source line is the agent's label when
   `PortProbe.owner` confirms the `launchctl print` pid equals the `lsof` pid, else
@@ -455,8 +455,9 @@ Every Python server, and the native server, follows one contract.
 `tts_server` implements this natively (`serve --supervised`,
 `tts_server/supervise.py`). The STT engines get it from the upstream
 `pipecat-local-stt-server==0.6.0` CLI (`python -m stt_server serve --supervised`,
-`prefetch --json`); the app no longer wraps `stt_server`. Older STT versions lack
-it, so an STT server on one is adopted by its hello but never app-started.
+`prefetch --json`); 0.6.0 is the current installation pin, and the app no longer wraps
+`stt_server`. An STT server on another version is adopted by its hello but never
+app-started.
 
 ## Protocols
 

@@ -22,10 +22,11 @@ keeps coming back.
 
 The servers already support one: `tts_server` reads `PIPECAT_TTS_AUTH_TOKEN` /
 `--auth-token-file`, `stt_server.server.serve(auth_token=...)` checks
-`Authorization: Bearer`, and both Python clients (`TTSClient`,
-`stt_server.client`, and the Pipecat adapters `LocalTTSService` /
-`LocalWebSocketSTTService`) accept `auth_token=` or `TTS_WS_TOKEN`. The work is
-everywhere else:
+`Authorization: Bearer`. Each client takes the token its own way: `TTSClient` and
+`LocalTTSService` accept `auth_token=` (the TTS adapter and examples also read
+`TTS_WS_TOKEN`); `stt_server.client` and `LocalWebSocketSTTService` accept an explicit
+`auth_token=` only (`STT_WS_TOKEN` is read by the STT CLI's probe path, not by the
+adapter). The work is everywhere else:
 
 1. **Mint and store a token.** One per app install (or per service), written
    `0600` under `~/Library/Application Support/Pipecat Service Toolbar/`, or in

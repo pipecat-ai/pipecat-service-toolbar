@@ -99,9 +99,9 @@ for running both.
 - **Not discovered:** Unix sockets, servers on other ports, LAN endpoints. A
   server that needs a bearer token is not adopted (Start then reports the port busy
   because it wants a token); the app stores no token.
-- **Support floor.** STT starts through `pipecat-local-stt-server==0.6.0`'s own CLI
-  (`python -m stt_server serve --supervised`). An STT agent on an older version
-  is still adopted by its hello, but an app-started STT server needs 0.6.0.
+- **STT pin.** The current pin is `pipecat-local-stt-server==0.6.0`: the app starts STT through
+  its own CLI (`python -m stt_server serve --supervised`). An STT agent on another version
+  is still adopted by its hello; the app only starts the pinned version.
 
 
 ## Restore and Quit
@@ -216,7 +216,8 @@ from examples.pipecat_tts_service import LocalTTSService
 
 tts = LocalTTSService(host="127.0.0.1", port=8765)
 
-# STT: pip install "pipecat-local-stt-server[client]"
+# STT: pip install pipecat-ai "pipecat-local-stt-server[client]"
+#      (the server package does not declare pipecat-ai)
 from stt_server.examples.pipecat_stt_service import LocalWebSocketSTTService
 stt = LocalWebSocketSTTService(host="127.0.0.1", port=9465)
 ```
