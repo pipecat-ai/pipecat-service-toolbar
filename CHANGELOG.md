@@ -35,14 +35,22 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
   0.9.1 (build 468) copy, now numbered 0.4.0, needs no environment rebuild or model download.
 - The app version is independent of the servers (`app-version.json`; see Version history).
   It builds from the checksum-pinned TTS 0.9.1 wheel (`artifacts/tts.json`) and recorded
-  constraints; STT remains at 0.6.0. The first build from this repository is 0.4.0 (474).
+  constraints; STT remains at 0.6.0. The first build from this repository, build 474, is a new
+  packaging of the released 0.4.0 (shipped as 0.9.1, build 468), not a new version: same app
+  version, higher build number.
 - `scripts/prepare_tools.py` also checks that the pinned URL names the pinned wheel and that
   `source_commit` is a full commit id, and a corrupt cached wheel now names the file to delete.
+- `scripts/prepare_tools.py` refuses to copy `constraints/tts.txt` into the app unless its
+  header names the pinned version and `source_commit` and its `content-sha256` matches, so an app
+  build (which runs no tests) cannot ship one release's wheel with another release's pins. The
+  check is `verify_header` in `scripts/compile_tts_constraints.py`, which writes the header.
 
 ### Fixed
 
 - `PIPECAT_TOOLBAR_REPO` pointing at a TTS source checkout no longer drops the hash-pinned STT
   constraints (they come from this repository's `constraints/`).
+- A `PIPECAT_TOOLBAR_REPO` that names neither a TTS server nor a toolbar checkout (a typo) is
+  reported at startup instead of being ignored in favour of the pinned release wheel.
 
 ### Added
 

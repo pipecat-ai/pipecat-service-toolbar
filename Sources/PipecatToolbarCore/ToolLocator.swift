@@ -62,6 +62,7 @@ public enum ToolLocatorError: LocalizedError, Sendable {
     case wheelNotFound
     case buildFailed(String)
     case sttConstraintsMissing(String)
+    case repositoryOverrideNotFound(String)
 
     public var errorDescription: String? {
         switch self {
@@ -73,6 +74,8 @@ public enum ToolLocatorError: LocalizedError, Sendable {
             "Building the server wheel failed: \(detail)"
         case .sttConstraintsMissing(let file):
             "This build is missing its hash pins (\(file)), so the speech engine can't be installed safely. Reinstall the app."
+        case .repositoryOverrideNotFound(let path):
+            "PIPECAT_TOOLBAR_REPO (\(path)) is not a TTS server or toolbar checkout. Fix or unset it."
         }
     }
 }
@@ -80,7 +83,8 @@ public enum ToolLocatorError: LocalizedError, Sendable {
 /// Finds the tools. Order: the app bundle, then environment overrides
 /// (`PIPECAT_TOOLBAR_UV`, `_WHEEL`, `_CONSTRAINTS`), then, when running
 /// unbundled from a checkout (`swift run`), the checksum-pinned wheel `scripts/prepare_tools.py`
-/// fetches for this repository, or a wheel built from the TTS checkout `PIPECAT_TOOLBAR_REPO` names.
+/// fetches for this repository, or a wheel built from the TTS checkout `PIPECAT_TOOLBAR_REPO` names
+/// (a `PIPECAT_TOOLBAR_REPO` that names no checkout throws rather than falling back).
 public enum ToolLocator {
     public static func locate(
         bundle: Bundle = .main,
@@ -121,6 +125,12 @@ public enum ToolLocator {
                 sttConstraints: sttConstraints, source: .override)
         }
 
+        // An explicit checkout that matches nothing is a mistake, not a request for the pinned
+        // release: without this, a typo would silently swap the intended source for the wheel
+        // `findRepositoryRoot` falls back to from the executable or working directory.
+        if let explicit = environment["PIPECAT_TOOLBAR_REPO"], explicitRepositoryRoot(explicit) == nil {
+            throw ToolLocatorError.repositoryOverrideNotFound(explicit)
+        }
         guard let repo else { throw ToolLocatorError.wheelNotFound }
         return try await buildFromRepository(
             repo, uv: uv, sttConstraints: sttConstraints, paths: paths, processes: processes)
@@ -138,19 +148,30 @@ public enum ToolLocator {
         return candidates.first(where: fm.isExecutableFile(atPath:)).map { URL(filePath: $0) }
     }
 
-    /// Walks up from the executable and the working directory to this repo's root.
+    /// Walks up from `PIPECAT_TOOLBAR_REPO` (when set), the executable and the working directory to
+    /// this repo's root, or (only with `PIPECAT_TOOLBAR_REPO` set) a TTS source checkout.
     static func findRepositoryRoot(environment: [String: String]) -> URL? {
         var starts = [Bundle.main.executableURL?.deletingLastPathComponent()]
         starts.append(URL(filePath: FileManager.default.currentDirectoryPath))
         if let explicit = environment["PIPECAT_TOOLBAR_REPO"] { starts.insert(URL(filePath: explicit), at: 0) }
-        for start in starts.compactMap({ $0 }) {
+        return repositoryRoot(from: starts.compactMap { $0 }, acceptingTTSCheckout: environment["PIPECAT_TOOLBAR_REPO"] != nil)
+    }
+
+    /// The checkout `PIPECAT_TOOLBAR_REPO` names (a toolbar or TTS source checkout at or above
+    /// `path`), or nil when it names neither and `locate` must report it.
+    static func explicitRepositoryRoot(_ path: String) -> URL? {
+        repositoryRoot(from: [URL(filePath: path)], acceptingTTSCheckout: true)
+    }
+
+    static func repositoryRoot(from starts: [URL], acceptingTTSCheckout: Bool) -> URL? {
+        for start in starts {
             var dir = start.standardizedFileURL
             while dir.path != "/" {
                 if FileManager.default.fileExists(atPath: dir.appending(path: "artifacts/tts.json").path) {
                     return dir
                 }
                 let pyproject = dir.appending(path: "pyproject.toml")
-                if environment["PIPECAT_TOOLBAR_REPO"] != nil,
+                if acceptingTTSCheckout,
                     let text = try? String(contentsOf: pyproject, encoding: .utf8),
                     text.contains("name = \"pipecat-local-tts-server\"")
                 {

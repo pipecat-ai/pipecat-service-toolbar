@@ -11,8 +11,9 @@ first, then run this. The output starts with a provenance header that
 cannot sit next to another release's wheel. The header's ``content-sha256`` is the SHA-256 of
 every other byte of the file in order (the title, ``# server:`` and ``# source-commit:`` lines
 and the pins; only the ``content-sha256`` line itself is left out), so a hand edit to any of
-them (``scripts/prepare_tools.py`` copies the file into the app unchanged) fails that test until
-this script regenerates the file. The digest is unkeyed: it catches accidental edits, not a
+them fails that test until this script regenerates the file. ``scripts/prepare_tools.py``
+copies the file into the app unchanged, and refuses to unless the header passes the same check
+(``verify_header``), since app builds do not run the tests. The digest is unkeyed: it catches accidental edits, not a
 deliberate forgery. Provenance, that the pins are the pinned commit's own lock, is this check
 (CI runs it against ``source_repository``):
 
@@ -53,6 +54,30 @@ def render(version: str, commit: str, pins: str) -> str:
     covered = TITLE + PROVENANCE.format(version=version, commit=commit)
     digest = hashlib.sha256((covered + pins).encode()).hexdigest()
     return covered + DIGEST_LINE.format(digest=digest) + pins
+
+
+def verify_header(data: bytes, spec: dict) -> None:
+    """Raise ``ValueError`` unless ``data`` (``constraints/tts.txt``'s bytes) carries ``render``'s
+    header for ``spec``'s release: the ``# server:`` and ``# source-commit:`` lines name the pinned
+    version and ``source_commit``, and ``content-sha256`` matches every other line. Bytes, as
+    ``scripts/prepare_tools.py`` ships them (it calls this before copying the file into the app),
+    so a CRLF copy fails too. An accidental-edit and half-finished-pin-move check, not provenance:
+    that is ``--check``."""
+    lines = data.splitlines(keepends=True)
+    head = [line.decode(errors="replace").rstrip("\n") for line in lines[:4]]
+    expected = PROVENANCE.format(version=spec["version"], commit=spec["source_commit"])
+    if len(head) < 4 or head[1:3] != expected.splitlines():
+        raise ValueError(
+            f"constraints/tts.txt header {head[1:3]} does not name the pinned"
+            f" pipecat-local-tts-server {spec['version']} at {spec['source_commit']} from"
+            " artifacts/tts.json: regenerate it with scripts/compile_tts_constraints.py"
+        )
+    digest = hashlib.sha256(b"".join(lines[:3] + lines[4:])).hexdigest()
+    if head[3] != DIGEST_LINE.format(digest=digest).rstrip("\n"):
+        raise ValueError(
+            "constraints/tts.txt content-sha256 does not match its other lines (edited after"
+            " scripts/compile_tts_constraints.py wrote it): regenerate it, do not edit it by hand"
+        )
 
 
 def run(args: list[str], cwd: Path | None = None) -> bytes:

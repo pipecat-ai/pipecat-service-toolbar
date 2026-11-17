@@ -18,8 +18,9 @@ Do not reset, move or delete caches for this migration.
 
 The TTS wheel remains `pipecat_local_tts_server-0.9.1-py3-none-any.whl` and STT
 requirements remain 0.6.0. Their fingerprints still identify existing environments
-as ready. This guarantee covers the shipped baseline (app 0.9.1, build 468, bundling TTS 0.9.1
-and STT 0.6.0; the changelog numbers it 0.4.0). An environment built by an earlier release, such
+as ready. This guarantee covers the shipped baseline: app version 0.4.0, build 468, which
+shipped as 0.9.1 under the old numbering (its bundle still reports 0.9.1), bundling TTS 0.9.1 and
+STT 0.6.0. An environment built by an earlier release, such
 as a Nemotron environment installed under STT 0.5.0, retains the existing package-refresh
 behaviour: it refreshes when next started. That is the app's refresh working as designed, not a
 server fault. The app continues to use cached models during such normal upgrades.
@@ -85,7 +86,8 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    regenerates `constraints/tts.txt` from that commit's `uv.lock`; never edit the file by hand.
    Its `content-sha256` header line is the SHA-256 of every other line (the `# server:` and
    `# source-commit:` lines and the pins), so `test_server_pins.py` fails on an accidental edit
-   to any of them. That digest is not proof of origin: `just tts-constraints-check <path>` exits
+   to any of them, and `scripts/prepare_tools.py` (so `just app-build` and `swift run`) refuses
+   a file whose header does not match `artifacts/tts.json` or its digest. That digest is not proof of origin: `just tts-constraints-check <path>` exits
    non-zero when the file is not the script's output for the pinned commit, and CI runs the same
    check against a clone of `source_repository` (the `compatibility` job, Python 3.12). The
    output depends on the uv version: generate it with the uv CI pins (`version` in

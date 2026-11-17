@@ -47,6 +47,46 @@ import Testing
         #expect(ToolLocator.toolbarRoot(from: [tts]) == nil)
     }
 
+    @Test func theOverrideResolvesToTheCheckoutItNames() throws {
+        let (toolbar, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        // Compared as paths: `URL(filePath:)` of an existing directory carries a trailing slash.
+        #expect(ToolLocator.explicitRepositoryRoot(tts.path)?.standardizedFileURL.path == tts.standardizedFileURL.path)
+        #expect(
+            ToolLocator.explicitRepositoryRoot(toolbar.appending(path: "scripts").path)?.standardizedFileURL.path
+                == toolbar.standardizedFileURL.path)
+        #expect(ToolLocator.explicitRepositoryRoot(tts.deletingLastPathComponent().appending(path: "tts-chekout").path) == nil)
+    }
+
+    /// A typo in `PIPECAT_TOOLBAR_REPO` must not silently fall back to this checkout's pinned wheel
+    /// (found from the test runner's executable) in place of the source the developer named.
+    @Test func anOverrideThatNamesNoCheckoutIsReportedNotIgnored() async throws {
+        let (_, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        let root = tts.deletingLastPathComponent()
+        let typo = root.appending(path: "tts-chekout").path
+        // A uv that always fails, so a fallback build (the bug) cannot prepare or fetch anything.
+        let uv = root.appending(path: "uv")
+        try Data("#!/bin/sh\nexit 1\n".utf8).write(to: uv)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uv.path)
+        let paths = AppPaths(
+            supportDir: root.appending(path: "support"), cacheDir: root.appending(path: "cache"),
+            logsDir: root.appending(path: "logs"), hubDir: root.appending(path: "hub"),
+            derivedModelsDir: root.appending(path: "derived"))
+        let noTools = try #require(Bundle(path: root.path))  // no bundled uv or wheel
+        do {
+            _ = try await ToolLocator.locate(
+                bundle: noTools, environment: ["PIPECAT_TOOLBAR_UV": uv.path, "PIPECAT_TOOLBAR_REPO": typo],
+                paths: paths)
+            Issue.record("a PIPECAT_TOOLBAR_REPO naming no checkout must fail")
+        } catch ToolLocatorError.repositoryOverrideNotFound(let path) {
+            #expect(path == typo)
+            #expect(ToolLocatorError.repositoryOverrideNotFound(path).errorDescription?.contains(typo) == true)
+        } catch {
+            Issue.record("expected repositoryOverrideNotFound, got \(error)")
+        }
+    }
+
     @Test func theRepositoryIsTheFallbackWhenNoToolbarRootIsFound() throws {
         let (_, tts, cleanup) = try Self.tree()
         defer { cleanup() }

@@ -15,6 +15,12 @@ from email.parser import BytesParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# Standard library only: build_app.sh and ToolLocator run this with plain `uv run --no-project`.
+if __package__:  # imported as scripts.prepare_tools (the tests)
+    from .compile_tts_constraints import verify_header
+else:  # run as a script: scripts/ is sys.path[0]
+    from compile_tts_constraints import verify_header
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -48,6 +54,10 @@ def prepare(output: Path, *, root: Path = ROOT, fetch=download) -> Path:
         raise ValueError("artifacts/tts.json url does not point at the pinned wheel filename")
     if not re.fullmatch(r"[0-9a-f]{40}", spec.get("source_commit", "")):
         raise ValueError("artifacts/tts.json needs the 40-character source_commit of the release")
+    # Fail closed on pins from another release (a half-finished pin move): the header must name
+    # this wheel's version and commit. The verified bytes are what the app ships.
+    constraints = (root / "constraints/tts.txt").read_bytes()
+    verify_header(constraints, spec)
     cache = root / ".build/artifacts"
     cache.mkdir(parents=True, exist_ok=True)
     wheel = cache / filename
@@ -67,7 +77,7 @@ def prepare(output: Path, *, root: Path = ROOT, fetch=download) -> Path:
             candidate.replace(wheel)
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(wheel, output / filename)
-    shutil.copy2(root / "constraints/tts.txt", output / "constraints.txt")
+    (output / "constraints.txt").write_bytes(constraints)
     (output / "MANIFEST").write_text(filename + "\n")
     return output / filename
 
