@@ -25,7 +25,9 @@ def fixture(tmp_path, *, version="0.9.1"):
             {
                 "filename": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
                 "version": "0.9.1",
-                "url": "https://files.pythonhosted.org/test.whl",
+                "url": "https://files.pythonhosted.org/packages/ab/cd/"
+                "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+                "source_commit": "0123456789abcdef0123456789abcdef01234567",
                 "sha256": hashlib.sha256(content).hexdigest(),
             }
         )
@@ -70,3 +72,36 @@ def test_checksum_alone_cannot_substitute_another_version(tmp_path):
     content = fixture(tmp_path, version="0.9.2")
     with pytest.raises(ValueError, match="name/version"):
         prepare(tmp_path / "out", root=tmp_path, fetch=lambda _, p: p.write_bytes(content))
+
+
+def respec(tmp_path, **changes):
+    path = tmp_path / "artifacts/tts.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
+
+
+def test_url_must_name_the_pinned_wheel_and_the_release_commit_must_be_recorded(tmp_path):
+    content = fixture(tmp_path)
+
+    def fetch(_, p):
+        p.write_bytes(content)
+
+    respec(
+        tmp_path, url="https://files.pythonhosted.org/packages/ab/cd/other-0.9.0-py3-none-any.whl"
+    )
+    with pytest.raises(ValueError, match="url does not point"):
+        prepare(tmp_path / "out", root=tmp_path, fetch=fetch)
+    respec(
+        tmp_path,
+        url="https://files.pythonhosted.org/packages/ab/cd/pipecat_local_tts_server-0.9.1-py3-none-any.whl",
+        source_commit="main",
+    )
+    with pytest.raises(ValueError, match="source_commit"):
+        prepare(tmp_path / "out", root=tmp_path, fetch=fetch)
+
+
+def test_corrupt_cache_message_names_the_file_to_delete(tmp_path):
+    content = fixture(tmp_path)
+    wheel = prepare(tmp_path / "first", root=tmp_path, fetch=lambda _, p: p.write_bytes(content))
+    (tmp_path / ".build/artifacts" / wheel.name).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="delete that file"):
+        prepare(tmp_path / "second", root=tmp_path, fetch=lambda *_: pytest.fail("network"))

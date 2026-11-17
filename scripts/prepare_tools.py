@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import urllib.request
 import zipfile
 from email.parser import BytesParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,11 +44,21 @@ def prepare(output: Path, *, root: Path = ROOT, fetch=download) -> Path:
         raise ValueError("Unexpected TTS wheel filename")
     if not spec["url"].startswith("https://files.pythonhosted.org/"):
         raise ValueError("Expected a pinned PyPI artifact URL")
+    if urlsplit(spec["url"]).path.rsplit("/", 1)[-1] != filename:
+        raise ValueError("artifacts/tts.json url does not point at the pinned wheel filename")
+    if not re.fullmatch(r"[0-9a-f]{40}", spec.get("source_commit", "")):
+        raise ValueError("artifacts/tts.json needs the 40-character source_commit of the release")
     cache = root / ".build/artifacts"
     cache.mkdir(parents=True, exist_ok=True)
     wheel = cache / filename
     if wheel.exists():
-        verify(wheel, spec)  # Fail closed on a corrupt cache; do not silently reuse it.
+        try:
+            verify(wheel, spec)  # Fail closed on a corrupt cache; do not silently reuse it.
+        except ValueError as error:
+            raise ValueError(
+                f"Cached wheel {wheel} failed verification ({error}). It is a build cache: "
+                "delete that file to download the pinned wheel again."
+            ) from error
     else:
         with tempfile.TemporaryDirectory(prefix="wheel-", dir=cache) as temporary:
             candidate = Path(temporary) / filename

@@ -36,6 +36,8 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 - The app version is independent of the servers (`app-version.json`; see Version history).
   It builds from the checksum-pinned TTS 0.9.1 wheel (`artifacts/tts.json`) and recorded
   constraints; STT remains at 0.6.0. The first build from this repository is 0.4.0 (474).
+- `scripts/prepare_tools.py` also checks that the pinned URL names the pinned wheel and that
+  `source_commit` is a full commit id, and a corrupt cached wheel now names the file to delete.
 
 ### Fixed
 
