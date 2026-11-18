@@ -566,6 +566,29 @@ Installer fixes cover lock lifetime, destination exclusivity, ownership and all 
 Phase-scoped evidence covers the signed upgrade fixture, credential cleanup, first-start behavior and later cask compatibility.
 This revision supersedes the previous review hash. Platform probes and live release evidence remain implementation tasks.
 
+### Phase 1 probe evidence — 2026-11-18
+
+- On arm64 macOS 26.6.2, stock `lockf -k` and Ruby `File#flock` excluded one another on a temporary file in
+  both directions. The contender acquired the lock after the holder exited, and the inode stayed the same.
+- Stock `/usr/bin/shasum` uses `/usr/bin/perl` on this host and returned the expected SHA-256 for `abc` in a
+  minimal environment. This host has Xcode. Check clean macOS 15 and 26 before qualifying the command set.
+- A read-only AppKit probe resolved Finder's PID and bundle path in the logged-in session. The sandboxed
+  shell saw zero registered apps. Test a disposable bundle under Terminal and SSH, including duplicate,
+  absent and unavailable process views.
+- A [public asset](https://github.com/jqlang/jq/releases/tag/jq-1.7.1) returned HTTPS 302 from
+  `github.com` to `release-assets.githubusercontent.com` with a signed query and no userinfo.
+  The destination honored a one-byte range request with 206. Record the project's chain at public acceptance.
+
+The [Homebrew 7.0.14 upgrade source](https://github.com/Homebrew/brew/blob/7.0.14/Library/Homebrew/cask/upgrade.rb)
+moves the old app out before installing the successor and can restore the predecessor after failure. A
+helper that acquires a lock and exits in preflight leaves later mutations outside that lock.
+The live lifecycle proof remains open. In a disposable account or VM, install two fixture versions of a local
+cask into a user-owned app directory. Use a separate `lockf` contender to prove exclusion before the first
+mutation, across predecessor removal and successor installation, and through rollback after an injected failure.
+Check that the contender acquires after Brew exits. Simulate quit refusal during upgrade and uninstall and
+compare the old bundle and cask metadata before and after. Record Brew version, hook order and outcomes
+before deciding whether the lock protocol can be frozen.
+
 ## Issues & Solutions
 
 The earlier plan assumed a simple cask upgrade respected quit confirmation. Phase 7 requires evidence before Homebrew delivery.
