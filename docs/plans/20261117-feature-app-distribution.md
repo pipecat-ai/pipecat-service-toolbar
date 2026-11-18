@@ -1,6 +1,6 @@
-# Task: Distribute the app through Homebrew and a standalone installer
+# Task: Ship standalone installation and updates, then add Homebrew
 
-**Status**: Planned — review fixes accepted; real signing and delivery require external prerequisites
+**Status**: Planned — standalone-first delivery; revised sequencing awaits review
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
@@ -10,10 +10,11 @@
 
 ## Objective
 
-Publish one signed, notarized Apple-silicon app archive. A Homebrew cask and a
-standalone command-line installer consume the exact same archive and checksum.
+Publish one signed, notarized Apple-silicon app archive. Deliver the standalone
+command-line installer and manual updates first. Add a Homebrew cask later,
+consuming the same archive and checksum.
 End users need neither a source checkout nor Xcode, uv, Python or just installed.
-The standalone route also works without Homebrew.
+The standalone release requires neither a Homebrew tap nor proof of cask lifecycle hooks.
 
 This updates the Homebrew plan from `docs/distribution-plans` at `a5a371d`.
 Its scope now includes standalone installation; the retained
@@ -46,12 +47,14 @@ Verified against the current checkout on 2026-11-17:
   Their availability is unverified. Reviewed mock implementation may proceed without credentials;
   real signing requires verified credentials, a protected environment and approved version/build metadata.
 - Proposed tap: `pipecat-ai/homebrew-tap`, pending owner approval and repository/access checks.
-  Use a project-owned tap initially; submission to Homebrew's main cask repository is separate work.
+  This is a phase 5 dependency only. Use a project-owned tap initially;
+  submission to Homebrew's main cask repository is separate work.
 - Use a ZIP archive with a stapled app inside, built with `ditto -c -k --keepParent`.
   Distribution channels never re-sign, modify the signed bundle or rebuild the app.
 - Standalone destination: `~/Applications`, with `--app-dir` for an existing writable directory.
   No sudo, privilege escalation or automatic app launch. Homebrew keeps its configured app directory.
 - First standalone interface: `install.sh --version X.Y.Z [--app-dir PATH]` plus `--help`.
+  The same command installs when absent and updates a verified standalone installation when present.
   An explicit stable version is required; automatic latest-version discovery, downgrades,
   an automated standalone uninstall command and an in-app updater are outside this increment.
   A documented manual bundle-and-receipt removal procedure is required for channel switching.
@@ -87,8 +90,9 @@ Verified against the current checkout on 2026-11-17:
   certificate into an ephemeral keychain, clean it and key files on every exit, and mask secrets.
   Scope write permission to release upload jobs; tap changes use a separate reviewed PR.
   Test static workflow policy and an isolated denied-approval run; repository settings need live evidence.
-- Candidate acceptance uses private staged assets. After it passes, the owner may approve publication
+- Standalone candidate acceptance uses private staged assets. After it passes, the owner may approve publication
   of those exact bytes. Public-download checks and online cask audit then gate the separate tap merge.
+  The first standalone release does not wait for cask implementation, audit or tap provisioning.
   A failed public check blocks tap merge; never repair a published release by replacing its assets.
   This plan does not authorise certificate changes, tags or publication.
 
@@ -109,7 +113,8 @@ Verified against the current checkout on 2026-11-17:
 - All participating installers acquire the same per-user bundle-identity lock before ownership
   and duplicate checks, and hold it through replacement, receipt updates and recovery.
   Destination locks alone are insufficient. Recheck ownership under the lock; fail closed on contention,
-  unsafe lock state or an unverified stale owner. Phase 1 must prove cask lock lifetime and cleanup.
+  unsafe lock state or an unverified stale owner. Phase 5 must prove cask lock lifetime and cleanup
+  before Homebrew delivery; standalone/developer locking is implemented and tested in phase 3.
   Refuse symlinked destinations and ambiguous ownership. Store standalone/developer ownership in the receipt
   specified below, outside the signed app; never alter the app's environment layout marker.
 - Stage on the destination filesystem and verify the staged copy. Request graceful quit
@@ -138,7 +143,7 @@ Verified against the current checkout on 2026-11-17:
 - App upgrades do not move server pins, refresh working environments or download models.
   Installation itself does not start services. Validate preserved readiness in isolated test state.
 
-### Homebrew contract
+### Homebrew contract — deferred to phase 5
 
 - Declare arm64 and macOS 15+ support, the pinned version/checksum/URL, and the app artifact.
   Leave `auto_updates` unset. Document the fully qualified tap/cask install command.
@@ -157,20 +162,17 @@ across all three installers; crash recovery; signing migration; state preservati
 
 ## Implementation Checklist
 
-### Phase 1: Validate channel feasibility and release prerequisites
+### Phase 1: Validate standalone release prerequisites
 
 **Impl files:** `docs/development.md`, this plan
 **Test files:** none (isolated feasibility checks)
 **Test command:** `uv run pytest python_tests/test_migration_contract.py python_tests/test_server_pins.py -q`
-**Goal:** Record separate gates for mock work, real signing and cask integration.
+**Goal:** Record signing prerequisites without blocking standalone work on Homebrew.
 
-- Record signer/tap ownership as verified or pending; inspect credentials by metadata only.
-  Record verified Team ID and tap configuration in this plan until release tooling consumes them.
-- In a disposable user/VM, exercise Homebrew install/upgrade/uninstall cancellation and ownership
-  conflicts with a test app. Prove shared-lock acquisition before mutation and release on every exit,
-  including aborts. Record the supported hook design and tested Brew version in this plan.
-- Mock work in phases 2–3 may proceed with pending credentials and channel feasibility.
-  Real signing waits for verified signing prerequisites; phase 4 cask integration waits for proven hooks.
+- Record signer ownership as verified or pending; inspect credentials by metadata only.
+  Record the verified Team ID and protected-environment configuration for release tooling.
+- Mock work in phases 2–3 may proceed with pending credentials.
+  Real signing waits for verified signing prerequisites. Tap ownership and cask feasibility belong to phase 5.
   Neither mock completion nor a signed ZIP alone authorises delivery. Never replace the user's installed toolbar.
 
 ### Phase 2: Build and validate the shared release artifact
@@ -191,7 +193,7 @@ across all three installers; crash recovery; signing migration; state preservati
   Phase 2 may produce a ZIP-only internal artifact; the release workflow must reject incomplete asset sets.
   Complete release assembly and candidate acceptance occur in phase 4 after the installer exists.
 
-### Phase 3: Implement standalone installation
+### Phase 3: Implement standalone installation and manual updates
 
 **Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, `justfile`
 **Test files:** new `python_tests/test_app_installer.py`, `python_tests/test_app_recipes.py`
@@ -206,32 +208,46 @@ across all three installers; crash recovery; signing migration; state preservati
 - Cover the input, trust, ownership, locking, interrupted-install and rollback matrices below.
 - Exercise mock assets here; real staged-candidate acceptance belongs to phase 4.
 
-### Phase 4: Add the cask, documentation and release acceptance
+### Phase 4: Ship standalone installation and updates
 
-**Impl files:** new `packaging/homebrew/pipecat-service-toolbar.rb`, `scripts/package_release.sh`, `.github/workflows/release.yml`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`, `CHANGELOG.md`
+**Impl files:** `scripts/package_release.sh`, `.github/workflows/release.yml`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`, `CHANGELOG.md`
 **Test files:** new `python_tests/test_distribution_contract.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py -q`
-**Goal:** The cask and standalone route select identical release bytes and preserve installed state.
+**Goal:** Users can install and manually update the app without Homebrew or a source build.
 
-- Keep the canonical cask template here; publish the resolved version/checksum to the approved
-  tap via its own PR after release publication. Prepare and test the candidate cask locally first.
-- After phases 2–3 and cask integration, select one immutable commit containing all release inputs.
+- After phases 2–3, select one immutable commit containing all standalone release inputs.
   Build/sign the app and assemble ZIP, manifest, checksum and bundled installer from that commit;
   produce the complete private draft. Invalidate earlier candidate evidence when source or bytes change.
-- Run candidate acceptance using an authenticated staging harness in isolated state. It supplies the exact
-  candidate bytes to both routes without adding a production URL override or weakening signature checks.
-  Test the resolved cask locally and run `brew style`; online checks requiring public URLs occur later.
+- Run standalone candidate acceptance using an authenticated staging harness in isolated state.
+  Supply exact candidate bytes without adding a production URL override or weakening signature checks.
 - Document installation, migration, channel switching, uninstall preservation and recovery.
-- Run repository gates, both-route macOS acceptance, successful uninstall/zap preservation and negative
+- Run repository gates, standalone macOS acceptance, manual removal preservation and negative
   workflow checks. Hand candidate evidence to the owner; publication remains a separate approved action.
-- After approved publication, download through the public URLs, verify hashes and quarantine/Gatekeeper,
-  then run `brew audit --cask --strict --online` and `brew style`. Only then may the owner merge the tap PR.
+- After approved publication, install and update through the public URLs; verify hashes, quarantine/Gatekeeper
+  and state preservation. This completes standalone delivery independently of phase 5.
+
+### Phase 5: Add Homebrew after standalone delivery
+
+**Impl files:** new `packaging/homebrew/pipecat-service-toolbar.rb`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`, `CHANGELOG.md`, this plan
+**Test files:** `python_tests/test_distribution_contract.py`, `python_tests/test_app_installer.py`
+**Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_app_installer.py -q`
+**Goal:** Add Homebrew without weakening standalone ownership, quit or data-preservation guarantees.
+
+- Confirm the tap owner and repository access. In a disposable user/VM, prove cask install/upgrade/uninstall
+  hooks hold the common lock, honour quit refusal and release the lock on every exit. Record the Brew version.
+  Stop this phase if supported hooks cannot uphold the contract; standalone delivery remains available.
+- Keep the canonical cask template here. Use guard logic from the selected released installer's source commit;
+  any incompatible guard change requires a new tested app distribution release before cask delivery.
+- Test both routes against that release's exact ZIP/hash, cross-channel conflicts, races, successful uninstall
+  and zap preservation. Run macOS 15/26 cask acceptance and verify parity with standalone acceptance.
+- Prepare the resolved tap cask in a separate PR. Run `brew audit --cask --strict --online` and `brew style`
+  against public URLs; merge only after evidence and explicit owner approval. Update user-facing Homebrew instructions then.
 
 ## Technical Specifications
 
 Existing files to modify and new files are listed in each phase; every `new` path is proposed,
 not an assertion that it exists. Keep app/server version authorities in their current files.
-The external tap and protected GitHub environment are separately provisioned release dependencies.
+The protected GitHub environment gates standalone signing. The external tap gates only phase 5.
 
 The shared manifest binds release metadata and artifact bytes. Consumers validate it, then
 validate the signed bundle independently. Installer receipts describe installation ownership;
@@ -271,7 +287,7 @@ Switching is two separate locked operations; the new installer rechecks ownershi
 Reference requirements: [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook),
 [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow),
 [notarization troubleshooting](https://developer.apple.com/documentation/security/resolving-common-notarization-issues).
-Recheck the supported cask APIs in phase 1; do not copy an obsolete hook spelling into implementation.
+Recheck the supported cask APIs in phase 5; do not copy an obsolete hook spelling into implementation.
 
 ### Integration Seams
 
@@ -291,12 +307,13 @@ graph TD
     Workflow --> Package["Build, notarize, staple and package"]
     Helpers["Installer library and bounded quit helper"] --> Package
     Package --> Draft["Complete private draft"]
-    Draft --> Candidate["Isolated candidate acceptance"]
+    Draft --> Candidate["Standalone candidate acceptance"]
     Candidate --> Owner["Owner approves publication"]
     Owner --> Release["Immutable public release"]
     Release --> CLI["Standalone installer"]
-    Release --> Public["Public-download checks and online cask audit"]
-    Public --> Tap["Owner merges tap PR"]
+    Release --> Public["Standalone public-download checks"]
+    Public --> BrewCheck["Later: cask feasibility, parity and online audit"]
+    BrewCheck --> Tap["Owner merges tap PR"]
     Tap --> Cask["Homebrew cask"]
     CLI --> Guard["Shared lock, ownership, verification and quit"]
     Cask --> Guard
@@ -317,22 +334,27 @@ sequenceDiagram
     Owner->>Workflow: Select commit and approve protected signing
     Workflow->>Packager: Build, sign, notarize, staple, assemble all assets
     Packager-->>Acceptance: Complete private draft and hashes
-    Acceptance-->>Owner: Candidate evidence from both routes
+    Acceptance-->>Owner: Standalone candidate evidence
     Owner->>Release: Approve publication of tested bytes
     Acceptance->>Release: Fetch public assets and verify delivery
-    Acceptance-->>Owner: Public checks and online audit pass
-    Owner->>Tap: Approve separate tap PR merge
+    Acceptance-->>Owner: Standalone public checks pass
     Installer->>Release: Fetch pinned version and validate download
     Installer->>State: Acquire common lock and recheck ownership
     Installer->>Installer: Verify staged app, request bounded graceful quit
     Installer->>State: Commit or recover bundle and receipt; release lock
+    opt Later Homebrew phase
+        Acceptance->>Tap: Prove hooks, artifact parity and online audit
+        Acceptance-->>Owner: Homebrew acceptance evidence
+        Owner->>Tap: Approve separate tap PR merge
+    end
 ```
 
 | Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
 |---|---|---|---|---|
 | Build and package | Tag/manual selected commit plus signing approval | Source, version/build, temporary credentials | Credentials cleared on every exit; final assets and hashes retained | CI job |
-| Candidate acceptance | Complete draft available | Exact assets, isolated app state, cask template | Evidence tied to commit/hashes; test state discarded | Disposable test session |
-| Publish and verify | Owner accepts candidate evidence | Tested bytes and approved metadata | Immutable release; public-check evidence gates tap merge | Owner approval, then public test session |
+| Candidate acceptance | Complete draft available | Exact standalone assets and isolated app state | Evidence tied to commit/hashes; test state discarded | Disposable test session |
+| Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Immutable release and standalone public-check evidence | Owner approval, then public test session |
+| Homebrew delivery | Phase 5 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence; separately approved tap PR | Later test session and owner approval |
 | Install/upgrade | User invokes standalone or Brew | Verified artifact, receipt/Brew metadata, common lock | Bundle/receipt or recoverable backup persisted; lock released | Local process |
 | Developer install | User invokes local recipe | Common lock, ownership, local source and signing identity | Verified developer bundle only; managed destinations refused | Local process |
 
@@ -350,40 +372,52 @@ Credentials exist only in protected signing jobs; neither installers nor the tap
 - Race tests run two standalone installs into different directories, standalone against Brew, and developer
   against each release channel. Assert at most one installation commits; losers cannot quit or mutate the app.
   Cover lock cleanup, uncertain stale owners and receipt-recorded custom destinations.
+  Phase 3 tests standalone/developer races and mocked foreign Brew ownership; real cask races run in phase 5.
 - Channel matrix: fresh, standalone, Brew, self-signed developer, unknown owner and duplicate paths.
   Verify no destructive operation or app kill occurs on refused upgrades/uninstalls.
 - Successful normal uninstall preserves app state, preferences and shared caches. Successful zap removes
   only this app's preferences/logs; assert Application Support, weights, shared caches and unrelated preferences survive.
   Test manual standalone removal and interrupted cleanup, then install through Brew without a stale receipt blocking it.
+  Manual removal/recovery gates standalone delivery; successful Brew uninstall/zap and switching tests gate phase 5.
 - Workflow tests reject missing environment protection, mutable action refs, broad write permissions and secrets in test jobs.
   Exercise denied approval and cancellation in an isolated environment: no signing, publication or leaked credentials.
   Assert manual/tag runs remain draft-only, incomplete assets fail, and existing published versions cannot be overwritten.
   Check actual repository environment settings as well as YAML; mocks cannot prove approval enforcement.
 - Real tests run in a disposable user/VM with representative copied state, never the real installation.
-  Test both routes, app startup and supported local TTS/STT on macOS 15. Repeat on macOS 26,
+  In phase 4, test standalone install/update, app startup and supported local TTS/STT on macOS 15. Repeat on macOS 26,
   including Apple Speech and Microphone/Speech permission re-authorisation after signer migration.
-  Exercise standalone installation without Brew or Xcode, and cask installation without a source checkout or app build tools.
+  Exercise standalone installation without Brew or Xcode. In phase 5, repeat route parity and OS coverage
+  for the cask, without a source checkout or app build tools.
   Candidate tests apply/retain quarantine and exercise Gatekeeper on staged bytes; after publication,
   download through a browser and recheck public delivery. Compare fingerprints/cache sentinels after upgrades.
 - Before a PR: `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`, `swift test`,
-  `just app-build`. Before publication: real Developer ID/notarization checks, local cask/style validation,
-  artifact parity and candidate installation/migration tests. Before tap merge: public-download checks
-  and online cask audit/style. Mock tests cannot replace these gates.
+  `just app-build`. Before standalone publication: real Developer ID/notarization checks and standalone
+  candidate installation/update/migration tests. Before tap merge: cask feasibility, route parity,
+  public-download checks and online cask audit/style. Mock tests cannot replace these gates.
 
 ## Acceptance Criteria
 
-- Both routes install the same verified app without source/build dependencies.
+### First delivery — standalone installation and manual updates
+
+- One versioned command installs an absent app or updates a verified standalone copy without source/build dependencies.
+- Same-version reruns verify integrity and make no changes; lower versions/builds are refused.
 - Failed or cancelled upgrades preserve a recoverable previous installation and all app/model data.
-- All three installers refuse cross-channel and unknown-owner replacement; cross-directory races cannot create duplicate installs.
-- Verified manual standalone removal clears its matching receipt; a subsequent channel switch succeeds without deleting app data.
+- Standalone/developer installers refuse foreign-channel and unknown-owner replacement; cross-directory races cannot create duplicate installs.
+- Verified manual standalone removal clears its matching receipt without deleting app data.
 - Existing environments remain ready; server pins and shared cache contents are unchanged.
-- Both routes pass macOS 15 and 26 acceptance; Apple Speech and permission migration pass on macOS 26.
-- Candidate gate: complete assets from one commit pass both routes, quarantine/Gatekeeper and state-preservation checks before publication.
-- Public gate: a quarantined public download matches candidate hashes and passes Gatekeeper before tap merge.
-- Successful uninstall/zap preserves everything outside its explicit removal scope.
+- Standalone install/update passes macOS 15 and 26 acceptance; Apple Speech and permission migration pass on macOS 26.
+- Candidate gate: complete assets from one commit pass standalone acceptance, quarantine/Gatekeeper and state-preservation checks before publication.
+- Public gate: a quarantined public download matches candidate hashes and passes install/update checks after approved publication.
 - Signing secrets remain outside PR CI/logs; negative approval/publication tests pass. Each owner approval follows its respective evidence gate.
 
-<!-- reviewed: 2026-11-18 @ afc1e7126371ce20082c2a2a1dd1d726bb562f74 -->
+### Later delivery — Homebrew
+
+- Both routes install the same ZIP/hash and pass macOS 15/26 acceptance.
+- Proven cask hooks uphold the common lock and quit/ownership guarantees across all three installers.
+- Verified channel switching succeeds; successful uninstall/zap preserves everything outside its explicit removal scope.
+- Cask audit/style and public-download checks pass before the separately approved tap merge.
+
+<!-- reviewed: YYYY-MM-DD @ <hash> -->
 
 ## Progress
 
@@ -397,9 +431,13 @@ complete-release assembly after installer implementation; workflow policy tests;
 Earlier review findings also add version/build preparation, receipt removal and macOS 15/26 acceptance.
 Release credentials, protected-environment configuration, tap ownership and cask feasibility remain external gates, not verified facts.
 
+Delivery sequence revised on 2026-11-18 at the user's request: standalone installation and manual updates first;
+Homebrew feasibility, cask acceptance and tap setup move to phase 5. Signing prerequisites still gate real distribution.
+The earlier review marker is invalidated by this contract change; review the revised sequence before implementation.
+
 ## Issues & Solutions
 
-The earlier plan assumed a simple cask upgrade respected quit confirmation. Phase 1 now requires evidence before implementation.
+The earlier plan assumed a simple cask upgrade respected quit confirmation. Phase 5 requires evidence before Homebrew delivery.
 
 ## Final Results
 

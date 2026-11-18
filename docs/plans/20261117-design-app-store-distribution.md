@@ -43,3 +43,9 @@ A concrete user need for store distribution (managed devices, discoverability) t
 The Homebrew plan is now [App distribution](20261117-feature-app-distribution.md).
 It covers one signed, notarized release artifact consumed by a Homebrew cask and
 a standalone command-line installer. The App Store decision above is unchanged.
+
+## Delivery order update — 2026-11-18
+
+The [app distribution plan](20261117-feature-app-distribution.md) now ships standalone
+installation and manual updates first. Homebrew follows in a separate delivery phase;
+the App Store remains outside the planned distribution routes.
