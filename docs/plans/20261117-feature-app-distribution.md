@@ -589,6 +589,40 @@ Check that the contender acquires after Brew exits. Simulate quit refusal during
 compare the old bundle and cask metadata before and after. Record Brew version, hook order and outcomes
 before deciding whether the lock protocol can be frozen.
 
+Spare Mac run, macOS 26.3 (25D125) and Homebrew 7.0.14. A local tap was needed because Brew rejected the
+standalone cask path. The fixture also needed a literal path and normal Brew mode to load the legacy hooks.
+Version 1 installed. The two install hooks logged one PID and inode. Simulated quit refusal stopped an
+upgrade with exit 1. Brew still listed 1.0 and the installed plist hash matched its baseline.
+Direct uninstall logged the uninstall preflight but returned 0. The log records backup and removal of the
+fixture and contains no refusal error. The marker was still present afterward, with a modification time
+before the uninstall hook entry. The uninstall path did not preserve the app. The cause of the differing
+upgrade and uninstall behavior remains unverified.
+A local Homebrew 7.0.14 artifact-only probe invoked the fixture's `uninstall_preflight` with the marker
+present. It raised the expected refusal with both `skip: false` and `skip: true`. This rules out the skip flag
+alone and does not exercise the full uninstall command. Before a lifecycle retry, log the hook's resolved
+marker path, presence and refusal decision, and verify the stored cask matches the fixture that was installed.
+Brew also autoremoved 31 formulae from the test host. `brew missing` reported no missing dependencies afterward.
+A retry needs an isolated Brew prefix and `HOMEBREW_NO_AUTOREMOVE=1` as well as
+`HOMEBREW_NO_INSTALL_CLEANUP=1`. Keep the lifecycle proof and shared lock freeze open. Rollback and real quit
+refusal remain untested.
+
+The isolated UTM retry on Homebrew 7.0.14 started with zero formulae and casks. Version 1 installed.
+Both simulated refusals ran the version 1 uninstall preflight and returned exit 1. The app and cask metadata
+snapshots matched the baseline after both attempts. After direct uninstall, Brew rejected the runner's
+version query because the fixture's cask trust had been removed. In 7.0.14, `cmd/uninstall.rb` removes
+per-cask trust even after reporting an uninstall error. Reapply the fixture's individual trust before the
+version query in the next run. Rollback and the full lock lifecycle still need a live run.
+
+Revision 3 passed every fixture assertion in the UTM guest on Homebrew 7.0.14. It restored per-cask trust
+before verifying the refused uninstall. Refused upgrade and uninstall each exited 1 and preserved the
+version 1 app and cask metadata. The injected failure after the version 2 app move exited 1 and restored
+the version 1 snapshots. Normal upgrade and uninstall both exited 0 and left no fixture app or cask installed.
+The seven rollback hooks shared one PID, lock descriptor and inode. Independent contenders were excluded at
+each hook and acquired after Brew exited. The runner retained `events.jsonl`, command logs and snapshots in
+the guest's `pipecat-cask-spike-r3-20261118-4776-19n21u1` evidence directory. These checks exercised legacy
+hooks and a simulated refusal. Continuous exclusion across the production lifecycle, supported hooks and a
+real running app refusing to quit still need validation.
+
 ## Issues & Solutions
 
 The earlier plan assumed a simple cask upgrade respected quit confirmation. Phase 7 requires evidence before Homebrew delivery.
