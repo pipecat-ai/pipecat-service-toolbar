@@ -1,12 +1,12 @@
 # Task: Ship standalone installation and updates, then add Homebrew
 
-**Status**: Planned — final review findings addressed in this revision
+**Status**: Planned — review run 20261119T072821Z-utm-distribution findings addressed; awaits re-review
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
 **Branch**: `docs/app-distribution-plan` (planning); implementation on focused `feature/app-distribution-*` branches cut from reviewed `main`
 **Created**: 2026-11-17
-**Review Gates**: full
+**Review Gates**: none
 
 ## Objective
 
@@ -17,7 +17,7 @@ End users need neither a source checkout nor Xcode, uv, Python or just installed
 The standalone release requires neither a Homebrew tap nor a cask delivery. It does require the Homebrew-facing
 contracts that published installers freeze: cask token, lock primitive and versioned state (see "Frozen contracts").
 
-This updates the Homebrew plan from `docs/distribution-plans` at `a5a371d`.
+This updates the Homebrew plan from branch `docs/distribution-plans` at commit `a5a371d`.
 Its scope now includes standalone installation; the retained
 [App Store decision record](20261117-design-app-store-distribution.md) explains the excluded route.
 
@@ -34,9 +34,9 @@ Verified against the current checkout on 2026-11-17:
   Retain local builds, with ownership guards added before replacement; the new installer downloads a finished release.
 - `just app-open` can request quit by bundle ID before launching the local build.
   `scripts/ui_smoke.sh` refuses a preexisting running copy and quits the smoke copy it launches.
-- `scripts/quit_app.sh` has a bounded quit protocol and treats refusal, timeout or
-  unknown running state as failure. It must never be replaced with a force-kill shortcut.
-  It is a standalone program with top-level EXIT/INT/TERM traps and `exit` calls, so it cannot be sourced.
+- `scripts/quit_app.sh` has a bounded protocol for refusal, timeout and unknown state. Its current dispatcher addresses
+  a bundle ID and invokes commands through `PATH`. Phase 4 adds a process-targeted mode with qualified absolute paths.
+  The program has top-level traps and `exit` calls. Invoke it as a child process.
 - `scripts/fetch_uv.sh` bundles arm64 uv; `Package.swift` targets macOS 15+.
   Apple Speech still needs macOS 26+. Python and models download on demand.
 - `app-version.json` is currently version `0.4.1`, build `474`; app versions remain
@@ -52,6 +52,9 @@ Verified against the current checkout on 2026-11-17:
   certificate, expected Team ID and notarytool API-key access. No credentials belong in this plan.
   Their availability is unverified. Reviewed mock implementation may proceed without credentials;
   real signing requires verified credentials, a protected environment and approved version/build metadata.
+- The release owner must approve and qualify an owner-controlled private S3 bucket and a GitHub OIDC
+  upload role before Gate A. Phase 1 records the account, access policy, required roles and retention period.
+  The plan assumes no existing bucket or access. If the private handoff cannot be qualified, stop before Gate A.
 - Proposed tap: `pipecat-ai/homebrew-tap`, pending owner approval and repository/access checks.
   Tap provisioning is a phase 7 dependency only. The cask token is fixed now as `pipecat-service-toolbar`
   because the standalone installer detects Brew ownership by it. Use a project-owned tap initially;
@@ -59,12 +62,18 @@ Verified against the current checkout on 2026-11-17:
 - Use a ZIP archive with a stapled app inside, built with `ditto -c -k --keepParent`.
   Distribution channels never re-sign, modify the signed bundle or rebuild the app.
 - Standalone destination: `~/Applications`, with `--app-dir` for an existing directory exclusive to the invoking user.
-  No sudo, privilege escalation or automatic app launch. Homebrew keeps its configured app directory.
+  No sudo, privilege escalation or automatic app launch. The cask applies the same exclusivity rule to its configured
+  app directory and refuses one that fails it. Homebrew's default `/Applications` is admin-writable, so users install
+  with `--appdir=~/Applications`; the documentation says so.
 - First standalone interface: `install.sh --version X.Y.Z [--app-dir PATH]` plus `--help`.
   `install.sh` is bound to its own release: it embeds its version and rejects any other `--version` value.
   The flag stays required as an explicit confirmation. The same command installs when absent and updates a
   verified standalone installation when present. An explicit stable version is required; automatic
-  latest-version discovery, downgrades, and an in-app updater are outside this increment. An explicit local maintenance command handles
+  latest-version discovery, downgrades, and an in-app updater are outside this increment.
+  Maintenance is `install.sh --version X.Y.Z --maintenance remove|cleanup [--app-dir PATH]`. It takes no other
+  arguments and no force option, and the grammar is frozen with the first installer. Maintenance authority follows
+  the on-disk protocol version, not the release: any installer release that supports that protocol version may
+  remove or clean up. The documentation points users to the newest published installer. Maintenance handles
   verified removal and backup cleanup for channel switching.
 - Normal uninstall retains app data. Cask zap may remove only preferences and logs;
   never Application Support, model weights, Hugging Face or Moonshine shared caches.
@@ -73,20 +82,37 @@ Verified against the current checkout on 2026-11-17:
 
 ### Review and merge gates
 
-- Each gate runs `/code-review xhigh --fix` and `review-gauntlet`, resolves findings and merges normally to `main`.
-  Gate A lands the reviewed release workflow and approved dry-run version/build. Gate B lands every first-release
-  input, including complete asset assembly, final version metadata, changelog and documentation. Gate C lands the cask
-  and its generator after standalone publication and before the external tap merge.
-- Phase 3 runs live checks from the Gate A workflow. Phase 4 mock work may start after Gate A while signing is pending.
-  Phase 5 starts after Gate B and the phase 3 live checks pass. It selects an existing reviewed `main` commit and records
-  candidate evidence. Changes to candidate inputs go back through Gate B and require fresh evidence.
-- Phase 6 starts with owner approval bound to phase 5 evidence. Phase 6 publishes and verifies public delivery.
-  Phase 7 starts after public verification. The tap PR can be prepared before Gate C and merged after it.
+- Run implementation phases 2, 4 and 7 as separate focused tasks. Use explicit manual gates and the full
+  `skein:review-gauntlet` on each implementation PR. Resolve findings and merge normally to `main`.
+  Gate A lands the release workflow, packager and predecessor metadata (same version, raised build, no changelog entry).
+  Gate B lands every candidate input, the evidence-only check, final version metadata, the numbered changelog entry
+  and candidate documentation. Gate C lands the canonical cask, its generator and CI check before the hosted tap merge.
+- The release owner runs phases 1, 3, 5 and 6. Record the reviewed commit and evidence for each external handoff under
+  `## Findings` and mark that phase complete under `## Progress` after verification. The next task checks its listed
+  prerequisites against those records and starts from the merged gate commit. Keep review gates manual throughout.
+- Phase 3 runs live checks from the Gate A workflow, and all of them finish before Gate B merges. Phase 4 mock work may
+  start after Gate A while signing is pending. A defect that live signing exposes goes back through Gate A (a focused fix
+  branch, review and regular merge), and the affected phase 3 checks repeat. The private predecessor stays valid,
+  because it only needs a lower version/build than the candidate.
+- Phase 5 starts after Gate B and the phase 3 live checks pass. It repeats the secret-free denial checks against the
+  Gate B workflow in an equivalent protected sandbox. The approved production Gate B run retains its configured
+  credentials and repeats ZIP-only dry run, cancellation, failure cleanup and secret scans. Changes to candidate
+  inputs go back through Gate B and require fresh evidence.
+- Phase 6 starts with owner approval bound to phase 5 evidence, then publishes and verifies public delivery. Evidence
+  and observed-behaviour documents land in one evidence-only PR after phase 6 verification, with regular review and
+  merge: `docs/release-evidence/X.Y.Z.md`, the observed-steps part of `docs/migration.md`, and the README install
+  command that needs the published URL. The required Gate B check validates the complete PR diff against those
+  three exact paths for the approved version. It rejects all other paths, renames and deletions.
+  After public verification, phase 7 can qualify hooks and tap access. The canonical render and interoperability
+  matrix require the merged release evidence. Gate C marks the cask instructions pending until the hosted tap
+  PR merges and a public install succeeds.
 
 ### Shared release contract
 
 - Release mode requires Developer ID Application, secure timestamps, hardened runtime and valid nested signatures.
-  Verify bundle ID `ai.pipecat.ServiceToolbar`, version/build, Team ID and absence of `get-task-allow`. Preserve quarantine.
+  Verify bundle ID `ai.pipecat.ServiceToolbar`, version/build, Team ID and absence of `get-task-allow`. Never strip quarantine from a test bundle to pass a check.
+  `curl` downloads carry no quarantine attribute, so on the standalone route the installer's own signature and
+  Gatekeeper checks are the only gate. Phase 6 tests quarantine on a browser-downloaded ZIP.
   Validate the exact uv and server-wheel layout with a real submission. Record whether the wheel contains native code.
 - Submit a temporary ZIP with `xcrun notarytool submit`, persist the returned submission ID, and poll to a terminal
   status with a bounded deadline. On timeout keep the ID for follow-up and withhold publishable output.
@@ -95,30 +121,56 @@ Verified against the current checkout on 2026-11-17:
 - Publish exactly four assets: `Pipecat-Service-Toolbar-X.Y.Z-arm64.zip`, `SHA256SUMS`, `install.sh` and a
   plain-text release manifest. Use an exact schema for schema version, app version/build, bundle ID, Team ID,
   architecture, minimum macOS, filename and SHA-256. Reject duplicate, missing or unknown keys and invalid values.
-  Require checksum and manifest agreement. Parse both as data. Verify the bundle's signature and Gatekeeper status.
+  `SHA256SUMS` lists the ZIP, the manifest and `install.sh` (not itself) in `shasum -a 256` format: digest, two spaces,
+  name, sorted by name, no other lines. The installer verifies the ZIP and manifest entries and requires the ZIP digest
+  to equal the manifest's; the `install.sh` entry serves public checks, because a script cannot verify itself.
+  Parse both as data. Verify the bundle's signature and Gatekeeper status.
 - The tag `vX.Y.Z` matches `app-version.json`. Public candidates exceed build 474, the private predecessor, and the
-  maximum known published build. Inventory legacy builds without manifests from trusted release records and stop real
-  release preparation if the maximum is uncertain. Require GitHub immutable releases and a workflow overwrite guard.
+  maximum known published build. Phase 1 builds the inventory from the GitHub release list and any manifests, and
+  records explicitly that none exists if none does. Inventory legacy builds without manifests from trusted release
+  records and stop real release preparation if the maximum is uncertain. Require GitHub immutable releases and a
+  workflow overwrite guard.
 - Run the credentialed workflow using its reviewed definition on protected `main`. Use manual dispatch with a full
   approved commit SHA reachable from protected `main`. Validate the selected commit and its version before executing
-  build scripts or importing credentials. Version tags are release identifiers, and any existing tag must resolve to the
+  build scripts or importing credentials. Bind the two code sources: the workflow records the blob hash of its own
+  `release.yml` and aborts unless the approved commit's `release.yml` has the same blob, so a `main` that advanced past
+  Gate B cannot pair a newer workflow with older scripts. Version tags are release identifiers, and any existing tag must resolve to the
   approved commit. Verify tag-present and tag-absent cases in a sandbox. Check the final association again publicly.
-- Use a GitHub-hosted ephemeral runner and protected environment restricted to the reviewed workflow ref. Require
-  reviewers, disable administrative bypass, and verify denial before real signing. Inject the confirmed Team ID and
-  reject placeholders. Mask secrets and use an ephemeral keychain and private key files. Clean up on normal exits,
-  errors and catchable cancellation. Forced termination relies on disposal of the ephemeral runner. Restrict write
-  permission to draft upload. Keep test jobs and tap inputs free of signing credentials.
-- Dry runs upload a ZIP-only workflow artifact. Complete runs create a private draft with the full commit SHA as
-  `target_commitish`. Both modes end before publication. The owner approves the draft ID, SHA, tag and four digests.
-  Serialize draft writes and publication via one release owner and freeze draft writers at handoff. Immediately before
-  publishing, recheck the draft ID, target, tag and all four digests against approval under that control. Abort on drift
-  and obtain fresh acceptance and approval. Record approvals and evidence in the draft notes and release evidence file.
-- A public check verifies all four asset digests and the tag commit. Exercise Gatekeeper on the browser-downloaded
-  ZIP and install/update using the public URLs. A failure blocks the tap and requires a new approved release for
+- Use a GitHub-hosted ephemeral runner and a protected environment limited to protected `main` through its deployment
+  branch policy. Environments cannot restrict by workflow file, so changes to `release.yml` need branch protection with
+  required review. Require reviewers and disable administrative bypass. Self-approval is allowed unless
+  prevent-self-review is on, and that setting needs a second reviewer; if the owner works alone, record self-approval
+  as an accepted residual risk. Create the environment and its reviewers first and test denial with no secrets
+  configured; load secrets only afterwards. Inject the confirmed Team ID and reject placeholders. Mask secrets and use
+  an ephemeral keychain and private key files. Clean up on normal exits, errors and catchable cancellation. Forced
+  termination relies on disposal of the ephemeral runner; that cannot be observed on a GitHub-hosted runner, so cite
+  GitHub's documentation for it instead of recording evidence.
+- The protected signing workflow uses GitHub `contents: read` and short-lived OIDC credentials scoped to private
+  storage. Only the release owner creates drafts, uploads release assets, creates `v*` tags and publishes. Keep the
+  owner credential outside CI and protect `v*` tags with a ruleset. Test publication denial with both a missing tag
+  and an owner-created matching tag. Test tag-creation denial separately from publication denial.
+- The signing job uploads directly to the private S3 bucket. It writes a ZIP-only handoff in dry-run mode and the
+  exact four-asset set in candidate mode. Use a unique repository/run ID/run attempt prefix and conditional
+  create-only writes. Write the handoff record last. Bind it to repository, run ID, attempt, mode, workflow blob,
+  approved SHA, tag, exact names and digests. The owner verifies the record and files before creating a draft.
+  Reject missing, extra, duplicate, stale or cross-run inputs. No signed bundles, handoff records or presigned
+  download URLs enter public Actions artifacts or logs. The private handoff record stays outside the four release assets.
+- The release owner creates the draft with the approved SHA as `target_commitish` and uploads the verified assets.
+  The acceptance record binds draft ID, SHA, tag and all four digests. Immediately before publishing, the owner
+  excludes other writers and runs the reviewed `scripts/verify_release.sh` against that record. Recheck draft status,
+  exact asset names and bytes, the target commit and any existing tag. Stop on drift and obtain fresh approval.
+  Record the recheck and approval in the release evidence file.
+- `scripts/verify_release.sh` also runs the public check: all four asset digests, the tag commit and the real
+  release-asset redirect chain against the embedded host allowlist. Exercise Gatekeeper on the browser-downloaded
+  ZIP and install/update using the public URLs. A host outside the allowlist breaks the published installer and needs
+  a new installer release. A failure blocks the tap and requires a new approved release for
   corrections. Publication, tag creation and credential configuration require the release owner's authorization.
 
 [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 and [GitHub release API](https://docs.github.com/en/rest/releases/releases) define the external operations.
+[GitHub OIDC for AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+and [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html) define
+the private handoff primitives.
 
 ### Frozen contracts
 
@@ -130,51 +182,88 @@ They are fixed before phase 4 and may change only through a new installer releas
 - A schema version on the receipt, lock record and recovery journal, and a protocol version file in the installer
   state directory. Every later installer must honour version-1 state. An installer that reads a newer version
   stops without recovery or mutation and reports it.
-- If phase 7 proves cask hooks cannot hold the lock or honour quit refusal, phase 7 may force a new installer
-  release. No cask hook spike runs before the first publication; Homebrew work stays after standalone delivery.
+- The command grammar (`--version`, `--app-dir`, `--maintenance remove|cleanup`, `--help`) and the closed command
+  allowlist in the installation contract.
+- Phase 1 may use a disposable local-only tap in an empty Brew prefix. Revision 3 supplies the legacy-hook baseline
+  for simulated refusal and rollback. Before freezing the lock, reproduce cross-tool exclusion, stable inode and
+  release after exit on both supported macOS majors. Demonstrate that a mutation worker keeps the lock across
+  mutation and rollback boundaries and after wrapper death. Record the command set and evidence used for the freeze.
+  Phase 7 separately requires supported Brew hooks, continuous exclusion and real app refusal. A later failure blocks
+  the hosted tap merge. A revised cask must interoperate with earlier published installers as well as new ones.
 
 ### Installation and upgrade contract
 
 - The standalone installer pins repository, tag, expected Team ID and bundle ID. It verifies the manifest, checksum,
-  archive layout and extracted bundle before requesting quit. Use stock Bash 3.2 and only commands qualified in phase 1.
+  archive layout and extracted bundle before requesting quit. Use stock Bash 3.2 and only a closed set of
+  absolute-path commands qualified in phase 1: HTTP client, checksum tool, `codesign`, `spctl`, `ditto`, plist reader,
+  lock tool, archive inspector, running-instance probe, CPU detector, `osascript`, Bash and needed file utilities.
+  Freeze the exact list in one constant block. Apply it to the shipped installer and all children, including the
+  embedded quit helper. Invoke the helper with the qualified absolute Bash path and ignore caller `PATH`.
   Verify an explicit Developer ID requirement, Team ID, version/build and the qualified Gatekeeper pass rule.
 - Start at `https://github.com/<fixed-repo>/releases/download/vX.Y.Z/<asset>`. Require HTTPS with bounded requests,
   downloads and redirect count. Validate each redirect host against the embedded
-  allowlist before issuing the request. Reject unapproved hosts, HTTP and redirects with credentials or ambiguous URLs.
+  allowlist before issuing the request. Reject unapproved hosts, HTTP, URL userinfo (`user:pass@`) and ambiguous URLs.
+  GitHub's asset redirects carry signed query tokens, so query strings are allowed. Phase 1 records the real URL
+  shape, and the installer never logs a full redirect URL.
   Download the installer to a file before executing it. Never treat network metadata as executable code.
 - Use a qualified archive inspector that reports path and type unambiguously. Reject symlinks, traversal, absolute paths,
   ambiguous names, duplicate entries and content outside the expected app root before extraction.
 - Acquire the per-user bundle-ID lock before ownership and duplicate checks. Hold it from the first state read through
   quit, replacement, receipt changes and recovery. Require an exclusive user destination with no symlinked or
-  other-user-writable path components for first delivery. Phase 7 may support a shared destination only after proving
-  a common destination lock across all writers, acquired after the bundle-ID lock. Otherwise require an exclusive app dir.
-- Probe standard application directories, recorded paths, Brew targets and registered running instances. A single
-  running instance at the verified target gets a bounded graceful quit. Other copies or unresolved identities stop the
-  operation. Document that inactive receipt-less copies in arbitrary custom folders cannot be discovered reliably.
+  other-user-writable path components, for both routes. Any destination that fails the rule is refused, including a
+  shared or admin-writable one such as Brew's default `/Applications`. There is no shared-destination mode.
+- Probe standard application directories, recorded paths, Brew targets and registered running instances, resolved
+  to bundle paths with the running-instance probe that phase 1 qualifies. Bind the graceful quit request and exit
+  observation to one verified process identity (PID, canonical bundle path and a qualified launch identity).
+  Revalidate immediately before dispatch. A PID reuse, same-ID process replacement, extra copy or unresolved identity
+  stops the operation. Document that inactive receipt-less copies in arbitrary custom folders are undiscoverable.
   Ask users to identify and remove known copies before switching channels.
 - Check Brew ownership using documented commands and the cask token and resolved path, covering native and Rosetta
   prefixes. Phase 1 qualifies any necessary Caskroom fallback. Unresolved ownership stops the operation.
-- A standalone receipt allows standalone upgrades. Verify a same-version rerun before treating it as a no-op.
-  Reject downgrades, same version with a different build and receipt/bundle disagreement. Developer builds may
+- A standalone receipt allows standalone upgrades. A verified exact version, build and code identity match is a no-op.
+  Every upgrade needs a higher version and build. Refuse receipt/bundle disagreement. An update whose requested
+  destination differs from the receipt path stops and names the recorded path. To move an install, remove it and then
+  install. Developer builds may
   replace the same version/build after verifying developer ownership. The cask upgrades only its own verified copy.
 - `just app-install` uses the lock and ownership guard before build or quit. Receipt-less developer adoption requires
   an explicit request, a matching bundle ID and designated requirement, and independent local provenance from a
   trusted retained build record with a matching code hash. A signing identity shared with public releases is insufficient.
   Record an adoption notice and a developer receipt. Refuse when provenance is absent, invalid or ambiguous.
-- Alternate `BUNDLE_ID` builds have separate build outputs, install basenames, locks and state. Reject an override
-  targeting the protected default bundle path or any state/path alias. Check the built and existing identities before
-  replacing anything. The default bundle lock still protects every operation that can target the default app.
+  `just app-install` writes that record for every bundle it installs once this guard exists:
+  `build-records/<cdhash>.plist` in the installer state directory, with owner-only permissions and keys for bundle ID,
+  version, build, code hash, signing identity and build time, retained until the matching bundle is removed. Installs
+  that predate the record, including build 474, have none. They take the manual path: the user removes the old copy
+  by hand (documented in `docs/development.md`), then runs `just app-install`.
+- Alternate `BUNDLE_ID` builds have separate build outputs, staging directories, install basenames, locks and state.
+  Use one output resolver in direct build, developer recipes and smoke. Reject aliases to protected default paths.
+  Direct `scripts/build_app.sh` and `just app-build` acquire the applicable lock before modifying local outputs.
+  `just app-install` invokes the same internal build routine under its already-held lock. Keep the lock descriptor
+  in the mutation worker, with no public skip-lock switch. The release builder uses an isolated CI work directory.
 - `just app-open` checks ownership under the lock before requesting quit. The smoke script acquires the lock before its
   preexisting-process check and holds it through its own launch and quit. It continues to refuse a preexisting copy.
-  Ignore inactive repository outputs in duplicate scans and check their running instances.
-- Stage and verify beside the destination, then quit only the verified target. Refusal, timeout or unknown running
-  state preserves the installed bundle, receipt and app data. Use the existing quit helper as a bounded child process.
-  Journal replacement intent before each mutation and recover under the same authority and quit rules.
+  Ignore inactive repository outputs in duplicate scans and check their running instances. Ownership of a running
+  instance follows its resolved path. `just app-open` may quit the repository `build/` output or a verified developer
+  install, which keeps the developer edit-run loop working. It refuses a standalone- or Brew-owned path and any
+  unresolved path. `just app-install` quits a running repository output the same way before replacing an installed copy.
+- Stage and verify beside the destination, then quit only the verified process using the adapted bounded helper.
+  Keep the existing developer quit interface for callers outside installer mutation. Re-probe immediately before
+  each bundle rename and stop on a new or unresolved instance. An installer lock governs the listed operations.
+  Finder and launch-at-login may still launch between the final probe and a rename. Document that residual race
+  and require users to close the app and avoid starting it until the operation exits.
+  Refusal, timeout or unknown state before mutation preserves the bundle, receipt and app data. After a mutation,
+  preserve the journal on uncertainty. Journal every rename and recover under the same ownership and quit rules.
 - Channel switching uses verified removal by the current owner and then a separate locked install. Retain preferences,
   app environments, model weights, shared caches and server pins. Installation starts no services. Validate readiness
   by observing first start for refresh and download attempts, as well as checking fingerprints and cache contents.
 - Test Microphone permission and launch-at-login after signer/path changes on macOS 15 and 26. Test the Apple Speech
-  permission prompt and working recognition on macOS 26. Record each tested user action in `docs/migration.md`.
+  permission prompt and working recognition on macOS 26. Record each tested user action in the release evidence
+  file; the evidence-only PR copies them into `docs/migration.md`. Test a real signer change: seed a developer install
+  signed with the self-signed `Code Signing` identity, switch channels by verified removal, install the Developer ID
+  candidate, and observe the permission and launch-at-login behaviour.
+- Qualified OS versions are macOS 15 and 26. The manifest minimum stays 15, so the installer also runs on newer
+  majors, which stay unqualified until tested. The release notes name the qualified versions, and a regression on a
+  newer major needs a new installer release. CPU detection uses the real hardware, not the shell's translation: a
+  Rosetta-translated shell on Apple silicon is accepted, and phase 1 qualifies the detection method.
 
 ### Homebrew contract — deferred to phase 7
 
@@ -183,8 +272,13 @@ They are fixed before phase 4 and may change only through a new installer releas
   Document the fully qualified tap/cask install command.
 - Prove the selected Homebrew lifecycle hooks can hold the shared lock, detect ownership and honour quit refusal
   before any destructive upgrade/uninstall step. Do not assume `uninstall quit:` alone does this.
-  If the supported cask API cannot uphold the contract, stop that delivery phase and obtain
-  a revised channel design, which may be a new installer release; do not weaken the invariant or patch Homebrew internals.
+  If the supported cask API cannot uphold the contract, stop Homebrew delivery and obtain a revised design under its
+  own reviewed plan; a new installer release alone does not satisfy the gate. Do not weaken the invariant or patch
+  Homebrew internals. The cask checks its configured app directory against the exclusivity rule and refuses one that
+  fails it; the documentation gives the `--appdir=~/Applications` install command.
+- On refusal, verify unchanged app bytes, installed cask receipts and metadata. Record per-cask and whole-tap trust
+  separately before any repair. Revision 3 observed a per-cask trust removal on Homebrew 7.0.14. Document any
+  supported-version trust side effect and obtain owner acceptance before Gate C. Otherwise keep the tap blocked.
 - Audit/style validation and tests use the same Homebrew version whose upgrade semantics
   were exercised. Record it with release evidence and recheck on supported-version changes.
 
@@ -206,31 +300,53 @@ frozen-contract compatibility across published installers; review and merge orde
 
 - Record signer/release owner, Team ID, credential availability and protection settings as verified or pending.
   Inspect credential metadata only. Confirm immutable releases, reviewers, admin-bypass denial and protected refs.
-- On clean macOS 15 and 26 without Command Line Tools, qualify the archive inspector, persistent lock and state format.
-  Test archive type/path framing against malformed fixtures. Verify exclusion between shell and Ruby consumers,
-  wrapper death and stable inode semantics. Record the exact commands and format before phase 4.
-- Qualify the signature/Gatekeeper pass rule with a generic notarized bundle. Confirm the real asset redirect hosts
-  and documented Brew ownership lookup. Use disposable state. Homebrew hook validation and tap access belong to phase 7.
+  Confirm public download visibility and record the published-build inventory from releases and manifests.
+- Qualify the S3 handoff with unsigned canaries in a protected sandbox before Gate A. Enable Block Public Access
+  and restrict object reads to the owner. Bind the short-lived upload role to the protected environment and repository. Limit it to
+  conditional creates under the release prefix. Test owner retrieval, denial of unauthorized reads, denial of
+  upload from unapproved refs and contexts, and denial of overwrites, reads and deletes by the uploader.
+  Record retention, access and verification without logging signed URLs or credentials.
+- On clean macOS 15 and 26 without Command Line Tools, qualify the closed command set: HTTP client, checksum tool
+  (`/usr/bin/shasum` is a Perl script on macOS 26), archive inspector, persistent lock, plist reader and state format,
+  a running-instance probe and bounded process-targeted graceful quit, and a CPU detector that also works from
+  a Rosetta-translated shell. Exercise Terminal and SSH on both majors. Test allowed quit, refusal, timeout, blocked
+  permission, duplicate instances and same-ID process replacement between verification and dispatch. Test archive
+  type/path framing against malformed fixtures. Verify exclusion between shell and Ruby consumers,
+  wrapper death and stable inode semantics. Record the exact commands, absolute paths and format before phase 4.
+- Qualify the signature/Gatekeeper pass rule with a generic notarized bundle, and show it rejecting each of: an unsigned
+  bundle, an ad-hoc or self-signed one, a Developer ID bundle that is not notarized, and one with the wrong Team ID.
+  Confirm the real asset redirect hosts and URL shape from a release in a sandbox repository of the same visibility,
+  and the documented Brew ownership lookup. Use disposable state.
+- Use revision 3 and the additional process-lifetime and mutation-boundary probes in "Frozen contracts" for the
+  lock decision. Record the exact OS versions and what passed before marking phase 1 complete.
+  Supported hooks, real app refusal and hosted tap access belong to phase 7.
 - Qualify a disposable VM or dedicated test Mac for macOS 15/26, MLX, microphone, Apple Speech where available,
   and the isolated HTTPS harness described below. Record the hardware fallback and its verification steps.
   Platform-contract uncertainty blocks freezing the installer. Pending signing credentials allow stub work.
 
 ### Phase 2: Build and review the protected packager
 
-**Impl files:** `scripts/build_app.sh`, new `scripts/package_release.sh`, new `.github/workflows/release.yml`, `.github/workflows/test.yml`, `app-version.json`, `CHANGELOG.md`
-**Test files:** `python_tests/test_app_recipes.py`, new `python_tests/test_release_packaging.py`
-**Test command:** `uv run pytest python_tests/test_app_recipes.py python_tests/test_release_packaging.py -q`
+**Impl files:** `scripts/build_app.sh`, new `scripts/package_release.sh`, new `.github/workflows/release.yml`, `.github/workflows/test.yml`, `app-version.json`
+**Test files:** `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, new `python_tests/test_release_packaging.py`
+**Test command:** `uv run pytest python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_release_packaging.py -q`
 **Goal:** Land the packager and reproducible private dry-run inputs on reviewed main.
 
-- Implement release signing, notarization and ZIP-only dry-run mode with stubs. Keep complete-draft mode closed
-  until assembly exists. Run the packager tests in macOS CI and skip only platform-dependent cases on Ubuntu.
+- Implement release signing, notarization and the ZIP-only private handoff with stubs. Keep four-asset mode closed
+  until assembly exists. Give the signing job `contents: read` and only the scoped S3 upload capability.
+  Pin the approved AWS authentication action and tool versions. Enforce the private handoff before real uploads.
+  Run packager tests in macOS CI and skip only platform-dependent cases on Ubuntu.
 - Test wrong ID, version/build, signer, Team ID, architecture, invalid nested signature, missing timestamp or
   hardened runtime and debugger entitlement. Each failure yields no publishable ZIP and a useful diagnostic.
 - Test non-Accepted results, timeout with a retained ID, absent ID, terminal logs, Accepted warnings,
   stapler/ticket failure and post-staple hashing. Test wrong refs, approvals, token scope and existing releases.
-- With the release owner, choose a private predecessor version/build above baseline 474 and known published builds.
-  Include its metadata and an Unreleased changelog note at Gate A. Reserve a higher version/build for Gate B.
-  Gate A reviews and merges workflow, packager and predecessor metadata together.
+  Exercise an older reachable commit with identical workflow bytes and one with a different workflow blob.
+  Record the job's own workflow ref/SHA. On mismatch, refuse before credential import, build or private upload.
+  Test partial upload, rejected overwrite, cross-run inputs and early four-asset mode refusal with stub storage.
+- With the release owner, choose a private predecessor build above baseline 474 and the phase 1 published-build
+  inventory, keeping version `0.4.1`. `python_tests/test_migration_contract.py` requires the newest numbered changelog
+  heading to equal the version, so Gate A changes only the build and adds no changelog entry. Reserve a higher
+  version, a numbered changelog entry and a higher build for Gate B. Gate A reviews and merges workflow, packager and
+  predecessor metadata together.
 
 ### Phase 3: Validate release tooling live
 
@@ -239,84 +355,128 @@ frozen-contract compatibility across published installers; review and merge orde
 **Test command:** `uv run pytest python_tests/test_app_recipes.py python_tests/test_release_packaging.py -q`
 **Goal:** Qualify real signing and produce an older private upgrade fixture.
 
-- Dispatch the Gate A workflow from protected `main`, using the approved Gate A SHA. Test denial, cancellation and
-  incomplete-draft refusal. Test existing and absent tags in a sandbox, including a wrong existing tag.
-- Once credentials and approval gates are verified, run the ZIP-only dry run. Record codesign, Gatekeeper, staple
-  and notary log evidence. Preserve this older notarized ZIP/hash and approved SHA as a private test fixture.
-  Use isolated disposable state and no public tag or draft. Record a post-import cancellation and controlled
-  packaging failure with cleanup evidence, runner disposal on forced termination, and log/artifact secret scans.
-- Verify draft-only success later with the complete phase 5 asset set. Record the qualified bundle layout and any
-  warnings. Phase 4 stub work may proceed after Gate A while live credentials are pending.
+- In a secret-free protected sandbox, test environment denial and the equivalent read-only workflow token.
+  Exercise publication denial with no tag and an owner-created matching tag. Test tag-creation denial separately.
+  Test refusal for a wrong existing tag, a published-version replacement, incomplete handoff and early four-asset mode.
+- After Gate A, verify the production upload role with an unsigned canary before importing signing credentials.
+  After verification and approval, dispatch the production workflow from protected `main` using the Gate A SHA.
+  Run the ZIP-only handoff. Extract the exact final ZIP, validate its app's staple, and test a fresh quarantined copy
+  with Apple ticket lookup unavailable. Record codesign, Gatekeeper and notarization evidence.
+  Retain the predecessor ZIP, handoff record and digest privately. Record retention and access evidence.
+- Record a post-import cancellation and controlled packaging failure with cleanup and secret scans.
+  Record the qualified bundle layout and warnings. Phase 4 stub work may proceed after Gate A while live signing is pending.
 
 ### Phase 4: Implement and review standalone installation and updates
 
-**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, `scripts/build_app.sh`, `scripts/package_release.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`
-**Test files:** new `python_tests/test_app_installer.py`, new `python_tests/test_distribution_contract.py`, `python_tests/test_release_packaging.py`, `python_tests/test_app_recipes.py`, `python_tests/test_docs.py`
-**Test command:** `uv run pytest python_tests/test_app_installer.py python_tests/test_distribution_contract.py python_tests/test_release_packaging.py python_tests/test_app_recipes.py python_tests/test_docs.py -q`
+**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, new `scripts/verify_release.sh`, new `scripts/candidate_harness.py`, `scripts/build_app.sh`, `scripts/package_release.sh`, `scripts/quit_app.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `docs/architecture.md`, `AGENTS.md`
+**Test files:** new `python_tests/test_app_installer.py`, new `python_tests/test_distribution_contract.py`, `python_tests/test_release_packaging.py`, `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, `python_tests/test_docs.py`, new `python_tests/fixtures/installer-v1/`
+**Test command:** `uv run pytest python_tests/test_app_installer.py python_tests/test_distribution_contract.py python_tests/test_release_packaging.py python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_docs.py -q`
 **Goal:** Gate B lands a complete, testable standalone candidate source tree.
 
 - Create `scripts/lib/`. Implement the qualified installer and local maintenance operations using the same lock,
-  ownership and transaction library. Embed it and the byte-identical quit helper in the versioned script.
-  Test the bundled installer. Document standalone maintenance, legacy migration and limitations.
-- Update developer recipes and smoke tests, including distinct alternate-ID outputs, paths and state.
-  Document adopted provenance and smoke behavior in the development guide. Include the platform and recovery matrix below.
-- Complete draft assembly for all four assets. Use the approved final version/build above the phase 3 fixture and
-  applicable published baseline. Finish changelog and candidate documentation here. Phase 3 must confirm the actual
-  predecessor before Gate B closes. Gate B reviews and merges every required source, test and release input.
+  ownership and transaction library. Adapt the quit helper to the qualified process identity and closed command set.
+  Embed the reviewed library and helper from the same commit in the versioned script.
+  Test the bundled installer. Document standalone maintenance, legacy migration and limitations, and update the
+  Packaging section of `docs/architecture.md` for the changed build, signing and quit flow.
+- Test isolation: tests run under a disposable `HOME` and source the library with overrides for tool paths and a
+  `checkpoint` hook for fault injection. The bundled `install.sh` pins tool paths read-only and defines a fixed no-op
+  checkpoint. Tests assert that exact body, reject other test hooks and show that supplied test overrides have no
+  effect. Real SIGKILL interruptions run against the bundled script under a disposable `HOME`.
+- Pin the frozen version-1 fixtures under `python_tests/fixtures/installer-v1/` with a digest manifest and a test that
+  fails on any change, like `python_tests/fixtures/migration-baseline.json`. `test_distribution_contract.py` also
+  validates the fields of a `docs/release-evidence/X.Y.Z.md` file (the existing `test_docs.py` globs only `docs/*.md`)
+  and the evidence-only PR's exact path allowlist. Land the required check at Gate B, before any evidence PR.
+  Trigger it on evidence-path changes or the evidence-only PR designation. Resolve the expected evidence filename
+  from the approved release version recorded in trusted base metadata. Run the trusted base validator against
+  the complete PR diff without executing PR code. Test deletions, renames, server pins, constraints and mixed edits.
+- Add `scripts/verify_release.sh` (prepublication recheck and public check, tested with stubbed `gh` and `curl`) and
+  `scripts/candidate_harness.py` (the fixed-host HTTPS harness), so Gate B reviews both. Run the installer, verifier
+  and harness tests in the `macos-app` job of `test.yml`; Ubuntu runs the full suite and skips macOS-only cases.
+- Update developer recipes and smoke tests, including distinct alternate-ID outputs, paths and state. Implement the
+  build record and the manual legacy path. Document adopted provenance and smoke behavior in the development guide.
+  Include the version-1 compatibility matrix and the channel outcome table from Testing Notes.
+- Complete private handoff assembly for all four assets. Use the approved final version/build above the phase 3 fixture and
+  applicable published baseline. Finish the numbered changelog entry (`python_tests/test_migration_contract.py`
+  passes only when the newest numbered heading equals the version) and candidate documentation here. Phase 3 must
+  confirm the actual predecessor before Gate B closes. Gate B reviews and merges every required source, test and
+  release input.
 
 ### Phase 5: Build the reviewed candidate and collect evidence
 
-**Impl files:** `docs/development.md`, `docs/migration.md`, this plan (evidence only)
+**Impl files:** this plan (evidence only)
 **Test files:** none (run the reviewed contract tests)
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_app_installer.py python_tests/test_docs.py -q`
 **Goal:** Exercise one reviewed commit and return the exact draft payload for owner approval.
 
-- Select the reviewed Gate B commit on `main` after phase 3 live checks. Run the protected workflow and record
-  draft ID, tag, SHA and all four asset hashes. Prove the complete workflow stops at draft and refuses replacement
-  of a published version. Resolve input changes through Gate B and rebuild/retest.
-- Test the exact installer and ZIP via a fixed-host HTTPS harness in a disposable VM or dedicated isolated test Mac.
-  Use a local server, isolated routing and a test CA trusted only on the disposable host. Verify hashes before each
-  test. When a VM lacks required hardware, repeat affected acceptance checks on the dedicated Mac with the same
+- Repeat the sandbox and production checks defined under "Review and merge gates" against the reviewed Gate B
+  SHA. Run the protected four-asset workflow. Verify its private handoff and show the workflow cannot create a
+  draft, publish or create tags. The owner creates a draft from the verified bytes and records its ID, tag, SHA and
+  four digests. Test the final ZIP and offline staple as in phase 3. If inputs change, the owner retires the stale
+  draft. Rebuild and retest from a fresh Gate B commit with a build above every previously signed build.
+- Test the exact installer and ZIP via the fixed-host HTTPS harness (`scripts/candidate_harness.py`) in a disposable
+  VM or dedicated isolated test Mac.
+  Run the Python server on a separate host or guest. Use isolated routing and a test CA trusted only by the clean
+  target. Record that the target has no usable Python interpreter, uv, just, Brew or Command Line Tools. Verify hashes before
+  each test. When a VM lacks required hardware, repeat affected acceptance checks on the dedicated Mac with the same
   harness and bytes. Keep production URLs and signature checks intact. Remove test CA and routing when finished.
   Phase 6 covers actual GitHub delivery.
 - Seed an older standalone installation using the private signed fixture with a matching lower version/build,
   canonical receipt and protocol state in disposable state. Verify the predecessor before installing the candidate.
   Test fresh install, in-place upgrade, ownership/quit behavior, recovery, Gatekeeper and state preservation.
-  Run standalone/developer lock parity here. Record permission and launch-at-login steps as evidence.
+  Run standalone/developer lock parity here. Also run the signer-change test from the installation contract
+  (self-signed developer install, verified removal, Developer ID candidate). Record permission and launch-at-login
+  steps in the evidence file.
 - Hand the exact draft payload and standalone evidence to the owner. Homebrew operation tests start in phase 7.
 
 ### Phase 6: Publish the approved standalone candidate and verify it
 
-**Impl files:** new `docs/release-evidence/X.Y.Z.md`
-**Test files:** none (execute reviewed tests and public smoke)
+**Impl files:** new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps), `README.md` (install command), all landed through the evidence-only PR
+**Test files:** `python_tests/test_distribution_contract.py` (evidence fields and path allowlist), `python_tests/test_docs.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_docs.py -q`
 **Goal:** Verify the approved bytes through the public install and update path.
 
-- Start after owner approval of the exact draft payload. While draft writers are excluded, recheck all four digests,
-  draft identity and commit, and resolve any existing tag. Publish only the matching draft.
-- Check the public tag and all four downloads against approval. Check browser quarantine and Gatekeeper on the ZIP.
-  Repeat fresh install and upgrade from the phase 3 fixture in disposable state. Confirm preserved app data.
-- Create `docs/release-evidence/` and record approval, the prepublication check and public verification. Stop tap work
-  on discrepancies. Use a new reviewed release to correct a published candidate.
+- Start after owner approval of the exact draft payload. While draft writers are excluded, run
+  `scripts/verify_release.sh` to recheck all four digests, draft identity and commit, and resolve any existing tag.
+  Publish only the matching draft.
+- Run `scripts/verify_release.sh` for the public check: the tag, all four downloads against approval, and the real
+  redirect chain against the embedded allowlist. Attempt to replace a published asset and record the refusal. Check
+  browser quarantine and Gatekeeper on the ZIP. Repeat fresh install and upgrade from the phase 3 fixture in
+  disposable state. Confirm preserved app data.
+- Create `docs/release-evidence/` and record approval, the prepublication check, public verification, the SHA-256 of
+  the published `install.sh` (phase 7 pins it) and the observed permission and launch-at-login steps. Land that file,
+  the `docs/migration.md` observed steps and the README install command in the evidence-only PR. Stop tap work on
+  discrepancies. Use a new reviewed release to correct a published candidate.
 
 ### Phase 7: Validate and add Homebrew
 
-**Impl files:** new `packaging/homebrew/pipecat-service-toolbar.rb`, new `scripts/render_homebrew_cask.py`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`, `CHANGELOG.md`, this plan
+**Impl files:** new `packaging/homebrew/pipecat-service-toolbar.rb`, new `scripts/render_homebrew_cask.py`, `.github/workflows/test.yml`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md`, `CHANGELOG.md`, this plan
 **Test files:** `python_tests/test_distribution_contract.py`, `python_tests/test_app_installer.py`, `python_tests/test_docs.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_app_installer.py python_tests/test_docs.py -q`
 **Goal:** Deliver a cask whose guard interoperates with published installers before merging the tap PR.
 
-- Confirm the tap owner/access and qualify hooks on disposable hosts. Show the mutation worker holds the lock
-  across install, update and uninstall, including refusal and cancellation. Record Brew versions and stop if hooks
-  cannot enforce the contract, including for shared destinations.
-- Create `packaging/homebrew/`. Implement and test `uv run python scripts/render_homebrew_cask.py --release-commit SHA --manifest FILE --output FILE`.
-  Read the guard source from the approved commit's `scripts/lib/install_app.sh` and resolve the canonical template
-  using the verified manifest. Render reproducibly. Record the source SHA and output hash.
-- Prove interoperability with every published installer and supported protocol state. A replacement installer release
-  alone cannot establish compatibility with older downloads. Keep the tap blocked until the matrix passes.
+- Confirm the tap owner/access and qualify supported hooks on disposable hosts in normal Brew mode. Use a synchronized
+  independent contender at the first mutation, between hooks, through rollback and after exit. Exercise reinstall,
+  refusal, cancellation and a real running app. Record app, installed cask and trust state before any repair.
+  Record Brew versions. Stop Homebrew delivery if hooks cannot enforce the contract. The cask refuses
+  a configured app directory that fails the exclusivity rule; test that `/Applications` is refused and
+  `--appdir=~/Applications` works.
+- After the evidence-only PR merges, create `packaging/homebrew/`. Implement and test
+  `uv run python scripts/render_homebrew_cask.py --release-commit SHA --manifest FILE --output FILE`.
+  Use the verified public manifest, the canonical Gate C template and the approved release SHA's
+  `scripts/lib/install_app.sh`. Render reproducibly. Record the release SHA, template hash and output hash.
+  Add a drift check to a
+  `test.yml` job that checks out full history (`fetch-depth: 0`), so `--release-commit SHA` resolves, then re-renders
+  and compares.
+- Prove interoperability with every published installer and supported protocol state, using the version-1
+  compatibility matrix in Testing Notes. Fetch each published `install.sh` from its public release and verify it
+  against the SHA-256 in its release evidence file. A replacement installer release alone cannot establish
+  compatibility with older downloads. Keep the tap blocked until the matrix passes.
 - Prepare the tap PR, test cask ownership, quit and data preservation, and run `brew audit --cask --strict --online`
-  and `brew style`. At Gate C review and merge the generator, cask and docs to `main`. Verify the tap PR matches the
-  reviewed output and verified public ZIP. Obtain separate owner approval before tap merge.
+  and `brew style`. At Gate C review and merge the generator, cask and docs to `main`. Gate C's `--fix` passes may
+  change the generator and cask, so re-render and rerun the matrix, audit and style on the post-gate commit, and
+  prepare the final tap PR from it. Verify the tap PR matches the reviewed output and verified public ZIP. Obtain
+  separate owner approval before tap merge. Mark hosted instructions pending at Gate C. Announce availability
+  only after the tap merge and a successful public install.
 
 ## Technical Specifications
 
@@ -339,16 +499,22 @@ No source build, package-manager dependency installation or cache migration belo
   The mutation worker must retain the lock descriptor until its last mutation, including when a wrapper dies.
   Qualify persistent `/usr/bin/lockf` mode and descriptor ownership on both supported OS versions. Reject the tool
   if wrapper death can release the lock first. Keep diagnostic metadata separate. A held lock times out without
-  mutation. PID and age do not grant recovery authority.
+  mutation. PID and age do not grant recovery authority. Ignore malformed contents in a safe diagnostic file.
+  Refuse an unsafe diagnostic path or a recognized newer diagnostic schema before recovery.
 - Qualify an archive inspector with a reliable type and path boundary. A name-only listing is insufficient.
   Prove the inspector and extraction tool agree about entries with ambiguous names and metadata before shipping.
 - Freeze version-1 fixtures for the protocol file, lock diagnostic, receipt, active journal and completed removal
   record. Each record has a schema version. Later releases read version 1. The first and later installers stop
-  on newer, corrupt or unsafe state before recovering it. Run the compatibility matrix below before release.
-- The receipt binds version, build, bundle ID, canonical path and channel (`standalone` or `developer`).
+  on newer, corrupt or unsafe authoritative state before recovering it. The lock diagnostic follows the rule above.
+  Run the version-1 compatibility matrix in Testing Notes
+  before release. Phase 4 pins the fixtures with a digest manifest.
+- The receipt binds version, build, bundle ID, canonical path, channel (`standalone` or `developer`) and verified
+  code identity. Freeze the identity format in phase 1 using the qualified signature probe. Include the verified
+  designated requirement and code directory hash for every supported architecture. Same-version developer
+  builds can replace distinct verified code. Treat identical identity and metadata as a verified no-op.
   Verify the bundle and receipt against each other and refuse unresolved Brew ownership. Only the owning route
   writes or clears its receipt under the lock. Keep the receipt's verified previous value in the journal.
-- The active journal contains operation ID and version, owning channel, path, original/target verified identities,
+- The active journal contains operation ID and version, owning channel, path, original/target verified code identities,
   stage and backup paths, and old/new receipt snapshots. Restrict paths to their expected canonical destination or
   explicitly named sibling. Validate snapshot schema and expected identity before using it. Commit the full intent
   atomically before each rename or receipt change.
@@ -362,11 +528,12 @@ No source build, package-manager dependency installation or cache migration belo
 | Stage ready or backup rename intended | Inspect stage, original and backup. Keep the verified old bundle in place or restore it if the rename happened. On a fresh install the old bundle and receipt must both be absent. |
 | New bundle rename intended | Compare stage and destination against the verified target identity. Finish when the verified new bundle is in place. Otherwise restore the verified old pair, or return to the verified empty state on a fresh install. |
 | Receipt replacement intended | Compare the live receipt to both snapshots. Commit or verify the new receipt after checking the new bundle. Keep the verified backup until the pair is consistent. |
-| Final cleanup intended | Verify the installed pair, then remove only the journal-owned stage/backup and clear the active record. |
+| Final cleanup intended | Verify the installed pair, then purge only its journal-owned stage and backup. Clear the active record after cleanup finishes. |
 
 - For user-invoked removal, expose documented local-only `install.sh --maintenance remove` and `cleanup` operations
-  and corresponding developer recipes using the same library. The exact owning release script must remain available.
-  Verify ownership and quit before moving the app. Document explicit recovery for receipt-less legacy copies using
+  and corresponding developer recipes using the same library. Authority follows the on-disk protocol version (see the
+  interface in Prerequisites), so any installer release that supports that version can run them. Verify ownership
+  and quit before moving the app. Document explicit recovery for receipt-less legacy copies using
   independently verified identity/provenance, and stop on unknown ownership. Do not offer a force/delete option.
 - Removal writes backup-move intent, then renames the bundle to a journal-owned non-`.app` sibling. Write receipt-removal
   intent before clearing the live receipt. If the receipt is still present require it to match the snapshot.
@@ -374,8 +541,11 @@ No source build, package-manager dependency installation or cache migration belo
 - Write the completed removal record before clearing the active record. Recovery of that transition is idempotent and
   leaves the completed record intact. A new transaction may then run. Exclude only the verified retained backup
   from duplicate scans and always check the original path for a new owner. Explicit cleanup revalidates the backup,
-  deletes only that backup and retires its completed record. Make cleanup retryable if the backup has already gone
-  after recorded cleanup intent. Preserve unrelated files and all app data.
+  then journals and atomically renames it into a private same-volume purge directory unique to the operation.
+  Record the verified root's device and inode before rename. On retry, validate the private purge path and root
+  identity again, then resume deletion without re-verifying the partially deleted bundle. Never follow symlinks.
+  Verify rename intent before retrying a move. Retire records only after the journal-owned purge root is absent.
+  Apply the same protocol to verified stage and backup cleanup after installation. Preserve ambiguous paths and app data.
 
 Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook) and
@@ -385,13 +555,28 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 
 | Producer | Consumer | Contract |
 |---|---|---|
-| Approved commit and signing environment | Release workflow and packager | Version/build authority, injected Team ID, ephemeral secrets; draft-only output |
+| Approved commit and signing environment | Release workflow and packager | Version/build authority, injected Team ID, ephemeral signing and scoped upload credentials |
 | Packager | Standalone installer and cask | Identical final ZIP/hash, manifest and bundled installer from one commit |
 | Packager | Standalone installer | `install.sh` embeds `scripts/lib/install_app.sh` and `scripts/quit_app.sh` (child-process payload) from the same commit |
+| Signing workflow and private S3 bucket | Release owner | One complete handoff binds repository, run ID and attempt, approved SHA, tag, workflow blob, exact manifest and digests |
+| Release owner | GitHub draft | Owner credential uploads only the verified four-asset handoff and binds the draft to the approved SHA and tag |
 | Installer library at the selected release commit | Cask | A generator renders the cask guard logic from the library; the signed bundle carries no helper |
-| Ownership/lock logic and quit helper | Standalone, developer recipes (`app-install`, `app-open`, `ui_smoke.sh`) and cask | One lock protocol; verify ownership before quit/mutation; abort on uncertainty |
+| Shared resolver, ownership/lock logic and qualified quit helper | Standalone, direct local builds, developer recipes and cask | One lock protocol. Verify ownership and exact process identity before quit or mutation. |
 | Frozen contracts (token, lock primitive, versioned state) | Every published installer and the cask | Version-1 state honoured by later installers; newer state stops without recovery |
 | Candidate acceptance | Release owner | Approval binds draft ID, commit, tag and four digests. Recheck immediately before publishing. |
+| Approval file and release evidence | `scripts/verify_release.sh` | Prepublication recheck and public check read one approval record and exit non-zero on drift; the workflow never publishes |
+| `scripts/candidate_harness.py` on a separate host | Disposable acceptance target | Serves exact bytes at fixed URLs across isolated routing. The target keeps stock macOS tools. |
+
+### Review decisions
+
+- Phase 1 can use a disposable local tap and closes only the lock-primitive proof. Phase 7 covers supported
+  Homebrew hooks, real quit refusal and interoperability with every published installer.
+- Decision (grilled): Both routes refuse any destination that fails the exclusivity rule. The cask refuses a shared
+  configured app directory, including Brew's default `/Applications`, and users install with `--appdir=~/Applications`.
+- Candidate inputs land at Gate B. The evidence-only PR after public verification accepts only the three
+  documented paths. Phase 7 uses the merged evidence when pinning earlier installer releases.
+- Decision (grilled): Gate A merges the reviewed workflow, packager and predecessor metadata. Phase 3 passes the live
+  trust checks and produces the private predecessor fixture. Gate B lands every candidate input.
 
 ## Architecture & Call Flow
 
@@ -401,10 +586,13 @@ graph TD
     Approval["Protected signing approval"] --> Workflow
     Workflow --> Package["Build, notarize, staple and package"]
     Helpers["Installer library and bounded quit helper"] --> Package
-    Package --> Draft["Complete private draft"]
+    Package --> Store["Private S3 handoff"]
+    Store --> DraftOwner["Release owner verifies and uploads draft assets"]
+    DraftOwner --> Draft["Complete private draft"]
     Draft --> Candidate["Standalone candidate acceptance"]
     Candidate --> Owner["Owner approves exact draft and rechecks all inputs"]
-    Owner --> Release["Immutable public release"]
+    Owner --> Verify["verify_release.sh prepublication recheck"]
+    Verify --> Release["Immutable public release"]
     Release --> CLI["Standalone installer"]
     Release --> Public["Standalone public-download checks"]
     Public --> BrewCheck["Later: cask feasibility, parity and online audit"]
@@ -413,8 +601,9 @@ graph TD
     Tap --> Cask["Homebrew cask"]
     CLI --> Guard["Shared lock, ownership, verification and quit"]
     Cask --> Guard
-    Dev["just app-install"] --> Guard
+    Dev["Direct build and just app-install"] --> Guard
     Open["just app-open and ui_smoke.sh"] --> Guard
+    Maint["install.sh --maintenance remove or cleanup"] --> Guard
     Guard --> Install["Permitted journaled mutation or developer launch"]
 ```
 
@@ -423,6 +612,7 @@ sequenceDiagram
     actor Owner
     participant Workflow
     participant Packager
+    participant Store as Private S3 handoff
     participant Acceptance
     participant Release
     participant Tap
@@ -430,15 +620,18 @@ sequenceDiagram
     participant State as Lock and ownership state
     Owner->>Workflow: Select commit from reviewed main and approve protected signing
     Workflow->>Packager: Build, sign, notarize, staple, assemble all assets
-    Packager-->>Acceptance: Complete private draft and hashes
+    Packager->>Store: Create scoped assets and write the handoff record last
+    Owner->>Store: Verify one approved run and its exact assets
+    Owner->>Release: Create draft and upload verified bytes
+    Release-->>Acceptance: Complete draft and approved hashes
     Acceptance-->>Owner: Standalone candidate evidence
-    Owner->>Release: Verify approved draft ID, SHA, tag and four digests
+    Owner->>Release: Run verify_release.sh recheck of approved draft ID, SHA, tag and four digests
     Owner->>Release: Publish matching draft
     Acceptance->>Release: Fetch public assets and verify delivery
     Acceptance-->>Owner: Standalone public checks pass
     Installer->>Release: Fetch pinned version and validate download
     Installer->>State: Acquire lock and validate owner, running copy and journal
-    Installer->>Installer: Verify staged app, request bounded graceful quit
+    Installer->>Installer: Verify staged app and request bounded quit of the verified process
     Installer->>State: Journal intent, reconcile or commit bundle and receipt, release lock
     opt Later Homebrew phase
         Acceptance->>Tap: Prove hooks, artifact parity and online audit
@@ -449,38 +642,49 @@ sequenceDiagram
 
 | Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
 |---|---|---|---|---|
-| Build and package | Reviewed manual dispatch and signing approval | Approved SHA, version/build, temporary credentials | Cleanup or runner disposal. Retain signed assets and hashes. | CI job |
-| Candidate acceptance | Complete draft available | Exact standalone assets and isolated app state | Evidence tied to commit/hashes; test state discarded | Disposable test session |
-| Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Immutable release, public-check evidence and `docs/release-evidence/X.Y.Z.md` | Owner approval, then public test session |
+| Build and package | Reviewed manual dispatch and signing approval | Approved SHA, version/build, temporary credentials | Cleanup or runner disposal. Store private assets and handoff record. | CI job |
+| Draft creation | Owner retrieves a complete private handoff | Run identity, commit, tag and verified asset digests | Draft ID bound to the selected run and assets | Owner workstation |
+| Candidate acceptance | Complete draft available | Exact standalone assets and isolated app state | Evidence tied to commit and digests. Discard test state. | Disposable test session |
+| Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Immutable release, public-check evidence and `docs/release-evidence/X.Y.Z.md` (landed by the evidence-only PR) | Owner approval, then public test session |
 | Homebrew delivery | Phase 6 complete and phase 7 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence; separately approved tap PR | Later test session and owner approval |
 | Install/upgrade | User invokes standalone or Brew | Verified artifact, receipt/Brew metadata, common lock | Bundle/receipt or recoverable backup persisted; lock released | Local process |
-| Developer install | User invokes local recipe | Common lock, ownership, local source and signing identity | Verified developer bundle and receipt only; managed destinations refused | Local process |
+| Developer build and install | User invokes build script or local recipe | Common lock, bundle-specific build paths, ownership and signing identity | Build output or verified developer bundle and receipt. Refuse managed destinations. | Local process |
 | Developer open/smoke | User invokes `just app-open` or `scripts/ui_smoke.sh` | Common lock, ownership and bundle ID | Open checks owner before quit. Smoke refuses an existing running copy and quits only its own launch. | Local process |
+| Removal and cleanup | User runs `install.sh --maintenance` or the developer recipe | Common lock, receipt, journal, bundle path and running-instance state | Retained backup and completed removal record, or the restored pair; retries converge | Local process |
 
-The release installer embeds its library and bounded quit helper from the selected commit;
-it fetches no executable helper from the main branch. The cask receives guard logic generated from the same library.
-Credentials exist only in protected signing jobs; neither installers nor the tap receive signing secrets.
+The release installer embeds its library and bounded helper from the selected commit. The cask receives guard logic
+generated from the same library. Keep signing credentials in the protected job and release-write credentials on
+the owner workstation.
 
 ## Testing Notes
 
 - Run the bundled installer under stock macOS Bash 3.2. Exercise real tools for archive, state and checksum parsing.
   Stub network, signing, Gatekeeper, Apple events and Brew for deterministic failure cases. Repeat trust and quit
   acceptance with real tools on disposable hosts. Assert every refusal preserves unrelated files and skips quit,
-  mutation and launch as applicable.
-- Cover unsupported OS/CPU, malformed and mismatched version, invalid manifest, checksum or signer, unsafe ZIP names,
+  mutation and launch as applicable. A test fails on commands outside the closed allowlist, including child commands.
+  Verify that the fixed no-op checkpoint cannot activate any test override. Exercise the bundle with a hostile `PATH`.
+- Cover unsupported OS/CPU (a Rosetta-translated shell on Apple silicon is accepted; a real unsupported CPU is
+  refused), malformed and mismatched version, invalid manifest, checksum or signer, unsafe ZIP names,
   types and symlinks, redirect rejection, partial/oversized body, disk full and unsafe or shared destinations.
   Test alternate developer IDs against the protected path, path aliases, shared-signer receipt-less apps without
   independent provenance, and inactive legacy custom copies discovered by the documented migration procedure.
+- Exercise the shipped CLI with missing, duplicate, unknown and conflicting arguments. Verify that help and valid
+  maintenance use no network. For a verified standalone receipt, require an exact version, build and code identity
+  match for a no-op. For an upgrade require both a higher version and higher build. Test same-version/different-build,
+  same-version/different-code, lower-version/higher-build, higher-version/equal-or-lower-build and higher-both cases.
+  Assert that each refusal preserves the receipt and issues no quit.
 - Use version-1 valid and invalid state fixtures. Run future versions on version 1. Run the first installer against
   separate newer protocol, lock diagnostic, receipt, active journal and completed record cases. Reject malformed,
   duplicate, wrong-channel and mismatched identity records. Assert no quit or mutation on invalid evidence.
-- Interrupt install, upgrade, removal, recovery and cleanup immediately before/after each mutation and journal
-  transition. Retry recovery repeatedly. Verify convergence to exactly one verified installed bundle and receipt,
-  or preserved evidence where authority or identity is uncertain. Exercise a retained removal backup across a new
-  installation, validate original-path checks and prove cleanup is limited to the recorded backup.
-- Race standalone and developer operations across destinations, including wrapper death during mutation. Verify the
-  lock inode persists and a second writer cannot enter. Test exclusive path rejection under another user. Phase 7
-  adds real Brew races and cross-release cask compatibility. Test wrapper or hook cancellation on every route.
+- Interrupt install, upgrade, removal, recovery and cleanup immediately before and after each mutation and journal
+  transition. Define the expected live bundle, receipt, journal and backup state for every checkpoint. Cover a verified
+  installed pair, verified empty fresh-install rollback, verified removal with retained backup, finished purge and
+  preserved evidence on uncertainty. Retry after partial purge and prove deletion stays inside the verified purge root.
+  Exercise a retained removal backup across a new installation and validate original-path checks.
+- Race standalone, direct developer builds, install, open and smoke across destinations. Verify that the lock inode
+  persists and a second writer cannot enter, including after wrapper death. Test distinct IDs and paths, a launch
+  before a rename, same-version developer recovery with distinct code hashes, and exclusive path rejection.
+  Phase 7 adds real Brew races and cross-release compatibility. Test cancellation on every route.
 
 | Existing state | Standalone installer | Developer install | Cask in phase 7 |
 |---|---|---|---|
@@ -490,23 +694,42 @@ Credentials exist only in protected signing jobs; neither installers nor the tap
 | Verified foreign ownership | Refuse | Refuse | Refuse |
 | Receipt-less with independent developer provenance | Refuse | Adopt only on explicit request | Refuse |
 | Unknown ownership or additional/unresolved running copy | Refuse | Refuse | Refuse |
+| Receipt path differs from the requested destination | Stop and name the recorded path | Stop and name the recorded path | Refuse |
+| Running copy is the repository `build/` output | Refuse mutation | Quit and replace allowed | Refuse |
+| Destination fails the exclusivity rule (shared or admin-writable) | Refuse | Refuse | Refuse |
+
+Version-1 compatibility matrix (each cell is a test; a refusal never quits or mutates):
+
+| Record | Valid version 1 | Newer version | Corrupt or unsafe | Wrong channel or identity |
+|---|---|---|---|---|
+| `protocol` file | Every installer proceeds | Stop before recovery | Stop | Not applicable |
+| Lock diagnostic | Read for diagnostics | Stop on a recognized newer schema | Ignore malformed contents at a safe path. Stop on an unsafe path. | Not applicable |
+| Receipt | Honoured by every installer | Stop | Stop | Refuse |
+| Active journal | Recovered by every installer | Stop and preserve | Stop and preserve | Stop and preserve |
+| Completed removal record | Honoured; backup excluded from scans | Stop | Stop | Stop |
+
+The matrix runs against the first published installer and every later one. Later releases fetch earlier installers
+from their public releases by a pinned SHA-256.
 
 - Developer smoke tests cover refusal of preexisting running processes and launch/quit under the lock. Developer
   open tests cover bounded quit of a verified developer copy and refusal of standalone/Brew copies.
-- Phase 5 tests install and real upgrade with the private signed predecessor on macOS 15 and 26, including no Brew
-  or Command Line Tools. Test Terminal and SSH entry, blocked Apple events, quit refusal and timeout. Exercise
+- Phase 5 tests install and real upgrade with the private signed predecessor on clean macOS 15 and 26. Test Terminal
+  and SSH entry, blocked permission, quit refusal, timeout and same-ID replacement before quit dispatch. Exercise
   Microphone and launch-at-login on both versions and Apple Speech on 26. Record prompts or manual resets per OS.
   Resolve any missing host capability using the qualified hardware fallback.
 - Observe the first app/service start with a ready environment. Capture child-command and download traces, environment
   fingerprints and cache sentinels. Use an isolated positive control that attempts a refresh to prove the trace
   would detect `uv sync` and downloads. Confirm that candidates preserve server pins.
-- Phase 3 tests live approval, failure/cleanup and tag cases. Phase 5 tests successful draft-only creation, security
-  of a complete asset set and two-route lock parity. Phase 6 compares all four public assets plus tag to approval.
+- Phase 3 tests live approval, cleanup, upload access and separate tag and release denial. Phase 5 tests the owner-only
+  draft flow, one complete private handoff and two-route lock parity. Phase 6 compares all public assets and the tag
+  to approval. Test verifier refusal for a wrong draft ID, SHA or tag, each changed digest, missing, extra and duplicate
+  assets, loss of draft status and an existing tag pointing elsewhere. Assert that no publish action follows refusal.
   Test both candidate and public Gatekeeper. Run compile, lint and test gates per `AGENTS.md` before a PR.
 - Phase 7 tests Brew-owned quit refusal and timeout for supported upgrade, reinstall and uninstall paths, including
   `--force`, `--adopt` and `upgrade --greedy` as applicable. Test foreign-owner refusal separately. Verify unchanged
-  bundle and Brew metadata on refusal. Exercise Homebrew first-run quit, channel switching, normal uninstall and
-  zap on a disposable host. Zap may remove only the app's documented preferences and logs.
+  app contents and installed cask state on refusal. Snapshot individual and whole-tap trust before repair.
+  Exercise Homebrew first-run quit, channel switching, normal uninstall and zap on a disposable host.
+  Zap may remove only the app's documented preferences and logs.
 
 ## Acceptance Criteria
 
@@ -519,25 +742,37 @@ Credentials exist only in protected signing jobs; neither installers nor the tap
 - First-run traces show no refresh or model download for a ready environment. Fingerprints, server pins and shared
   caches are preserved. The documented migration restores Microphone and launch-at-login on both systems and
   Speech permission and recognition on macOS 26.
-- Gate A passes the trust checks and provides the private predecessor. Gate B lands every candidate input.
-  The protected workflow produces a complete draft from the reviewed commit. Phase 5 passes standalone acceptance.
-- The prepublication check confirms the approved draft ID, SHA, tag and four digests. Phase 6 verifies all published
-  assets and tag plus quarantine/Gatekeeper, installs and upgrades from the public release, and records approval evidence.
+- Gate A merges the workflow, packager and predecessor metadata after a qualified private handoff canary.
+  Phase 3 passes trust checks and produces the private predecessor. Gate B lands every candidate input. Phase 5
+  repeats the trust checks and verifies a complete private handoff from the Gate B commit. The owner creates the
+  draft from those bytes. Phase 5 passes standalone acceptance.
+- `scripts/verify_release.sh` confirms the approved draft ID, SHA, tag and four digests before publication. Phase 6
+  verifies all published assets and tag plus quarantine/Gatekeeper, installs and upgrades from the public release,
+  and records approval evidence. An evidence-only PR lands the release record and the two other allowlisted changes.
 - Negative signing, denial, cancellation and secret checks pass. Homebrew operation tests belong to phase 7.
 
 ### Later delivery — Homebrew
 
 - Both routes use the same ZIP/hash on macOS 15 and 26. Supported hooks hold the common lock and respect
   the ownership and quit rules, including across all published standalone installers. A failed proof stops delivery.
+  The cask refuses a shared app directory, including `/Applications`, and the documented install uses `--appdir=~/Applications`.
 - Verified channel switching, uninstall and zap preserve everything outside the documented removal scope.
-- Cask audit/style and parity checks pass, Gate C merges the canonical generator/cask and the owner separately
-  approves the matching tap PR.
+- Cask audit/style and parity checks pass. Gate C merges the canonical cask and generator. The owner separately
+  approves the matching tap PR. The hosted install succeeds before the project announces cask availability.
 
 <!-- reviewed: YYYY-MM-DD @ <hash> -->
 
 ## Progress
 
 Planning only. Renamed and expanded from the original Homebrew plan; no installer or release code implemented.
+
+- [ ] Phase 1 — Owner qualifies tools and release prerequisites
+- [ ] Phase 2 — Gate A merges the protected packager
+- [ ] Phase 3 — Owner validates signing and records the private predecessor
+- [ ] Phase 4 — Gate B merges the standalone candidate inputs
+- [ ] Phase 5 — Owner records candidate evidence and approval payload
+- [ ] Phase 6 — Owner publishes, verifies public delivery and merges release evidence
+- [ ] Phase 7 — Gate C merges the cask and owner verifies hosted delivery
 
 ## Findings
 
@@ -565,6 +800,19 @@ Gate B now includes every candidate input. The approval record binds publication
 Installer fixes cover lock lifetime, destination exclusivity, ownership and all mutation/recovery boundaries.
 Phase-scoped evidence covers the signed upgrade fixture, credential cleanup, first-start behavior and later cask compatibility.
 This revision supersedes the previous review hash. Platform probes and live release evidence remain implementation tasks.
+
+Review run 20261118T000956 (2026-11-18; 53 findings: 0 Critical, 28 Important, 25 Minor; 4 contradictions) applied.
+Decisions (grilled), all accepted as recommended: (1) phase 1 runs a minimal cask-hook check before the lock primitive
+freezes, and a failure found later stops Homebrew delivery instead of forcing a new installer release (this supersedes
+decision 1 of run 20261117T190017); (2) both routes refuse shared destinations and the cask needs `--appdir=~/Applications`;
+(3) candidate inputs land at Gate B and evidence/observed docs land through one evidence-only PR after phase 6;
+(4) the Gate A acceptance criterion now credits phase 3 with the trust checks and the predecessor.
+Other fixes: predecessor keeps version 0.4.1 with a raised build so the changelog contract test passes; workflow split into
+`build-sign` and `draft-upload` jobs with a `v*` tag ruleset; new `scripts/verify_release.sh` and `scripts/candidate_harness.py`;
+build-record file for developer adoption; frozen maintenance grammar; closed command allowlist; compatibility matrix.
+The `docs/distribution-plans` reference was a branch name, so that finding was addressed as wording only.
+No waivers. The lenses read the plan from disk (not inline blocks) and `rubric.md` was not re-read; re-run `/review-plan`
+because the contract changed substantially.
 
 ### Phase 1 probe evidence — 2026-11-18
 
@@ -623,9 +871,25 @@ the guest's `pipecat-cask-spike-r3-20261118-4776-19n21u1` evidence directory. Th
 hooks and a simulated refusal. Continuous exclusion across the production lifecycle, supported hooks and a
 real running app refusing to quit still need validation.
 
+### Review follow-up — 2026-11-19
+
+Addressed all 50 findings from run `20261119T072821Z-utm-distribution`. The following decisions supersede
+the corresponding earlier review notes above.
+
+- The protected workflow writes signed bytes to a private S3 handoff with scoped upload credentials.
+  The release owner verifies one run and controls draft creation, tag creation and publication.
+- Each implementation gate runs separately. The owner records evidence at phase boundaries.
+  Gate B lands the evidence-only PR allowlist before it is needed. Phase 7 pins inputs after that evidence merges.
+- The installer targets one verified running process and applies the command allowlist to its children.
+  Direct build shares the developer lock. Finder and login launch remain a documented residual race.
+  Verified code identity and a private purge directory make transaction retries distinguishable.
+- Phase 1 accepts a disposable local tap and records the remaining lock-primitive checks. Phase 7 proves
+  continuous exclusion with supported hooks, real quit refusal and the approved Brew trust behavior.
+
+The revised contract awaits independent re-review. Release configuration and production behavior remain live phase checks.
+
 ## Issues & Solutions
 
-The earlier plan assumed a simple cask upgrade respected quit confirmation. Phase 7 requires evidence before Homebrew delivery.
 
 ## Final Results
 
