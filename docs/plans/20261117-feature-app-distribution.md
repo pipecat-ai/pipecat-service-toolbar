@@ -1,6 +1,6 @@
 # Task: Ship standalone installation and updates, then add Homebrew
 
-**Status**: Reviewed — findings addressed and accepted
+**Status**: Planned — public alpha workflow revised, review pending
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
@@ -10,9 +10,9 @@
 
 ## Objective
 
-Publish one signed, notarized Apple-silicon app archive. Deliver the standalone
-command-line installer and manual updates first. Add a Homebrew cask later,
-consuming the same archive and checksum.
+Publish one signed, notarized Apple-silicon app archive. Ship the standalone
+command-line installer and manual updates first as a GitHub prerelease. Add a Homebrew
+cask later using a stable release's same archive and checksum.
 End users need neither a source checkout nor Xcode, uv, Python or just installed.
 The standalone release requires neither a Homebrew tap nor a cask delivery. It does require the Homebrew-facing
 contracts that published installers freeze: cask token, lock primitive and versioned state (see "Frozen contracts").
@@ -50,14 +50,16 @@ Verified against the current checkout on 2026-11-17:
 
 ## Prerequisites and decisions
 
-- Confirm the release owner, Apple Developer membership, Developer ID Application
-  certificate, expected Team ID and notarytool API-key access. No credentials belong in this plan.
-  Their availability is unverified. Reviewed mock implementation may proceed without credentials;
-  real signing requires verified credentials, a protected environment and approved version/build metadata.
-- The release owner must approve and qualify an owner-controlled private S3 bucket and a GitHub OIDC
-  upload role before Gate A. Phase 1 records the account, access policy, required roles and a retention period that
-  outlasts phase 6 completion plus a 30-day re-entry margin. Phase 5 checks the retention date before it starts.
-  The plan assumes no existing bucket or access. If the private handoff cannot be qualified, stop before Gate A.
+- Confirm the release owner and Pipecat's Apple Developer membership and Team ID. The Account Holder
+  provisions an exportable Developer ID Application signing identity. CI needs the certificate and private
+  key in a password-protected `.p12`, and an App Store Connect team API key (`.p8`, Key ID and Issuer ID)
+  for notarization. Store secrets in the protected `release-signing` environment when Phase 3 permits it.
+  Reviewed mock implementation may proceed while credentials are pending.
+- Use a GitHub Actions artifact for the public alpha handoff and GitHub Releases for the public download.
+  Anyone signed into GitHub with read access can retrieve the candidate artifact before publication.
+  Accept that visibility for alpha ZIPs and release files. Keep the artifact upload in the manual
+  release workflow. Regular PR and push builds continue to run normal CI.
+  See [artifact access](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
 - Proposed tap: `pipecat-ai/homebrew-tap`, pending owner approval and repository/access checks.
   Tap provisioning is a phase 7 dependency only. The cask token is fixed now as `pipecat-service-toolbar`
   because the standalone installer detects Brew ownership by it. Use a project-owned tap initially;
@@ -117,11 +119,11 @@ Verified against the current checkout on 2026-11-17:
   start after Gate A while signing is pending. A defect that live signing exposes goes back through Gate A (a focused fix
   branch, review and regular merge), and the affected phase 3 checks repeat. Every signed run, including a Gate A
   re-entry, reserves a build above the published baseline and all previously reserved signing builds.
-  The private predecessor stays valid as long as its version and build are lower than the candidate's.
+  The signed predecessor stays valid as long as its version and build are lower than the candidate's.
 - Phase 5 starts after Gate B and the phase 3 live checks pass. It repeats the secret-free denial checks against the
   Gate B workflow in a protected sandbox. "Equivalent" means a recorded settings diff against production (environment
-  rules and branch policy, rulesets, immutable releases, Actions permissions, organisation policies, role trust and
-  bucket policy) with each difference explained. On the reviewed Gate B SHA, repeat the production upload check with
+  rules and branch policy, rulesets, immutable releases, Actions permissions and organisation policies)
+  with each difference explained. On the reviewed Gate B SHA, repeat the artifact upload check with
   an unsigned canary. Exercise cancellation and controlled failure after signing-credential import but before app
   signing and check cleanup and secret scans. Run one signed four-asset candidate and verify its ZIP. Phase 3
   qualifies the signed ZIP-only path. Changes to candidate inputs go back through Gate B and require fresh evidence.
@@ -137,7 +139,7 @@ Verified against the current checkout on 2026-11-17:
   and all changed paths. Any change under `docs/release-evidence/`, or any `release-evidence/` head branch,
   requires a matching evidence PR. The success branch requires exactly the three paths above for the approved
   version. The `-failed` branch adds only the failure record for the Gate B version. The `-homebrew` branch
-  adds only the Homebrew record for a version with passing standalone evidence on the trusted base.
+  adds only the Homebrew record for a stable version with passing standalone evidence on the trusted base.
   Evidence records are append-only. Reject evidence edits, renames, deletions, unknown paths and wrong
   branches. Ordinary PRs pass this check when their complete diff leaves the evidence directory untouched. GitHub may
   suppress this trigger for SHA-like branch names. A missing verdict blocks merge. Document reopening the change
@@ -162,11 +164,11 @@ Verified against the current checkout on 2026-11-17:
   Gatekeeper checks are the only gate. Phase 6 tests quarantine on a browser-downloaded ZIP.
   Validate the exact uv and server-wheel layout with a real submission. Record whether the wheel contains native code.
 - Submit a temporary ZIP with `xcrun notarytool submit`, persist the returned submission ID, and poll to a terminal
-  status with a bounded deadline. On timeout keep the ID for follow-up and withhold publishable output.
-  Archive the log once available and review warnings even on Accepted. Record submission errors separately when
-  Apple returns no ID. Write the ID promptly to private, attempt-scoped diagnostics, and add a scrubbed log or
-  failure record as available. Diagnostics use separate conditional S3 objects outside the release handoff.
-  Phase 3 proves owner retrieval after timeout and failure. On acceptance staple and validate the app, then
+  status with a bounded deadline. Record the submission ID in the attempt log as soon as Apple returns it.
+  On timeout keep the ID for follow-up and withhold publishable output. Record the status and a scrubbed
+  failure category if Apple returns no ID. The owner retrieves the detailed log from Apple's authenticated
+  notary service, archives it separately and reviews warnings even on Accepted. Phase 3 qualifies retrieval
+  after timeout and failure. On acceptance staple and validate the app, then
   ZIP and hash the final bytes.
 - The proposed bundle and plain-text Bash downloader have distinct trust paths. Phase 1 resolves whether
   Apple's network-installer notarization guidance applies to the downloaded script run through Bash.
@@ -176,30 +178,30 @@ Verified against the current checkout on 2026-11-17:
 - Publish exactly four assets: `Pipecat-Service-Toolbar-X.Y.Z-arm64.zip`, `SHA256SUMS`, `install.sh` and
   the plain-text `release-manifest.txt`. Use an exact schema for schema version, app version/build, bundle ID, Team ID,
   architecture, minimum macOS, filename and SHA-256. Reject duplicate, missing or unknown keys and invalid values.
-  Check the final bytes before private handoff. Every asset must be under GitHub's 2 GiB per-asset limit.
+  Check the final bytes before uploading the workflow artifact. Every asset must be under GitHub's 2 GiB per-asset limit.
   Test below, at and above the limit. See [GitHub release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas).
   `SHA256SUMS` lists the ZIP, the manifest and `install.sh` (not itself) in `shasum -a 256` format: digest, two spaces,
   name, sorted by name, no other lines. The installer verifies the ZIP and manifest entries and requires the ZIP digest
   to equal the manifest's; the `install.sh` entry serves public checks, because a script cannot verify itself.
   Parse both as data. Verify the bundle's signature and Gatekeeper status.
-- The tag `vX.Y.Z` matches `app-version.json`. Public candidates exceed build 474, the private predecessor, and the
+- The tag `vX.Y.Z` matches `app-version.json`. Label the first release an alpha with GitHub's prerelease flag.
+  Keep the numeric version and tag format for the version-pinned installer. A stable release gets a new
+  version and build. Public candidates exceed build 474, the signed predecessor, and the
   maximum known published build. Phase 1 builds the inventory from the GitHub release list and any manifests, and
   records explicitly that none exists if none does. Inventory legacy builds without manifests from trusted release
   records and stop real release preparation if the maximum is uncertain. Require GitHub immutable releases and a
   workflow overwrite guard.
-- Keep a durable owner-controlled signing ledger outside the repo. Before approving a signing attempt, record its
+- Keep a durable owner-controlled signing ledger in Pipecat-managed storage outside the public repo.
+  Before approving a signing attempt, record its
   approved SHA, run ID and attempt with a build higher than the published baseline and all prior ledger entries.
   The owner checks the reviewed build against that maximum, records the compared values, and withholds
   deployment approval for a lower or equal build even if its reservation key is unused.
-  Serialize approvals and wait for the preceding signing attempt to end before approving the next. Under the
-  protected environment, each signing run conditionally creates an immutable S3 reservation keyed by repository
-  and build number before importing signing credentials. Bind it to the same SHA, run ID and attempt. A retry, error or
-  cancellation never frees the number. A collision stops before signing. The build number comes only from the
-  reviewed `app-version.json`. Unsigned canaries and pre-signing cleanup probes cannot enter the signing path
-  or consume a build number.
-  Keep reservation objects under a separate prefix with no expiration or cleanup rule. Forbid deletion and
-  delete markers for the reservation prefix. Phase 1 proves that reservations stay current and continue to
-  reject reuse after handoff cleanup. Stop signing if the ledger or reservation history is uncertain.
+  Serialize approvals and wait for the preceding signing attempt to end before approving the next.
+  The owner ledger enforces uniqueness across fresh dispatches independently of artifact retention.
+  A retry, error or cancellation consumes the recorded build. Gate the signing job itself on run attempt 1
+  so a partial rerun cannot reach signing. Require a fresh dispatch with a new reviewed build and approval.
+  The build number comes only from the reviewed `app-version.json`. Unsigned canaries and pre-signing
+  cleanup probes cannot enter the signing path or consume a build number. Stop signing if the ledger is uncertain.
 - Run the credentialed workflow using its reviewed definition on protected `main`. Use manual dispatch with a full
   approved commit SHA reachable from protected `main`. Validate the selected commit and its version before executing
   build scripts or importing credentials. Bind the two code sources: the workflow records the blob hash of its own
@@ -220,8 +222,8 @@ Verified against the current checkout on 2026-11-17:
   an ephemeral keychain and private key files. Clean up on normal exits, errors and catchable cancellation. Forced
   termination relies on disposal of the ephemeral runner; that cannot be observed on a GitHub-hosted runner, so cite
   GitHub's documentation for it instead of recording evidence.
-- The protected signing workflow uses GitHub `contents: read` and short-lived OIDC credentials scoped to private
-  storage. Only the release owner creates drafts, uploads release assets, creates `v*` tags and publishes. Keep the
+- The protected signing workflow uses GitHub `contents: read` and the runner-scoped Actions artifact upload.
+  Only the release owner creates drafts, uploads release assets, creates `v*` tags and publishes. Keep the
   owner credential outside CI. Enable `Restrict updates` and `Restrict deletions` for `v*` with an empty bypass
   list. Leave `Restrict creations` disabled so the owner's publish action can create the tag. GitHub gives
   principals with repository write access rights to create tags and publish releases. Phase 1 inventories users,
@@ -232,38 +234,39 @@ Verified against the current checkout on 2026-11-17:
   SHA. Separately test tag-creation denial and publication denial for the workflow token and any other operator
   identity being checked, with a missing and an owner-created tag as applicable. Test that the ruleset also
   bars moving and deleting an owner-created tag before publication.
-- The signing job uploads directly to the private S3 bucket. It writes a ZIP-only handoff in dry-run mode, the
-  exact four-asset set in candidate mode and an unsigned object in canary mode. Use a unique repository/run ID/run
-  attempt prefix and conditional create-only writes. Write the handoff record last. Bind it to repository, run ID,
-  attempt, mode, workflow blob, approved SHA, tag, exact names and digests. A canary record is rejected for drafts.
-  The workflow writes a digest-only record to a dedicated step and mirrors it in the human-readable run summary.
-  The owner runs `scripts/release_handoff.sh verify` to retrieve the private files and compare their digests, the
-  private record digest and approved inputs to the exact attempt's log record and GitHub run metadata. Compare
+- Upload a single Actions artifact with the ZIP in dry-run mode, the exact four-asset set in candidate
+  mode or one unsigned file in canary mode, plus a handoff record. Name it with run ID, attempt and mode.
+  Use a pinned upload action with overwrite disabled and an explicit file allowlist. Bind the handoff record to
+  repository, run ID, attempt, mode, workflow blob, approved SHA, tag, exact names and digests.
+  Write the artifact ID, archive digest and handoff record digest to a dedicated step and mirror them in the
+  run summary. The owner runs `scripts/release_handoff.sh verify` to download the archive by ID and compare
+  GitHub artifact metadata, archive and extracted digests, and approved inputs to the exact attempt's log record. Compare
   the workflow execution SHA and workflow path to GitHub metadata. Independently validate the selected source
   SHA against the approved SHA and workflow blob. Require successful completion of that same attempt.
   Verify one unsigned object in canary mode, the ZIP alone in dry-run mode, and exactly four assets in candidate
   mode. Only candidate verification rebuilds `install.sh` from the approved SHA and compares bytes. Only a
   verified candidate can enter `draft` or `approve`. Reject missing, extra, duplicate, stale and cross-attempt
-  inputs. Qualify GitHub's exact-attempt logs API and retention in Phase 1. The owner archives the retrieved digest
-  record and matching run metadata privately with the evidence. Keep signed bytes, private records and presigned
-  URLs out of public logs and artifacts. `release.yml` uploads no Actions artifacts.
+  inputs. Qualify artifact access, expiration and exact-attempt logs in Phase 1. The owner copies the verified
+  files, digest record and matching run metadata to a Pipecat-managed archive before expiration.
+  Keep credentials and detailed notarization logs out of workflow artifacts and public logs.
 - The release owner runs `scripts/release_handoff.sh draft` to create the draft with the approved SHA as
-  `target_commitish` and upload the verified assets, then `approve` to write the approval record
+  `target_commitish` and the approved prerelease flag, and to upload the verified assets. The owner then runs
+  `approve` to write the approval record
   `release-approval-X.Y.Z.json` on the owner workstation, outside the repository. Its fields are schema version,
-  version, tag, approved SHA, draft ID, handoff run ID, attempt and mode, workflow blob, approver, time, and each
+  version, tag, prerelease flag, approved SHA, draft ID, artifact ID, handoff run ID, attempt and mode, workflow blob, approver, time, and each
   asset's name, size and SHA-256, plus the Phase 5 acceptance record ID and SHA-256. The private Phase 5 record
-  binds the draft ID, approved SHA, all four digests and pass or fail for every required test. `approve` checks
+  binds the draft ID, approved SHA, prerelease flag, all four digests and the result of each required test. `approve` checks
   the matching draft and requires all tests to have passed. Fixture tests validate both records and reject absent,
   changed, failed or cross-draft acceptance evidence. Immediately before publishing, the owner confirms that
   the principals with write access still match the phase 1 list and runs the reviewed `scripts/verify_release.sh`
   against the record. Recheck the acceptance digest and verdict, draft status, exact asset names and bytes,
-  the target commit and any existing tag. Stop
+  the target commit, planned prerelease flag and any existing tag. Stop
   on drift and obtain fresh approval. The seconds between that recheck and publication are an accepted window, and
   the public check is the enforcement point. If it fails, record the release ID, approved commit and asset digests,
   observed digests or explicit unavailability, the failed checks and withdrawal status. Land that record as
   `docs/release-evidence/X.Y.Z-failed.md` through the `release-evidence/X.Y.Z-failed` evidence-only PR before
   publishing a correction.
-  Keep the approved bytes privately for the compatibility audit. With owner authorization, withdraw the defective
+  Keep the approved bytes in the owner-controlled archive for the compatibility audit. With owner authorization, withdraw the defective
   release if Phase 1 qualified withdrawal. If it remains public, flag it in its release notes. Publish the correction
   with a higher version and build. Only a passing release gets the success evidence and user-facing install command.
   Record the recheck and approval digests in each evidence record.
@@ -276,9 +279,9 @@ Verified against the current checkout on 2026-11-17:
 
 [Apple notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
 and [GitHub release API](https://docs.github.com/en/rest/releases/releases) define the external operations.
-[GitHub OIDC for AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
-and [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html) define
-the private handoff primitives.
+[GitHub artifact metadata and downloads](https://docs.github.com/en/rest/actions/artifacts)
+and [upload behavior](https://github.com/actions/upload-artifact#overwriting-an-artifact)
+define the workflow artifact handoff.
 
 ### Frozen contracts
 
@@ -452,7 +455,7 @@ the shared release contract. The first release freezes the following contracts b
 
 ## Review Focus
 
-Release trust and secret boundaries; the private S3 handoff and owner-only publication; notarization and packaging
+Release trust and secret boundaries; the public workflow artifact handoff and owner-only publication; notarization and packaging
 order; exact artifact parity;
 Bash 3.2 and no-build-tools bootstrap; Homebrew quit/upgrade behaviour; shared locking and ownership
 across all three installers; crash recovery; signing migration; state preservation and release approval boundaries;
@@ -468,13 +471,11 @@ frozen-contract compatibility across published installers; review and merge orde
 **Goal:** Resolve platform choices before the first installer freezes them.
 
 - Record signer/release owner, Team ID, credential availability and protection settings as verified or pending.
-  Inspect credential metadata only. The repository has none of the protections below today (`main` unprotected, no
-  rulesets, no environments, immutable releases off), so the owner configures them in this order and records each
-  with `gh api`: protect `main` as in "Shared release contract"; create the environment, its reviewer and deployment
-  branch policy; add the `v*` tag ruleset from "Shared release contract"; enable immutable releases and record
-  what they allow for deletion; inventory effective tag and release writers and who can change the controls; then
-  bind the upload role to the environment. Keep signing secrets unset until Phase 3 passes denial and the
-  production upload canary. Verify the owner can publish from a missing tag under equivalent sandbox rules.
+  Inspect credential metadata only. Confirm with `gh api` that the existing `main` and `v*` rulesets,
+  `release-signing` environment, reviewer, branch policy and immutable releases match the shared release
+  contract. Inventory effective tag and release writers and who can change those controls. Record what
+  immutable releases allow for deletion. Keep signing secrets unset until Phase 3 passes denial and the
+  artifact upload canary. Verify the owner can publish from a missing tag under equivalent sandbox rules.
   For asset mutation denial, use an immutable disposable release and a mutable control with the same writer.
   Prove distinct-name upload and asset deletion work on the control and fail on the immutable release.
   A duplicate-name upload failure alone does not prove immutability. Qualify whole-release withdrawal separately.
@@ -482,25 +483,15 @@ frozen-contract compatibility across published installers; review and merge orde
   Confirm public download visibility and record the published-build inventory from releases and manifests.
   Require the existing test workflow's two Python compatibility jobs and `macos-app` on `main`.
   Record the exact status contexts and reporting app from a passing run before enabling protection.
-- Qualify the S3 handoff with unsigned ZIP-sized canaries in a protected sandbox before Gate A. Enable Block Public
-  Access and restrict object reads to the owner. Bind the short-lived upload role to the protected environment and
-  repository. Limit it to conditional creates under the release prefix. Pin one upload command: a single-request
-  conditional `PutObject` (the ZIP fits within the single-request limit). If multipart is ever needed, qualify
-  conditional completion and the policy's `s3:ObjectCreationOperation` handling of setup and part uploads first.
-  Record the API path used. Test an unconditional PUT (denied) and a conditional PUT on an existing key (412).
-  Race two conditional PUTs with different payload digests on one unused key. Require one success, one 412 and an
-  owner read whose digest matches the winner. Treat an unexpected 409 as a failed check and investigate concurrent
-  deletion. Test owner retrieval, denial of unauthorized reads, denial of upload from unapproved refs and contexts,
-  and denial of overwrites, reads and deletes by the uploader. Record retention, access and verification without
-  logging signed URLs or credentials. Limit conditional creates to the handoff, diagnostics and reservation
-  paths. Confirm effective lifecycle filters exclude reservations, including from broader rules. In a disposable
-  bucket, expire a handoff canary. Require the separate reservation to stay current, a deletion attempt to
-  fail, and a repeat conditional create to return 412. Validate reservation collisions separately from handoff
-  retries. Qualify the documented
-  exact-attempt GitHub log and metadata retrieval, including stale and expired records.
-  See [S3 conditional write behavior](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-behavior)
-  and the [GitHub attempt logs API](https://docs.github.com/en/rest/actions/workflow-runs#download-workflow-run-attempt-logs).
-  See [S3 expiration rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html) for delete markers.
+- Qualify the Actions artifact handoff with an unsigned, representative ZIP in a public sandbox before
+  Gate A. Use a read-only repository token and no signing secrets. Confirm artifact ID, digest, file list,
+  visibility and exact-attempt log retrieval. With overwrite disabled, require a duplicate upload to fail
+  without replacing the artifact. Verify a new attempt's archive cannot satisfy approval for the old attempt.
+  Exercise an expired artifact and preserve the independent owner ledger. Record the repository retention
+  setting, actual expiry, and the owner archive location. Keep artifacts available for Phase 5 and copy
+  verified candidates and evidence to the owner archive through Phase 6 plus 30 days.
+  See the [GitHub attempt logs API](https://docs.github.com/en/rest/actions/workflow-runs#download-workflow-run-attempt-logs)
+  and [artifact retention](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts).
 - Run early native probes before Gate A from a temporary manual workflow in the sandbox repository.
   Use `macos-15` and `macos-26` arm64 runners, read-only GitHub permissions, test fixtures and no release
   secrets. Record runner build, commands and evidence. The permanent matrix lands at Gate B.
@@ -547,23 +538,22 @@ frozen-contract compatibility across published installers; review and merge orde
   Apple Speech checks that need hardware or a console session.
   GitHub offers [native arm64 runners for macOS 15 and 26](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories).
   Platform-contract uncertainty blocks freezing the installer. The packager and stubbed tests can be developed
-  while qualification proceeds. Gate A retains its release infrastructure prerequisites.
+  while qualification proceeds. Gate A requires the sandbox artifact and protection checks.
 
 ### Phase 2: Build and review the protected packager
 
 **Impl files:** `scripts/build_app.sh`, new `scripts/package_release.sh`, new `scripts/release_handoff.sh`, new `.github/workflows/release.yml`, `.github/workflows/test.yml`, `app-version.json`
 **Test files:** `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, new `python_tests/test_release_packaging.py`, new `python_tests/test_release_handoff.py`
 **Test command:** `uv run pytest python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_release_packaging.py python_tests/test_release_handoff.py -q`
-**Goal:** Land the packager and reproducible private dry-run inputs on reviewed main.
+**Goal:** Land the packager and reproducible dry-run inputs on reviewed main.
 
-- Implement release signing, notarization and the ZIP-only private handoff with stubs, plus a `canary` mode
-  that uploads an unsigned object with a distinct mode value using only the scoped upload role. Keep four-asset
-  mode closed until assembly exists. Implement `scripts/release_handoff.sh verify` for unsigned canaries and
-  ZIP-only handoffs using private record, exact-attempt log and run metadata checks. Use stub storage and
-  stubbed `gh` tests. Implement the signing reservation and private failure diagnostics.
+- Implement release signing, notarization and the ZIP-only artifact handoff with stubs. Add a `canary`
+  mode that uploads an unsigned fixture with its own mode tag. Keep four-asset mode closed until assembly
+  exists. Implement `scripts/release_handoff.sh verify` for canaries and ZIP-only artifacts using the
+  handoff record, exact-attempt log and GitHub API metadata. Use stubbed `gh` responses. Document the
+  owner-ledger approval step and log only submission identifiers and scrubbed diagnostics.
   Candidate verification and the deterministic `install.sh` comparison enter at Gate B. Give the
-  signing job `contents: read` and only the scoped S3 upload capability.
-  Pin the approved AWS authentication action and tool versions. Enforce the private handoff before real uploads.
+  signing job `contents: read`. Pin the reviewed artifact uploader and tool versions.
   Run packager tests in macOS CI and skip only platform-dependent cases on Ubuntu.
 - Test wrong ID, version/build, signer, Team ID, architecture, invalid nested signature, missing timestamp or
   hardened runtime and debugger entitlement. Each failure yields no publishable ZIP and a useful diagnostic.
@@ -571,14 +561,13 @@ frozen-contract compatibility across published installers; review and merge orde
 - Test non-Accepted results, timeout with a retained ID, absent ID, terminal logs, Accepted warnings,
   stapler/ticket failure and post-staple hashing. Test wrong refs, approvals, token scope and existing releases.
   Exercise an older reachable commit with identical workflow bytes and one with a different workflow blob.
-  Record the job's own workflow ref/SHA. On mismatch, refuse before credential import, build or private upload.
-  Test partial upload, rejected overwrite, cross-run inputs and early four-asset mode refusal with stub storage.
-  Test two run attempts for the same signing build and reservation persistence after failure in CI.
-  Exercise the owner's pre-approval ledger check with a lower, unused build and record the refusal before
-  deployment approval. Prove an unsigned canary or cleanup probe cannot enter signing.
-  Test that `release.yml` uploads no Actions artifacts and that canary mode imports no signing credentials and is
-  rejected for drafts.
-- With the release owner, choose a private predecessor build above baseline 474 and the phase 1 published-build
+  Record the job's own workflow ref/SHA. On mismatch, refuse before credential import, build or upload.
+  Test partial upload, rejected overwrite, wrong artifact ID, cross-run inputs and early four-asset mode
+  refusal with stubbed responses. Test that signing reruns stop before the protected job. Exercise the
+  owner's ledger check for a reused build after failure and a lower unused build before approval.
+  Test that canary and cleanup modes cannot enter signing, only allowlisted files reach the upload step,
+  and canary artifacts are rejected for drafts.
+- With the release owner, choose a predecessor build above baseline 474 and the phase 1 published-build
   inventory, keeping version `0.4.1`. `python_tests/test_migration_contract.py` requires the newest numbered changelog
   heading to equal the version, so Gate A changes only the build and adds no changelog entry. Reserve a higher
   version, a numbered changelog entry and a higher build for Gate B. Gate A reviews and merges workflow, packager and
@@ -589,16 +578,16 @@ frozen-contract compatibility across published installers; review and merge orde
 **Impl files:** `docs/development.md`, this plan
 **Test files:** none (live checks and evidence)
 **Test command:** `uv run pytest python_tests/test_app_recipes.py python_tests/test_release_packaging.py -q`
-**Goal:** Qualify real signing and produce an older private upgrade fixture.
+**Goal:** Qualify real signing and produce an older signed upgrade fixture.
 
 - In a secret-free protected sandbox, test environment denial and the read-only workflow token, and record the
   settings diff against production. Exercise publication denial for the workflow token and non-owner identities
   covered by the verified writer inventory, with no tag and an owner-created matching tag. Test tag-creation
   denial separately. Record refusal to move or delete an owner-created tag before publication.
   Test refusal for a wrong existing tag, a published-version replacement, incomplete handoff and early four-asset mode.
-- After Gate A, run the `canary` mode on production `main` to verify the production upload role before importing
-  signing credentials. Confirm that assuming the role from a job outside the environment and from a canary dispatched
-  on a non-`main` branch both fail.
+- After Gate A, run `canary` on production `main` to verify upload and exact-attempt retrieval before importing
+  signing credentials. Confirm that non-`main` dispatches are blocked before the protected job and
+  ordinary PR and push workflows cannot reach signing.
   Load signing secrets only after the denial checks and canary verification pass. Dispatch from protected
   `main` using the Gate A SHA and reserve its build before signing. Verify the ZIP-only handoff.
   Extract the exact final ZIP and validate its staple. Restore a snapshot from before any assessment of the
@@ -611,16 +600,17 @@ frozen-contract compatibility across published installers; review and merge orde
   distinct bundle ID and bytes out of the release handoff. Submit no notarization request for it.
   Run the qualified Gatekeeper rule with the fixture's expected bundle ID and show it rejects the valid
   signature for lack of notarization. Record this separately from the unstapled control before Gate B.
-  Retain the predecessor ZIP, handoff record and digest privately. Record retention and access evidence, and verify
-  that the retention date covers phase 6 plus the re-entry margin.
+  Archive the predecessor ZIP, handoff record and digest before the workflow artifact expires. Keep the
+  archive through Phase 6 plus the re-entry margin and qualify its retrieval for live upgrade tests.
 - Record a cancellation and controlled packaging failure after signing-credential import and before app signing.
-  Verify cleanup and scan logs for secrets. Verify owner retrieval of failure diagnostics and retained submission
-  IDs using sandbox failure and timeout controls. Confirm actual submission ID and log retrieval for the live run.
+  Verify cleanup and scan logs and artifact contents for secrets. Verify the owner can use a retained submission
+  ID after the timeout control to retrieve the detailed diagnostic log directly from Apple. Confirm ID and log
+  retrieval for the live run.
   Record the qualified bundle layout and warnings. Phase 4 stub work may proceed after Gate A while live signing is pending.
 
 ### Phase 4: Implement and review standalone installation and updates
 
-**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, new `scripts/lib/dev_install.sh`, new `scripts/verify_release.sh`, `scripts/release_handoff.sh`, new `scripts/candidate_harness.py`, new `scripts/candidate_acceptance.yml`, new `scripts/check_evidence_pr.py`, new `.github/workflows/evidence_check.yml`, `scripts/build_app.sh`, `scripts/package_release.sh`, `scripts/quit_app.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `Sources/PipecatToolbarCore/AppPaths.swift`, `Sources/PipecatServiceToolbar/App/ToolbarApp.swift`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `docs/architecture.md`, `AGENTS.md`
+**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, new `scripts/lib/dev_install.sh`, new `scripts/verify_release.sh`, `scripts/release_handoff.sh`, new `scripts/candidate_harness.py`, new `.github/workflows/candidate_acceptance.yml`, new `scripts/check_evidence_pr.py`, new `.github/workflows/evidence_check.yml`, `scripts/build_app.sh`, `scripts/package_release.sh`, `scripts/quit_app.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `Sources/PipecatToolbarCore/AppPaths.swift`, `Sources/PipecatServiceToolbar/App/ToolbarApp.swift`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `docs/architecture.md`, `AGENTS.md`
 **Test files:** new `python_tests/test_app_installer.py`, new `python_tests/test_distribution_contract.py`, `python_tests/test_release_packaging.py`, `python_tests/test_release_handoff.py`, `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, `python_tests/test_docs.py`, new `python_tests/fixtures/installer-v1/`, new `Tests/PipecatServiceToolbarTests/AppPathsIsolationTests.swift`
 **Test command:** `uv run pytest python_tests/test_app_installer.py python_tests/test_distribution_contract.py python_tests/test_release_packaging.py python_tests/test_release_handoff.py python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_docs.py -q && swift test --filter AppPathsIsolationTests`
 **Goal:** Gate B lands a complete, testable standalone candidate source tree.
@@ -641,17 +631,17 @@ frozen-contract compatibility across published installers; review and merge orde
   byte for byte. Exercise hostile `PATH` and tool overrides, inherited Bash startup settings and curl configuration
   through the documented clean launch. Trace child commands against the closed allowlist and test `--help` and
   argument validation. Normal Phase 4 PR CI uses fixtures and argument checks for the shipped entry and
-  has no signed private candidate. Phase 5 runs the exact signed bytes end to end in the owner-dispatched
+  has no signed release candidate. Phase 5 runs the exact signed bytes end to end in the owner-dispatched
   candidate harness, including real SIGKILL with the journal-reconcile table as its oracle.
 - Pin the frozen version-1 fixtures under `python_tests/fixtures/installer-v1/` with a digest manifest and a test that
   fails on any change, like `python_tests/fixtures/migration-baseline.json`. `test_distribution_contract.py` also
-  validates the fields of a `docs/release-evidence/X.Y.Z.md` file (version, tag, approved SHA, draft ID, four digests,
+  validates the fields of a `docs/release-evidence/X.Y.Z.md` file (version, tag, prerelease flag, approved SHA, draft ID, four digests,
   prepublication recheck result, public check result, `install.sh` SHA-256, tested permission steps and OS coverage limits; the existing
   `test_docs.py` globs only `docs/*.md`), the approval record schema and the evidence-only PR's exact path allowlist.
   Land the required check at Gate B, before any evidence PR: `.github/workflows/evidence_check.yml`
   (`pull_request_target`, no PR checkout) and `scripts/check_evidence_pr.py`. Resolve standalone and failure evidence
   against the Gate B release version in the trusted base's `app-version.json`. For Homebrew evidence, require the requested
-  version's passing standalone evidence on the trusted base even if the app version there has advanced.
+  stable version's passing standalone evidence on the trusted base even if the app version there has advanced.
   Evaluate the complete diff for immutable base/head SHAs through GitHub metadata or Git objects as data.
   Fail on incomplete enumeration or revision drift. Qualify a check reporter that binds the enforced result
   to PR number, head repo and ref, base SHA and head SHA. Evaluate GitHub's test merge revision as a possible
@@ -672,9 +662,9 @@ frozen-contract compatibility across published installers; review and merge orde
   Enable the required check on production only after this proof and the Gate B merge.
 - Add `scripts/verify_release.sh` (prepublication recheck and public check, tested with stubbed `gh` and `curl`),
   `scripts/candidate_harness.py` (the fixed-host HTTPS harness) and the `draft` and `approve` commands of
-  `scripts/release_handoff.sh` (stubbed storage and `gh`). Gate B also reviews the manual-only
-  `scripts/candidate_acceptance.yml` workflow template. The owner installs it in the private test repository.
-  Test its exact input digest checks and its secret handling with stub fixture downloads in Phase 4. Run the installer,
+  `scripts/release_handoff.sh` (stubbed `gh`). Gate B also reviews the manual-only
+  `.github/workflows/candidate_acceptance.yml`. Test its exact input digest checks and read-only access
+  with stub artifact downloads in Phase 4. Run the installer,
   verifier, handoff and harness tests in `test.yml` on a `macos-15` and `macos-26` matrix. Keep
   the existing `macos-app` required check name as a separate aggregate job. Run it even if a matrix member
   fails and require both members to pass. In the sandbox, verify the original required status context stays
@@ -685,7 +675,7 @@ frozen-contract compatibility across published installers; review and merge orde
   Implement and test `just app-remove` and `just app-cleanup` through the developer-owned maintenance path before
   Gate B. Test `app-open` replacing a verified running output and smoke's explicit and missing-bundle builds.
   Include the version-1 compatibility matrix and the channel outcome table from Testing Notes.
-- Complete private handoff assembly for all four assets. Use the approved final version/build above the phase 3 fixture and
+- Complete artifact assembly for all four assets. Use the approved final version/build above the phase 3 fixture and
   applicable published baseline. Add candidate-mode verification and deterministic installer comparison, plus
   Phase 6 failure-evidence schema tests. Finish the numbered changelog entry (`python_tests/test_migration_contract.py`
   passes only when the newest numbered heading equals the version) and candidate documentation here. Phase 3 must
@@ -701,24 +691,24 @@ frozen-contract compatibility across published installers; review and merge orde
 
 - Repeat the sandbox, unsigned production canary and pre-signing failure checks defined under "Review and merge
   gates" against the reviewed Gate B SHA. Run the protected four-asset workflow once for that build number.
-  Verify its private handoff and show the workflow cannot create a draft, publish or create tags. The owner
-  creates a draft from the verified bytes and records its ID, tag, SHA and
+  Verify its Actions artifact and show the workflow cannot create a draft, publish or create tags. The owner
+  creates a draft prerelease from the verified bytes and records its ID, prerelease flag, tag, SHA and
   four digests. Test the final ZIP and offline staple as in phase 3. If inputs change, the owner retires the stale
   draft. Rebuild and retest from a fresh Gate B commit with a build above every earlier reservation.
 - Test the exact installer and ZIP via the fixed-host HTTPS harness (`scripts/candidate_harness.py`) with isolated
-  app and installer state. Use an owner-dispatched private acceptance workflow at the reviewed Gate B sources
-  for the two headless CI jobs. The owner gives those jobs short-lived read-only links to verified fixture
-  copies under a separate private test prefix. Scope links to the exact assets and predecessor. Supply them
-  as masked inputs from sandbox secrets and keep them out of command output. The workflow holds no owner,
-  signing or publishing credential. Expire the links and remove the fixture copies after acceptance.
+  app and installer state. Dispatch the reviewed acceptance workflow from protected `main` using the
+  Gate B source SHA and the verified candidate and predecessor run, attempt, artifact IDs and digests.
+  Give the two headless jobs only `actions: read` and `contents: read` and validate each artifact before
+  extraction. Check that both artifacts remain available before dispatching acceptance. On expiry, re-enter
+  the affected signing phase with a new reserved build and confirm the candidate still exceeds its predecessor.
   Serve the downloaded bytes on loopback. For interactive guest checks, serve the same files from the existing
   Mac to the guest. Use test-only routing and CA trust. Verify hashes before each test and capture the
   qualified trace on both supported OS majors. Use the existing Mac for checks needing hardware it has.
   Keep production URL pins and signature checks intact. Remove test CA and routing when finished.
   Phase 6 covers actual GitHub delivery.
-- Seed an older standalone installation using the private signed fixture with a matching lower version/build,
+- Seed an older standalone installation using the signed fixture with a matching lower version/build,
   canonical receipt and protocol state in disposable state. Verify the predecessor before installing the candidate.
-  Run the version-1 matrix against the exact verified private candidate installer before approving its draft.
+  Run the version-1 matrix against the exact verified candidate installer before approving its draft.
   Record its installer digest and matrix results in the private Phase 5 acceptance record.
   Test fresh install, in-place upgrade, ownership/quit behavior, recovery, Gatekeeper and state preservation.
   Trace successful standalone install and upgrade through completion. Require the app and its services
@@ -736,24 +726,26 @@ frozen-contract compatibility across published installers; review and merge orde
 **Impl files:** new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps), `README.md` (install command) in the success evidence-only PR. A failed release adds only `docs/release-evidence/X.Y.Z-failed.md` through its designated PR. Plan progress lands through a separate ordinary PR.
 **Test files:** `python_tests/test_distribution_contract.py` (evidence fields and path allowlist), `python_tests/test_docs.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_docs.py -q`
-**Goal:** Verify the approved bytes through the public install and update path.
+**Goal:** Verify the approved alpha through the public GitHub prerelease install and update path.
 
 - Start after owner approval of the exact draft payload and passing Phase 5 evidence. Confirm production `main`
   enforces the qualified evidence check with strict base protection and the correct Gate B version. Require a
   current successful verdict on an ordinary probe PR targeting that base. Dry-run the prospective evidence
   path set against the same trusted base before publishing. While draft writers are excluded, run
-  `scripts/verify_release.sh` to recheck the acceptance digest, all four asset digests, draft identity and
-  commit, and resolve any existing tag.
+  `scripts/verify_release.sh` to recheck the acceptance digest, all four asset digests, draft identity,
+  prerelease flag and commit, and resolve any existing tag.
   Publish only the matching draft.
 - Run `scripts/verify_release.sh` for the public check: the tag, all four downloads against approval, and the real
-  redirect chain against the embedded allowlist. Confirm the immutable flag and digests with read-only queries.
+  redirect chain against the embedded allowlist. For the alpha, confirm the published release is a prerelease.
+  Confirm the immutable flag and digests with read-only queries.
   Use Phase 1's sandbox evidence for mutation denial. Check
-  browser quarantine and Gatekeeper on the ZIP. Confirm the public installer digest matches the private bytes
+  browser quarantine and Gatekeeper on the ZIP. Confirm the public installer digest matches the candidate bytes
   that passed the matrix. Repeat fresh install and upgrade from the phase 3 fixture in
   disposable state. Confirm preserved app data.
 - Create `docs/release-evidence/` and record approval, the prepublication check, public verification, the SHA-256 of
-  the published `install.sh` (phase 7 pins it) and the observed permission and launch-at-login steps. Land that file,
-  the `docs/migration.md` observed steps and the README install command in the evidence-only PR. Stop tap work on
+  the published `install.sh` (phase 7 checks it for compatibility), the prerelease flag and the observed
+  permission and launch-at-login steps. Land that file,
+  the `docs/migration.md` observed steps and the README install command, labeled as alpha, in the evidence-only PR. Stop tap work on
   discrepancies. On failure, record the observed release under the failure-evidence path and follow the
   reviewed withdrawal and correction procedure.
 
@@ -782,7 +774,9 @@ frozen-contract compatibility across published installers; review and merge orde
   success with `--appdir=~/Applications`, and retention of that directory for upgrade, reinstall and uninstall
   without repeating the flag. See [Homebrew's structured flight steps](https://docs.brew.sh/Cask-Cookbook#stanza-flight_steps)
   and [sandboxing rules](https://docs.brew.sh/Cask-Cookbook#cask-artifact-trust-and-sandboxing).
-- After the success evidence PR merges and the supported mechanism passes, create `packaging/homebrew/`.
+- Before rendering a cask, publish a stable standalone release with a new version and build through the
+  same acceptance and publication checks. Merge its success evidence PR. After the supported mechanism
+  passes, create `packaging/homebrew/`. Include alphas in the published installer compatibility inventory.
   Render from the canonical template and explicit inputs with
   `uv run python scripts/render_homebrew_cask.py --release-commit SHA --guard-commit SHA --manifest FILE --output FILE`.
   Commit the exact public manifest bytes after authenticating them against the manifest digest in the passing
@@ -916,11 +910,11 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 
 | Producer | Consumer | Contract |
 |---|---|---|
-| Approved commit and signing environment | Release workflow and packager | Version/build authority, injected Team ID, ephemeral signing and scoped upload credentials |
+| Approved commit and signing environment | Release workflow and packager | Version/build authority, injected Team ID and ephemeral signing credentials |
 | Packager | Standalone installer and cask | Identical final ZIP/hash, manifest and bundled installer from one commit |
 | Packager | Standalone installer | `install.sh` embeds `scripts/lib/install_app.sh` and `scripts/quit_app.sh` (child-process payload) from the same commit |
-| Owner approval and private S3 reservation | Signing workflow | The owner approves one ledger entry at a time. The workflow reserves that build by conditional create before signing. |
-| Signing workflow and private S3 bucket | Release owner | `scripts/release_handoff.sh verify` checks each mode's exact file set against the private record, exact-attempt logs and GitHub metadata. Private notarization diagnostics are retrieved separately. |
+| Owner approval and durable signing ledger | Signing workflow | The owner reserves a build before approving each fresh signing dispatch. Signed jobs refuse reruns. |
+| Signing workflow and GitHub Actions artifact | Release owner | `scripts/release_handoff.sh verify` checks the artifact ID, archive digest and mode's exact file set against the handoff record, exact-attempt logs and GitHub metadata. The owner retrieves detailed notarization diagnostics from Apple. |
 | Release owner | GitHub draft | `release_handoff.sh draft` uploads only the verified four-asset handoff and binds the draft to the approved SHA and tag |
 | Installer library and quit helper at the recorded guard commit | Cask | A generator authenticates the pinned release manifest and packages the guard through the qualified mechanism. Record both source identities and input hashes in `packaging/homebrew/inputs.json`. |
 | Shared resolver, ownership/lock logic and qualified quit helper | Standalone, direct local builds, developer recipes and cask | Use one account-home authority and lock protocol. Keep the descriptor in mutation workers only. Verify ownership and exact process identity before quit or mutation. |
@@ -928,7 +922,7 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 | Candidate acceptance | Release owner | Approval binds the passing Phase 5 record ID and digest, draft ID, commit, tag and four asset digests. Recheck immediately before publishing. |
 | `release-approval-X.Y.Z.json` (from `release_handoff.sh approve`) and release evidence | `scripts/verify_release.sh` | Prepublication recheck and public check read one approval record and exit non-zero on drift; the workflow never publishes |
 | Published release checks | Phase 7 installer inventory | Match each published installer to its success or failure record and verified bytes. Use passing evidence only to authorize a Homebrew version. |
-| Owner and reviewed `scripts/candidate_acceptance.yml` | Private acceptance runners | Supply only temporary read-only fixture links and expected digests. Use Gate B harness sources at the reviewed SHA. |
+| Owner and reviewed `.github/workflows/candidate_acceptance.yml` | Headless acceptance runners | Supply verified workflow artifact IDs, run attempts and digests. Read fixtures with the workflow token and use Gate B harness sources at the reviewed SHA. |
 | `scripts/candidate_harness.py` | Ephemeral CI runner or isolated guest state | Serves exact bytes at fixed URLs through test-only routing and trust. The installer uses qualified stock macOS tools. |
 
 ### Review decisions
@@ -940,7 +934,7 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 - Candidate inputs land at Gate B. The evidence-only PR after public verification accepts only the three
   documented paths. Phase 7 uses the merged evidence when pinning earlier installer releases.
 - Decision (grilled): Gate A merges the reviewed workflow, packager and predecessor metadata. Phase 3 passes the live
-  trust checks and produces the private predecessor fixture. Gate B lands every candidate input.
+  trust checks and produces the signed predecessor fixture. Gate B lands every candidate input.
 - Decision (grilled): The owner works alone. `main` requires status checks, blocks force pushes and deletion and has
   an empty bypass list, but needs no PR review. The local review gauntlet is the review gate, and self-merge is
   accepted residual risk. This replaces the earlier required-review rule.
@@ -962,11 +956,12 @@ graph TD
     Approval["Protected approval and signing build reservation"] --> Workflow
     Workflow --> Package["Build, notarize, staple and package"]
     Helpers["Installer library and bounded quit helper"] --> Package
-    Package --> Store["Private S3 handoff"]
+    Package --> Store["Public Actions artifact"]
     Store --> HandoffTool["release_handoff.sh verify, draft and approve"]
     HandoffTool --> DraftOwner["Release owner uploads verified draft assets"]
     DraftOwner --> Draft["Complete private draft"]
     Draft --> Candidate["Standalone candidate acceptance"]
+    Store --> Candidate
     Candidate --> Owner["Owner approves exact draft and rechecks all inputs"]
     Owner --> Verify["verify_release.sh prepublication recheck"]
     Verify --> Release["Immutable public release"]
@@ -975,7 +970,7 @@ graph TD
     Public -->|Pass| EvidencePR["Success evidence-only PR merged"]
     Public -->|Fail| FailureRecord["Failure evidence and withdrawal status"]
     FailureRecord --> Correction["Corrected release starts again at Gate B"]
-    EvidencePR --> BrewCheck["Later: cask feasibility, parity and online audit"]
+    EvidencePR --> BrewCheck["Later: stable release, cask parity and online audit"]
     Helpers -.-> BrewCheck
     BrewCheck --> GateC["Gate C reviews canonical cask and generator"]
     GateC --> Tap["Owner verifies parity and merges tap PR"]
@@ -993,7 +988,7 @@ sequenceDiagram
     actor Owner
     participant Workflow
     participant Packager
-    participant Store as Private S3 handoff
+    participant Store as GitHub Actions artifact
     participant Acceptance
     participant Release
     participant Tap
@@ -1001,10 +996,11 @@ sequenceDiagram
     participant State as Lock and ownership state
     Owner->>Workflow: Approve the reviewed commit and reserve the signing build
     Workflow->>Packager: Build, sign, notarize, staple, assemble all assets
-    Packager->>Store: Create scoped assets and write the handoff record last
+    Packager->>Store: Upload exact assets and handoff record
     Owner->>Store: Run release_handoff.sh verify on one approved run and its exact assets
     Owner->>Release: Create draft and upload verified bytes
-    Release-->>Acceptance: Complete draft and approved hashes
+    Release-->>Acceptance: Draft identity and approved hashes
+    Store-->>Acceptance: Candidate and predecessor bytes by artifact ID
     Acceptance-->>Owner: Passing candidate evidence and record digest
     Owner->>Release: Run verify_release.sh recheck of approved draft ID, SHA, tag and four digests
     Owner->>Release: Publish matching draft
@@ -1028,11 +1024,11 @@ sequenceDiagram
 
 | Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
 |---|---|---|---|---|
-| Build and package | Reviewed manual dispatch and signing approval | Approved SHA, version/build, signing reservation, temporary credentials | Store private handoff and separate diagnostics. Clean up credentials. | CI job |
-| Draft creation | Owner retrieves a complete private handoff | Run identity, commit, tag and verified asset digests | Draft ID bound to the selected run and assets | Owner workstation |
+| Build and package | Reviewed manual dispatch and signing approval | Approved SHA, version/build, owner-ledger reservation, temporary credentials | Upload allowlisted workflow artifact. Log submission ID and scrubbed status. Clean up credentials. | CI job |
+| Draft creation | Owner verifies the complete Actions artifact | Run and artifact identity, commit, tag, prerelease flag and verified asset digests | Draft ID bound to the selected run and assets | Owner workstation |
 | Candidate acceptance | Complete draft available | Exact standalone assets and isolated app state | Evidence tied to commit and digests. Discard test state. | Disposable test session |
 | Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Land success or failure and withdrawal evidence through its designated PR. | Owner approval, then public test session |
-| Homebrew delivery | Phase 6 complete and phase 7 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence; separately approved tap PR | Later test session and owner approval |
+| Homebrew delivery | Stable standalone evidence and Phase 7 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence and separately approved tap PR | Later test session and owner approval |
 | Install/upgrade | User invokes standalone or Brew | Receipt/Brew metadata and common lock. Standalone reconciles local state before download. | Verify the artifact and eligibility before quit. Persist bundle/receipt or recoverable backup, then release the lock. | Local process |
 | Developer build and install | User invokes build script or local recipe | Common lock, bundle-specific build paths, ownership and signing identity | Build output or verified developer bundle and receipt. For an actual developer install or replacement, observe launch with the worker lock held. | Local process |
 | Developer open/smoke | User invokes `just app-open` or `scripts/ui_smoke.sh` | Common lock, ownership and bundle ID | Open checks owner before quit. Smoke refuses an existing running copy and quits only its own launch. | Local process |
@@ -1124,7 +1120,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 - Developer smoke tests cover refusal of preexisting processes before publication, `--build`, a missing
   bundle and launch/quit under the lock. Open tests cover quit before shared output replacement and refusal
   of standalone or Brew copies. Test guarded refusal while a real unbundled `just app-run` is active.
-- Phase 5 tests install and real upgrade with the private signed predecessor on macOS 15 and 26 using isolated
+- Phase 5 tests install and real upgrade with the signed predecessor on macOS 15 and 26 using isolated
   destinations and state. Run Terminal and SSH entry and real quit tests in the existing guest. Cover blocked
   permission, quit refusal, timeout, PID reuse and same-ID replacement before quit dispatch. Exercise microphone,
   launch-at-login and Apple Speech on the existing macOS 26 guest or hardware. Record the tested OS build and
@@ -1135,11 +1131,12 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   fingerprints and cache sentinels. Use an isolated positive control that attempts a refresh to prove the trace
   would detect `uv sync` and downloads. Confirm that candidates preserve server pins.
 - Phase 3 tests live approval, cleanup, upload access and separate tag and release denial. Phase 5 tests the owner-only
-  draft flow, one complete private handoff and two-route lock parity. Phase 6 compares all public assets and the tag
+  draft flow, one complete artifact handoff and two-route lock parity. Phase 6 compares all published assets, release kind and tag
   to approval. Test verifier refusal for a wrong draft ID, SHA or tag, each changed digest, missing, extra and duplicate
-  assets, loss of draft status and an existing tag pointing elsewhere. Assert that no publish action follows refusal.
+  assets, loss of draft status, changed prerelease flag and an existing tag pointing elsewhere.
+  Assert that no publish action follows refusal.
   Test handoff-verifier refusal for a missing, extra, duplicate, stale or cross-run object, a record that disagrees
-  with the exact attempt's digest record or GitHub metadata, and an `install.sh` that differs from the deterministic
+  with the exact attempt's artifact ID, archive digest, digest record or GitHub metadata, and an `install.sh` that differs from the deterministic
   rebuild. Confirm only candidate mode can produce a draft. Test the compatibility inventory with a
   failed public release, a withdrawn release and a retained release whose public installer cannot be verified.
   Test both candidate and public Gatekeeper. Run compile, lint and test gates per `AGENTS.md` before a PR.
@@ -1152,7 +1149,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 
 ## Acceptance Criteria
 
-### First delivery — standalone installation and manual updates
+### First delivery — public standalone alpha and manual updates
 
 - A version-specific script installs and updates the verified app on macOS 15 and 26. It verifies same-version
   reruns, rejects downgrades and preserves existing state on failure or quit refusal.
@@ -1163,19 +1160,19 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   caches are preserved. The macOS 26 signer-change test shows the documented migration restores microphone access,
   launch-at-login and Speech permission with working recognition. Release evidence names the OS builds and
   distinguishes headless compatibility from interactive migration coverage.
-- Gate A merges the workflow, packager, handoff verifier and predecessor metadata after a qualified private handoff canary.
-  Phase 3 passes denial and upload canary checks before loading signing secrets. It produces the private predecessor
-  from one reserved build and verifies its ZIP-only handoff, exact-attempt digest and private diagnostics.
+- Gate A merges the workflow, packager, handoff verifier and predecessor metadata after a qualified Actions artifact canary.
+  Phase 3 passes denial and upload canary checks before loading signing secrets. It produces the signed predecessor
+  from one reserved build and verifies its ZIP-only artifact, exact-attempt digest and diagnostic retrieval from Apple.
   Gate B lands every candidate input. Phase 5
   repeats the trust checks and verifies one signed four-asset handoff from the Gate B commit, including its ZIP.
   The owner creates the draft from those bytes. Phase 5 passes standalone acceptance.
-- `scripts/verify_release.sh` confirms the approved draft ID, SHA, tag and four digests before publication. Phase 6
+- `scripts/verify_release.sh` confirms the approved draft ID, SHA, tag, prerelease flag and four digests before publication. Phase 6
   verifies all published assets and tag plus quarantine/Gatekeeper, installs and upgrades from the public release,
   and records approval evidence. An evidence-only PR lands the release record and the two other allowlisted changes.
   Before publication, production enforces the required evidence verdict for the PR and current base and head,
   as demonstrated in the Phase 4 sandbox. The approval binds the passing Phase 5 evidence record.
   Phase 6 records failed publication checks and withdrawal status before any corrected release ships.
-- The version-1 matrix passes against each verified private candidate before publication and Phase 6 confirms the
+- The version-1 matrix passes against each verified candidate before publication and Phase 6 confirms the
   public installer matches the tested bytes. Recovery works while downloads are blocked. The packaged installer
   and ZIP complete the bootstrap on macOS 15 and 26, with a child-command trace confirming only qualified stock
   tools were used during the packager-to-installer round trip.
@@ -1183,7 +1180,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 
 ### Later delivery — Homebrew
 
-- Both routes use the same ZIP/hash on macOS 15 and 26. A documented supported mechanism holds the common lock
+- Both routes use a verified stable release's same ZIP/hash on macOS 15 and 26. A documented supported mechanism holds the common lock
   through mutation and rollback and respects ownership and quit rules. The matrix accounts for every published
   installer, including failed and withdrawn releases. A failed proof stops Homebrew delivery.
   The cask refuses a shared app directory, including `/Applications`, and the documented install uses `--appdir=~/Applications`.
@@ -1200,7 +1197,7 @@ Planning only. Renamed and expanded from the original Homebrew plan; no installe
 
 - [ ] Phase 1 — Owner qualifies tools and release prerequisites
 - [ ] Phase 2 — Gate A merges the protected packager
-- [ ] Phase 3 — Owner validates signing and records the private predecessor
+- [ ] Phase 3 — Owner validates signing and records the signed predecessor
 - [ ] Phase 4 — Gate B merges the standalone candidate inputs
 - [ ] Phase 5 — Owner records candidate evidence and approval payload
 - [ ] Phase 6 — Owner publishes, verifies public delivery and merges release evidence
@@ -1403,6 +1400,18 @@ have explicit rules. Temporary hosted probes qualify stock tools before Gate A. 
 migration uses the existing macOS 26 console, with macOS 15 headless checks required and interactive results
 reported when available. Live runner tracing, Bash downloader notarization applicability and signed candidate
 tests remain qualification tasks. Review accepted on 2026-11-20.
+
+2026-11-20 public alpha decision. Use GitHub Actions artifacts for the signing handoff and GitHub prereleases
+for alpha distribution. The release owner accepts that signed candidates can be downloaded before publication,
+keeps the durable build ledger and retains publication control. This supersedes the S3 gate and private
+candidate assumptions in earlier notes. The previous review marker covers the earlier contract.
+
+2026-11-20 local ZIP smoke. Built source commit `3a300c0` in a disposable checkout on arm64 macOS 26.6.2
+(25G83) using the existing ad-hoc build script. The `ditto -c -k --keepParent` archive for version 0.4.1
+build 474 was 20,027,224 bytes. Its 43 entries were under the expected app root, with no duplicates or symlinks.
+The bundled wheel digest and constraints matched the repository pins. Extraction passed strict signature
+verification and the executable was arm64. This qualifies the representative ZIP layout and size.
+Developer ID signing, notarization and the Actions artifact canary remain pending.
 
 ## Issues & Solutions
 
