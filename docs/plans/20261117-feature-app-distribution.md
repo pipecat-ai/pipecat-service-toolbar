@@ -83,6 +83,19 @@ Verified against the current checkout on 2026-11-17:
 
 ## Requirements
 
+### Test environments
+
+- Develop on the existing Mac or UTM guest. Use temporary app destinations, installer state and fixtures for
+  routine install, upgrade, refusal and recovery tests. Reset those paths between runs.
+- Run native command and headless installer tests in CI on macOS 15 and 26. Run the packaged installer with a
+  minimal environment and a stock `PATH`, and use the child-command trace to verify that the installer and its
+  helpers use only the qualified stock tools. Exercise a positive control to verify that the trace would detect a
+  developer-tool invocation. GitHub-hosted runners include developer tools, so record this as stock-tool execution
+  coverage. If a no-tools snapshot is already available, use it for an additional bootstrap check.
+- Use the existing UTM guest and login for tests that need a console session or Finder. Reuse a pre-assessment
+  snapshot for Gatekeeper and use the existing Mac for hardware checks the guest cannot exercise. These checks
+  are release qualification. Routine development and retries use the same account and OS installation.
+
 ### Review and merge gates
 
 - Run implementation phases 2, 4 and 7 as separate focused tasks. Use explicit manual gates and the full
@@ -380,8 +393,8 @@ They are fixed before phase 4 and may change only through a new installer releas
 - Channel switching uses verified removal by the current owner and then a separate locked install. Retain preferences,
   app environments, model weights, shared caches and server pins. Installation starts no services. Validate readiness
   by observing first start for refresh and download attempts, as well as checking fingerprints and cache contents.
-- Test Microphone permission and launch-at-login after signer/path changes on macOS 15 and 26. Test the Apple Speech
-  permission prompt and working recognition on macOS 26. Record each tested user action under `## Findings`
+- Test microphone permission, launch-at-login, and the Apple Speech prompt and recognition after signer/path changes
+  on the existing macOS 26 guest or hardware. Record the OS build and each tested user action under `## Findings`
   in phase 5. Phase 6 moves them into the release evidence file, and the evidence-only PR copies them into `docs/migration.md`. Test a real signer change: seed a developer install
   signed with the self-signed `Code Signing` identity, switch channels by verified removal, install the Developer ID
   candidate, and observe the permission and launch-at-login behaviour.
@@ -458,19 +471,20 @@ frozen-contract compatibility across published installers; review and merge orde
   See [S3 conditional write behavior](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html#conditional-write-behavior)
   and the [GitHub attempt logs API](https://docs.github.com/en/rest/actions/workflow-runs#download-workflow-run-attempt-logs).
   See [S3 expiration rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-expire-general-considerations.html) for delete markers.
-- On clean macOS 15 and 26 without Command Line Tools, qualify the closed command set: HTTP client, checksum tool
-  (`/usr/bin/shasum` is a Perl script on macOS 26), archive inspector, persistent lock, plist reader and state format,
+- On native macOS 15 and 26, qualify the stock command set under the minimal environment above: HTTP client,
+  checksum tool (`/usr/bin/shasum` is a Perl script on macOS 26), archive inspector, persistent lock, plist reader and state format,
   a running-instance probe (with a process-table cross-check), a bounded process-targeted graceful quit, and a CPU
-  detector that also works from a Rosetta-translated shell. Exercise Terminal and SSH on both majors. Run the probe
-  over SSH with the app running in the console session; reject a probe that cannot tell absent from unavailable. Test allowed quit, refusal, timeout, blocked
-  permission, duplicate instances and same-ID process replacement between verification and dispatch. Test archive
+  detector that also works from a Rosetta-translated shell. Exercise Terminal and SSH in the existing guest. Run the probe
+  over SSH with the app running in the console session. Reject a probe that cannot tell absent from unavailable.
+  Test allowed quit, refusal, timeout, blocked permission, duplicate instances and same-ID process replacement
+  between verification and dispatch. Test archive
   type/path framing against malformed fixtures. Qualify the canonical account-home lookup with a changed
   `HOME` and SSH. Verify the default application path and qualified volumes. Test group and ACL write access,
   a volume with ownership disabled, and stable identities and same-volume renames for accepted custom destinations
   and installer state. Verify exclusion between shell and Ruby consumers, wrapper death and stable inode semantics.
   Qualify the clean Bash and curl startup environment, system TLS trust, and hostile inherited configuration.
   Record exact commands, absolute paths and formats before Phase 4.
-  Use a disposable development host for the unbundled `just app-run` probe. Verify that the stock guard tools
+  Use an isolated build and state directory for the unbundled `just app-run` probe. Verify that the stock guard tools
   identify the active Swift executable, refuse mutation and send no quit. Repeat after shutdown and with an
   unresolved process identity.
 - Qualify the signature/Gatekeeper pass rule with a generic notarized bundle, and show it rejecting each of: an unsigned
@@ -487,10 +501,11 @@ frozen-contract compatibility across published installers; review and merge orde
   process-lifetime, mutation-boundary and supported-hook-fixture probes in "Frozen contracts" for the
   lock decision. Record the exact OS versions and what passed before marking phase 1 complete.
   Supported hooks, real app refusal and hosted tap access belong to phase 7.
-- Qualify a disposable VM or dedicated test Mac for macOS 15/26, MLX, microphone, Apple Speech where available,
-  and the isolated HTTPS harness described below. Record the hardware fallback and its verification steps.
-  Record whether GitHub-hosted runners offer macOS 26 for the `macos-app` job.
-  Platform-contract uncertainty blocks freezing the installer. Pending signing credentials allow stub work.
+- Confirm the existing guest can run the isolated HTTPS harness described below. Record the host used for
+  MLX, microphone and Apple Speech checks that need hardware or a console session.
+  GitHub offers [native arm64 runners for macOS 15 and 26](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories).
+  Platform-contract uncertainty blocks freezing the installer. The packager and stubbed tests can be developed
+  while qualification proceeds. Gate A retains its release infrastructure prerequisites.
 
 ### Phase 2: Build and review the protected packager
 
@@ -544,8 +559,8 @@ frozen-contract compatibility across published installers; review and merge orde
   Load signing secrets only after the denial checks and canary verification pass. Dispatch from protected
   `main` using the Gate A SHA and reserve its build before signing. Verify the ZIP-only handoff.
   Extract the exact final ZIP and validate its staple. Restore a snapshot from before any assessment of the
-  app, verify quarantine on the extracted app and block Apple ticket lookup before assessment. Restore a separate
-  pre-assessment snapshot for the unstapled control. On each snapshot, launch the quarantined app through
+  app, verify quarantine on the extracted app and block Apple ticket lookup before assessment. Restore the same
+  pre-assessment snapshot for the unstapled control. In each case, launch the quarantined app through
   Finder with networking disconnected. Record that the stapled app launches and the unstapled control is
   refused, alongside the command-line assessments.
   See [Apple's Gatekeeper testing guidance](https://developer.apple.com/forums/thread/130560).
@@ -610,9 +625,8 @@ frozen-contract compatibility across published installers; review and merge orde
 - Add `scripts/verify_release.sh` (prepublication recheck and public check, tested with stubbed `gh` and `curl`),
   `scripts/candidate_harness.py` (the fixed-host HTTPS harness) and the `draft` and `approve` commands of
   `scripts/release_handoff.sh` (stubbed storage and `gh`), so Gate B reviews all of them. Run the installer,
-  verifier, handoff and harness tests in the `macos-app` job of `test.yml`, which runs on `macos-15`; Ubuntu runs the
-  full suite and skips macOS-only cases. The phase 5 host reruns the same command on macOS 26 unless a macOS 26
-  runner is available.
+  verifier, handoff and harness tests in the `macos-app` job of `test.yml` on a `macos-15` and `macos-26` matrix.
+  Ubuntu runs the full suite and skips macOS-only cases.
 - Update developer recipes and smoke tests, including distinct alternate-ID outputs, paths and state. Smoke quits only
   its launched PID. Implement the build record (developer-only directory) and the manual legacy path. Document adopted provenance and smoke behavior in the development guide.
   Implement and test `just app-remove` and `just app-cleanup` through the developer-owned maintenance path before
@@ -638,11 +652,11 @@ frozen-contract compatibility across published installers; review and merge orde
   creates a draft from the verified bytes and records its ID, tag, SHA and
   four digests. Test the final ZIP and offline staple as in phase 3. If inputs change, the owner retires the stale
   draft. Rebuild and retest from a fresh Gate B commit with a build above every earlier reservation.
-- Test the exact installer and ZIP via the fixed-host HTTPS harness (`scripts/candidate_harness.py`) in a disposable
-  VM or dedicated isolated test Mac.
-  Run the Python server on a separate host or guest. Use isolated routing and a test CA trusted only by the clean
-  target. Record that the target has no usable Python interpreter, uv, just, Brew or Command Line Tools. Verify hashes before
-  each test. When a VM lacks required hardware, repeat affected acceptance checks on the dedicated Mac with the same
+- Test the exact installer and ZIP via the fixed-host HTTPS harness (`scripts/candidate_harness.py`) with isolated
+  app and installer state. On CI the harness can serve on loopback within the ephemeral runner. For interactive
+  guest checks, the existing Mac can serve the bytes to the guest. Use isolated routing and trust the test CA
+  only in the test context. Verify hashes before each test and capture the stock-tool execution trace on both
+  supported OS majors. Where the guest lacks required hardware, repeat affected checks on the existing Mac with the same
   harness and bytes. Keep production URLs and signature checks intact. Remove test CA and routing when finished.
   Phase 6 covers actual GitHub delivery.
 - Seed an older standalone installation using the private signed fixture with a matching lower version/build,
@@ -850,7 +864,7 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 | Candidate acceptance | Release owner | Approval binds the passing Phase 5 record ID and digest, draft ID, commit, tag and four asset digests. Recheck immediately before publishing. |
 | `release-approval-X.Y.Z.json` (from `release_handoff.sh approve`) and release evidence | `scripts/verify_release.sh` | Prepublication recheck and public check read one approval record and exit non-zero on drift; the workflow never publishes |
 | Published release checks | Phase 7 installer inventory | Match each published installer to its success or failure record and verified bytes. Use passing evidence only to authorize a Homebrew version. |
-| `scripts/candidate_harness.py` on a separate host | Disposable acceptance target | Serves exact bytes at fixed URLs across isolated routing. The target keeps stock macOS tools. |
+| `scripts/candidate_harness.py` | Ephemeral CI runner or isolated guest state | Serves exact bytes at fixed URLs through test-only routing and trust. The installer uses qualified stock macOS tools. |
 
 ### Review decisions
 
@@ -1038,10 +1052,11 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 - Developer smoke tests cover refusal of preexisting processes before publication, `--build`, a missing
   bundle and launch/quit under the lock. Open tests cover quit before shared output replacement and refusal
   of standalone or Brew copies. Test guarded refusal while a real unbundled `just app-run` is active.
-- Phase 5 tests install and real upgrade with the private signed predecessor on clean macOS 15 and 26. Test Terminal
-  and SSH entry, blocked permission, quit refusal, timeout, PID reuse and same-ID replacement before quit dispatch. Exercise
-  Microphone and launch-at-login on both versions and Apple Speech on 26. Record prompts or manual resets per OS.
-  Resolve any missing host capability using the qualified hardware fallback.
+- Phase 5 tests install and real upgrade with the private signed predecessor on macOS 15 and 26 using isolated
+  destinations and state. Run Terminal and SSH entry and real quit tests in the existing guest. Cover blocked
+  permission, quit refusal, timeout, PID reuse and same-ID replacement before quit dispatch. Exercise microphone,
+  launch-at-login and Apple Speech on the existing macOS 26 guest or hardware. Record the tested OS build and
+  observed prompts or manual resets.
 - Observe the first app/service start with a ready environment. Capture child-command and download traces, environment
   fingerprints and cache sentinels. Use an isolated positive control that attempts a refresh to prove the trace
   would detect `uv sync` and downloads. Confirm that candidates preserve server pins.
@@ -1085,9 +1100,9 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   as demonstrated in the Phase 4 sandbox. The approval binds the passing Phase 5 evidence record.
   Phase 6 records failed publication checks and withdrawal status before any corrected release ships.
 - The version-1 matrix passes against each verified private candidate before publication and Phase 6 confirms the
-  public installer matches the tested bytes. Recovery works while downloads are blocked. A clean target
-  without Python, uv, just, Brew or Command Line Tools bootstraps from the packaged installer and ZIP, which covers the
-  packager-to-installer round trip.
+  public installer matches the tested bytes. Recovery works while downloads are blocked. The packaged installer
+  and ZIP complete the bootstrap on macOS 15 and 26, with a child-command trace confirming only qualified stock
+  tools were used during the packager-to-installer round trip.
 - Negative signing, denial, cancellation and secret checks pass. Homebrew operation tests belong to phase 7.
 
 ### Later delivery — Homebrew
@@ -1267,6 +1282,11 @@ fixture run in `/opt/homebrew`, with the original pre-run inventory of zero form
 A read of `SystemVersion.plist` reported macOS 26.6.2 (25G83), and `uname -m` returned `arm64`.
 These are observations from the current guest. The fixture was not rerun, and durable artifact preservation
 and the remaining lock qualification are still pending.
+
+2026-11-20 test workflow decision. The "Test environments" section supersedes the earlier recommendations
+to provision fresh macOS installs or accounts for qualification. Reuse the current guest and its login for
+interactive checks and CI for stock-tool coverage on both macOS versions. The guest's macOS 26 checksum and
+descriptor-lock observations stand. The equivalent macOS 15 checks and signed-candidate acceptance are pending.
 
 ## Issues & Solutions
 
