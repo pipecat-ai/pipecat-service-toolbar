@@ -307,7 +307,9 @@ the shared release contract. The first release freezes the following contracts b
 ### Installation and upgrade contract
 
 - The standalone installer pins repository, tag, expected Team ID and bundle ID. It verifies the manifest, checksum,
-  archive layout and extracted bundle before requesting quit. Use stock Bash 3.2 and only a closed set of
+  archive layout and extracted bundle before requesting quit for candidate replacement. Local recovery and
+  maintenance verify the recorded bundle and process identity before any required quit and use no network.
+  Use stock Bash 3.2 and only a closed set of
   absolute-path commands qualified in phase 1: HTTP client, checksum tool, `codesign`, `spctl`, `ditto`, plist reader,
   lock tool, archive inspector, running-instance probe, process-table tool, CPU detector, `osascript`, Bash and needed
   file utilities (which also read Caskroom metadata).
@@ -342,7 +344,9 @@ the shared release contract. The first release freezes the following contracts b
   stops the operation. Document that inactive receipt-less copies in arbitrary custom folders are undiscoverable.
   Ask users to identify and remove known copies before switching channels.
   `just app-run` launches the same service unbundled and can share app state. Include it in the effective user's
-  process-table check using the qualified executable identity. If that process is active or its identity is
+  process-table check using the qualified executable identity. The build's identified `--render-icon` helper
+  exits before runtime startup. Exclude only a verified helper invocation, and stop on unresolved process identity.
+  If an unbundled app is active or its identity is
   unresolved, stop the guarded operation and ask the developer to end the run from its owning terminal.
   Never dispatch a bundle quit to it. Phase 1 proves detection of the real unbundled launch.
 - Decision (grilled): check Brew ownership by reading Caskroom metadata for the cask token under the native
@@ -371,7 +375,11 @@ the shared release contract. The first release freezes the following contracts b
   that predate the record, including build 474, have none. They take the manual path: the user removes the old copy
   by hand (documented in `docs/development.md`), then runs `just app-install`.
 - Alternate `BUNDLE_ID` builds have separate outputs, install basenames, locks and state. Use one output resolver
-  in direct builds, developer recipes and smoke. Reject aliases to protected default paths. Prepare each build
+  in direct builds, developer recipes and smoke. At runtime derive separate app-managed support, cache and log
+  roots from the validated alternate bundle ID in `AppPaths`. Reject aliases between managed roots, including
+  case aliases on case-insensitive volumes. Preserve the default and unbundled paths, existing preference
+  domains, shared model caches and fingerprint rules. Keep existing port ownership checks when two instances run.
+  Prepare each build
   in a private per-invocation directory with its own mutable inputs, including wheel and Swift build staging.
   Decision (grilled): direct `scripts/build_app.sh` and `just app-build` hold the applicable per-user lock only
   for ownership and process checks and replacement of the shared `build/` output. A timeout names the holder.
@@ -388,8 +396,13 @@ the shared release contract. The first release freezes the following contracts b
   Ignore inactive repository outputs in duplicate scans and check their running instances. Ownership of a running
   instance follows its resolved path. `just app-open` may quit the repository `build/` output or a verified developer
   install, which keeps the developer edit-run loop working. It refuses a standalone- or Brew-owned path and any
-  unresolved path. `just app-install` checks and, if needed, quits the verified running repository output before
-  touching it or replacing an installed copy.
+  unresolved path. Under the lock, `just app-install` compares the independently prepared build against the
+  verified installed bundle and receipt before quitting or replacing either shared output. An exact match returns
+  success without quitting, replacing or launching. For an eligible change, quit a verified running repository
+  output before touching it or replacing an installed copy. Preserve launch after a successful install or
+  replacement. Commit the bundle and receipt first, then retain the worker lock through bounded observation of
+  the launched process identity. Close the lock descriptor in the launch child. If launch fails or times out,
+  report the successful install and the unconfirmed launch. Leave the verified installation in place.
 - Stage and verify beside the destination, then quit only the verified process using the adapted bounded helper.
   Journal the stage allocation and record the private staging directory's identity before writing any staged
   content, as specified in the recovery table. Every caller targets a verified process: `just app-open`,
@@ -403,7 +416,8 @@ the shared release contract. The first release freezes the following contracts b
   The crash model is process death (SIGKILL, terminal close or shell termination). Power loss and kernel panic are
   outside version 1, and the documentation says so.
 - Channel switching uses verified removal by the current owner and then a separate locked install. Retain preferences,
-  app environments, model weights, shared caches and server pins. Installation starts no services. Validate readiness
+  app environments, model weights, shared caches and server pins. Standalone install and upgrade leave the app
+  and its services stopped until the user launches it. Validate readiness
   by observing first start for refresh and download attempts, as well as checking fingerprints and cache contents.
 - Test microphone permission, launch-at-login, and the Apple Speech prompt and recognition after signer/path changes
   on the existing macOS 26 guest or hardware. Record the OS build and each tested user action under `## Findings`
@@ -593,9 +607,9 @@ frozen-contract compatibility across published installers; review and merge orde
 
 ### Phase 4: Implement and review standalone installation and updates
 
-**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, new `scripts/lib/dev_install.sh`, new `scripts/verify_release.sh`, `scripts/release_handoff.sh`, new `scripts/candidate_harness.py`, new `scripts/check_evidence_pr.py`, new `.github/workflows/evidence_check.yml`, `scripts/build_app.sh`, `scripts/package_release.sh`, `scripts/quit_app.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `docs/architecture.md`, `AGENTS.md`
-**Test files:** new `python_tests/test_app_installer.py`, new `python_tests/test_distribution_contract.py`, `python_tests/test_release_packaging.py`, `python_tests/test_release_handoff.py`, `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, `python_tests/test_docs.py`, new `python_tests/fixtures/installer-v1/`
-**Test command:** `uv run pytest python_tests/test_app_installer.py python_tests/test_distribution_contract.py python_tests/test_release_packaging.py python_tests/test_release_handoff.py python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_docs.py -q`
+**Impl files:** new `scripts/install.sh`, new `scripts/lib/install_app.sh`, new `scripts/lib/dev_install.sh`, new `scripts/verify_release.sh`, `scripts/release_handoff.sh`, new `scripts/candidate_harness.py`, new `scripts/check_evidence_pr.py`, new `.github/workflows/evidence_check.yml`, `scripts/build_app.sh`, `scripts/package_release.sh`, `scripts/quit_app.sh`, `.github/workflows/release.yml`, `.github/workflows/test.yml`, `justfile`, `scripts/ui_smoke.sh`, `Sources/PipecatToolbarCore/AppPaths.swift`, `Sources/PipecatServiceToolbar/App/ToolbarApp.swift`, `app-version.json`, `CHANGELOG.md`, `README.md`, `docs/development.md`, `docs/migration.md`, `docs/architecture.md`, `AGENTS.md`
+**Test files:** new `python_tests/test_app_installer.py`, new `python_tests/test_distribution_contract.py`, `python_tests/test_release_packaging.py`, `python_tests/test_release_handoff.py`, `python_tests/test_app_recipes.py`, `python_tests/test_migration_contract.py`, `python_tests/test_docs.py`, new `python_tests/fixtures/installer-v1/`, new `Tests/PipecatServiceToolbarTests/AppPathsIsolationTests.swift`
+**Test command:** `uv run pytest python_tests/test_app_installer.py python_tests/test_distribution_contract.py python_tests/test_release_packaging.py python_tests/test_release_handoff.py python_tests/test_app_recipes.py python_tests/test_migration_contract.py python_tests/test_docs.py -q && swift test --filter AppPathsIsolationTests`
 **Goal:** Gate B lands a complete, testable standalone candidate source tree.
 
 - Create `scripts/lib/`. Implement the qualified installer and local maintenance operations using the same lock,
@@ -648,7 +662,8 @@ frozen-contract compatibility across published installers; review and merge orde
   `scripts/release_handoff.sh` (stubbed storage and `gh`), so Gate B reviews all of them. Run the installer,
   verifier, handoff and harness tests in the `macos-app` job of `test.yml` on a `macos-15` and `macos-26` matrix.
   Ubuntu runs the full suite and skips macOS-only cases.
-- Update developer recipes and smoke tests, including distinct alternate-ID outputs, paths and state. Smoke quits only
+- Update developer recipes and smoke tests, including distinct alternate-ID outputs, paths and state. Resolve
+  app-managed runtime roots before constructing `AppModel`. Smoke quits only
   its launched PID. Implement the build record (developer-only directory) and the manual legacy path. Document adopted provenance and smoke behavior in the development guide.
   Implement and test `just app-remove` and `just app-cleanup` through the developer-owned maintenance path before
   Gate B. Test `app-open` replacing a verified running output and smoke's explicit and missing-bundle builds.
@@ -685,6 +700,8 @@ frozen-contract compatibility across published installers; review and merge orde
   Run the version-1 matrix against the exact verified private candidate installer before approving its draft.
   Record its installer digest and matrix results in the private Phase 5 acceptance record.
   Test fresh install, in-place upgrade, ownership/quit behavior, recovery, Gatekeeper and state preservation.
+  Trace successful standalone install and upgrade through completion. Require the app and its services
+  to stay stopped until explicit launch.
   Run real SIGKILL interruptions against the bundled script, with the journal-reconcile table as the oracle.
   Block downloads during retries and prove local recovery completes before any new download attempt.
   Run standalone/developer lock parity here. Also run the signer-change test from the installation contract
@@ -827,13 +844,15 @@ No source build, package-manager dependency installation or cache migration belo
 
 | Journal intent | Reconcile on retry |
 |---|---|
-| Stage allocation intended (path journaled, directory identity pending) | If the path is absent, restart staging. If it exists, preserve the directory and journal for diagnosis. |
-| Stage begun (directory device and inode journaled) | If the path exists, resume cleanup only after validating the recorded directory identity. If it is absent, restart staging. Preserve the journal and directory on any mismatch. Leave the original bundle and receipt untouched. |
+| Stage allocation intended (path journaled, directory identity pending) | If the stage is absent, verify the untouched original bundle and receipt or the original empty state, then clear the intent. If it exists, preserve the directory and journal for diagnosis. |
+| Stage begun (directory device and inode journaled) | Verify the untouched original bundle and receipt or the original empty state. If the stage exists, validate its recorded directory identity and finish journaled cleanup. If it is absent, clear the intent. Preserve the journal and directory on any mismatch. |
 | Stage ready or backup rename intended | Inspect stage, original and backup. Keep the verified old bundle in place or restore it if the rename happened. On a fresh install the old bundle and receipt must both be absent. |
 | New bundle rename intended | Compare stage and destination against the verified target identity. Finish when the verified new bundle is in place. Otherwise restore the verified old pair, or return to the verified empty state on a fresh install. |
 | Receipt replacement intended | Compare the live receipt to both snapshots. Commit or verify the new receipt after checking the new bundle. Keep the verified backup until the pair is consistent. |
 | Final cleanup intended | Verify the installed pair, then purge only its journal-owned stage and backup. Clear the active record after cleanup finishes. |
-| Removal backup move intended | Compare the live bundle and the journal-owned non-`.app` backup against the saved receipt. Finish the move, or restore the verified bundle if the move did not happen. |
+| Removal backup move intended | If the verified live bundle and matching receipt remain and the backup is absent, clear the unperformed move intent. If the live path is absent and the backup matches the saved receipt, retain the backup and advance to receipt removal. Preserve ambiguous states. |
+| Receipt removal intended | Require an absent live bundle and a verified backup matching the saved receipt. If the live receipt matches the snapshot, clear it. An absent receipt means the write already happened. Preserve the journal on any other receipt state. Keep the backup and record completion intent after confirming the receipt is absent. |
+| Completed removal record intended | Require the live bundle and receipt to be absent and the backup to match the saved receipt. Create the completed record atomically if absent or verify an exact match. Retain the backup and completed record, then clear the journal. On a mismatch preserve all records. |
 | Cleanup purge intended | Validate the private purge path and root identity, then resume deletion inside it. Retire the records only after the purge root is absent. |
 
 Any retrying command of the owning channel applies these rules. Standalone install and maintenance use the
@@ -843,6 +862,7 @@ running and for a stopped target. Request bounded quit only when recovery would 
 preserve the journal and files. Acquire the lock and reconcile the local journal before any network request.
 Local recovery and maintenance use no network. A valid install or update can fetch the candidate only after
 recovery finishes. Check the verified candidate's version, build and identity before sending a quit for the update.
+After rolling back interrupted staging, dispatch the requested command. Only install or update may start staging again.
 
 - For user-invoked removal, expose the local-only `install.sh --version X.Y.Z --maintenance remove` and
   `install.sh --version X.Y.Z --maintenance cleanup` operations with the optional app directory.
@@ -856,7 +876,9 @@ recovery finishes. Check the verified candidate's version, build and identity be
   If removal already deleted it, validate the backup against the saved receipt and require the live receipt to be absent.
 - Write the completed removal record before clearing the active record. Recovery of that transition is idempotent and
   leaves the completed record intact. A new transaction may then run. Exclude only the verified retained backup
-  from duplicate scans and always check the original path for a new owner. Explicit cleanup revalidates the backup,
+  from duplicate scans and always check the original path for a new owner. A valid prior-channel completed record
+  allows a new installation and preserves the backup. Only the recorded channel may purge it.
+  Explicit cleanup revalidates the backup,
   then journals and atomically renames it into a private same-volume purge directory unique to the operation.
   Record the verified root's device and inode before rename. On retry, validate the private purge path and root
   identity again, then resume deletion without re-verifying the partially deleted bundle. Never follow symlinks.
@@ -990,7 +1012,7 @@ sequenceDiagram
 | Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Land success or failure and withdrawal evidence through its designated PR. | Owner approval, then public test session |
 | Homebrew delivery | Phase 6 complete and phase 7 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence; separately approved tap PR | Later test session and owner approval |
 | Install/upgrade | User invokes standalone or Brew | Receipt/Brew metadata and common lock. Standalone reconciles local state before download. | Verify the artifact and eligibility before quit. Persist bundle/receipt or recoverable backup, then release the lock. | Local process |
-| Developer build and install | User invokes build script or local recipe | Common lock, bundle-specific build paths, ownership and signing identity | Build output or verified developer bundle and receipt. Refuse managed destinations. | Local process |
+| Developer build and install | User invokes build script or local recipe | Common lock, bundle-specific build paths, ownership and signing identity | Build output or verified developer bundle and receipt. For an actual developer install or replacement, observe launch with the worker lock held. | Local process |
 | Developer open/smoke | User invokes `just app-open` or `scripts/ui_smoke.sh` | Common lock, ownership and bundle ID | Open checks owner before quit. Smoke refuses an existing running copy and quits only its own launch. | Local process |
 | Removal and cleanup | User runs `install.sh --version X.Y.Z --maintenance remove\|cleanup` or the developer recipe | Common lock, receipt, journal, bundle path and running-instance state | Retained backup and completed removal record, or the restored pair | Local process |
 
@@ -1034,22 +1056,28 @@ the owner workstation.
   recovery. Cover a verified
   installed pair, verified empty fresh-install rollback, verified removal with retained backup, finished purge and
   preserved evidence on uncertainty. Retry after partial purge and prove deletion stays inside the verified purge root.
-  Exercise a retained removal backup across a new installation and validate original-path checks.
+  Remove a verified copy, install through a different channel with the backup retained and validate original-path
+  checks. Require the new owner to refuse purging that backup and the original owner to leave the new app intact.
   Disable downloads during interrupted-transaction retries. Check bundle, receipt, journal and backup state
   after local recovery. A later download failure must preserve that recovered state.
 - Race standalone, direct developer builds, install, open and smoke across destinations. Verify that the lock inode
   persists and a second writer cannot enter, including after wrapper death. Change `HOME` and run from SSH to
   compare canonical lock resolution. Force overlapping private preparation and require independent outputs.
   Test refusal to replace a running direct-build output and quit-before-replacement for `just app-install`.
+  Race a competing operation against developer launch confirmation. Test launch timeout, descriptor closure in
+  the app, and an exact developer match that issues neither quit nor launch.
   Kill the mutation worker with a surviving observer and require the observer to hold no lock. Cover alternate
   IDs, path aliases, same-version developer recovery, a launch before rename, and unsafe destination rejection.
+  Launch default and alternate builds concurrently in disposable state. Check separate app-managed roots, intact
+  default paths and fingerprint rules, and unchanged shared model-cache locations. Compare an active unbundled
+  run from another checkout with a concurrent verified icon-render helper.
   Phase 7 adds real Brew races and cross-release compatibility. Test cancellation on every route.
 
 | Existing state | Standalone installer | Developer install | Cask in phase 7 |
 |---|---|---|---|
 | Absent | Install | Install | Install |
-| Verified own target, running | Check version, build and identity first. On an eligible update, request bounded quit before replacement. | Request bounded quit, then replace if allowed | Request bounded quit, then upgrade if allowed |
-| Verified own target, stopped | Apply version rules | Replace, including same build | Upgrade |
+| Verified own target, running | Check version, build and identity first. On an eligible update, request bounded quit before replacement. | Exact match is a no-op. For a distinct eligible build, request bounded quit before replacement and relaunch. | Request bounded quit, then upgrade if allowed |
+| Verified own target, stopped | Apply version rules | Exact match is a no-op. Replace and launch distinct eligible code, including a distinct copy of the same build. | Upgrade |
 | Verified foreign ownership | Refuse | Refuse | Refuse |
 | Receipt-less with independent developer provenance | Refuse | Adopt only on explicit request | Refuse |
 | Unknown ownership or additional/unresolved running copy | Refuse | Refuse | Refuse |
@@ -1064,8 +1092,8 @@ Version-1 compatibility matrix (each cell is a test; a refusal never quits or mu
 | `protocol` file | Every installer proceeds | Stop before recovery | Stop | Not applicable |
 | Lock diagnostic | Read for diagnostics | Stop on a recognized newer schema | Ignore malformed contents at a safe path. Stop on an unsafe path. | Not applicable |
 | Receipt | Honoured by every installer | Stop | Stop | Refuse |
-| Active journal | Recovered by every installer | Stop and preserve | Stop and preserve | Stop and preserve |
-| Completed removal record | Honoured; backup excluded from scans | Stop | Stop | Stop |
+| Active journal | Recovered by its owning route | Stop and preserve | Stop and preserve | Stop and preserve |
+| Completed removal record | Verified backup excluded from scans. Cleanup requires the recorded owner. | Stop | Stop | Verified prior-channel record permits installation and preserves the backup. Refuse foreign cleanup or a mismatched backup identity. |
 
 Run the matrix against the exact verified private installer in Phase 5 for the first release and every later
 candidate. In Phase 6 verify that the public installer has the same digest. In Phase 7 use the inventoried
@@ -1104,6 +1132,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 
 - A version-specific script installs and updates the verified app on macOS 15 and 26. It verifies same-version
   reruns, rejects downgrades and preserves existing state on failure or quit refusal.
+  On successful install and upgrade, process traces show the app and its services stay stopped until explicit launch.
 - Installation and recovery follow the ownership, lock and journal rules, including alternate IDs and user-invoked
   removal. Removal retains app data. A subsequent install proceeds while the verified backup remains available.
 - First-run traces show no refresh or model download for a ready environment. Fingerprints, server pins and shared
