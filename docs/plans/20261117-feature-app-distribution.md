@@ -1283,6 +1283,38 @@ A read of `SystemVersion.plist` reported macOS 26.6.2 (25G83), and `uname -m` re
 These are observations from the current guest. The fixture was not rerun, and durable artifact preservation
 and the remaining lock qualification are still pending.
 
+### Phase 1 follow-up — 2026-11-19
+
+- Preserved the [revision 3 runner and fixture](evidence/pipecat-cask-spike-r3/README.md) from the host ZIP.
+  The archive passed integrity checks and its SHA-256 is
+  `3c434549e256ea84f0db8eec73f5cc3bfc27061f612c60944054ef64b334bc80`.
+  The extracted files match the archive byte for byte. Export of the original guest event and command logs is pending.
+- Native host, macOS 26.6.2 (25G83), arm64, with Xcode. On a disposable file, command-form
+  `/usr/bin/lockf -k LOCK COMMAND` excluded a Ruby `File#flock` contender while the wrapper lived.
+  Killing only that wrapper let the contender acquire the lock while the command was still running.
+  The inode stayed the same. Reject command-form wrapper ownership for the mutation lifecycle.
+- On the same host, a worker that opened FD 9 using `exec 9>>"$lock"` and acquired it with
+  `/usr/bin/lockf -t 2 9` kept the lock after its parent wrapper was killed. The Ruby contender
+  returned the probe's busy status 42 both before and after wrapper death. A new contender returned 0
+  after worker death while a child observer with FD 9 closed was still running. The inode stayed the same.
+  In the reverse direction, descriptor-form `lockf` returned 75 while the Ruby holder lived and 0 after exit.
+  Repeat these probes on the required clean macOS 15 and 26 hosts before freezing the lock implementation.
+- UTM guest, macOS 26.6.2 (25G83), arm64, with developer tools selected. A stock Bash worker acquired
+  `/usr/bin/lockf -t 2 9` on a temporary file. A Ruby contender stayed blocked after the worker's parent
+  was killed. Killing the worker released the lock while a child observer with FD 9 closed was still alive.
+  The lock inode stayed the same. In the reverse direction, a Bash descriptor contender returned 75
+  while Ruby held the lock and 0 after Ruby released it. The probe used no app or Homebrew state.
+  This confirms the macOS 26 guest result. Clean hosts without developer tools on macOS 15 and 26
+  still need qualification.
+- A read-only GitHub API check reported a public repository, an unprotected `main`, and zero releases.
+  The remaining release settings and sandbox checks are pending.
+
+2026-11-20 guest inventory. The logged-in guest reported macOS 26.6.2 (25G83), arm64, with Command Line
+Tools selected and the Homebrew binary present. Stock `/usr/bin/shasum -a 256` returned the expected SHA-256
+of `abc` with only a stock `PATH` in its environment. This is a development-guest check. The SHA-256 values
+of the guest's revision 3 runner and fixture match the preserved host copies. The original evidence directory
+still contains `events.jsonl` with 17 records and 10 command log files. Export is pending.
+
 2026-11-20 test workflow decision. The "Test environments" section supersedes the earlier recommendations
 to provision fresh macOS installs or accounts for qualification. Reuse the current guest and its login for
 interactive checks and CI for stock-tool coverage on both macOS versions. The guest's macOS 26 checksum and
