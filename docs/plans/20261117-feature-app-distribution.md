@@ -1,6 +1,6 @@
 # Task: Ship standalone installation and updates, then add Homebrew
 
-**Status**: Planned — review run 20261120T085950Z findings addressed; pending review acceptance
+**Status**: Reviewed — findings addressed and accepted
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
@@ -1192,7 +1192,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   approves the matching tap PR. The hosted install succeeds before the project publishes the verified command
   in the project docs and announces cask availability.
 
-<!-- reviewed: YYYY-MM-DD @ <hash> -->
+<!-- reviewed: 2026-11-20 @ 3aee5bd023e2def9cc936516dde20272cca7830d -->
 
 ## Progress
 
@@ -1402,7 +1402,7 @@ covers interrupted staging, receipt removal and completion. Developer launch and
 have explicit rules. Temporary hosted probes qualify stock tools before Gate A. Required interactive signer
 migration uses the existing macOS 26 console, with macOS 15 headless checks required and interactive results
 reported when available. Live runner tracing, Bash downloader notarization applicability and signed candidate
-tests remain qualification tasks. Review acceptance is pending.
+tests remain qualification tasks. Review accepted on 2026-11-20.
 
 ## Issues & Solutions
 
