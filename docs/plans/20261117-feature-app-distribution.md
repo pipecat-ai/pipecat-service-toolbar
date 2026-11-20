@@ -131,9 +131,13 @@ Verified against the current checkout on 2026-11-17:
   `main` and execute no PR code. Validate a complete file snapshot for an exact PR, base and head. Require a
   verdict that GitHub enforces for that same PR and revision. Keep strict up-to-date branch protection and
   qualify the reporter in Phase 4. A commit-scoped pass on an ordinary PR cannot authorize an evidence PR
-  that shares its head. A base-only change invalidates the earlier verdict. For a
-  `release-evidence/X.Y.Z` branch require exactly those three paths
-  for the approved version and rejects all other paths, renames and deletions. Ordinary PRs pass. GitHub may
+  that shares its head. A base-only change invalidates the earlier verdict. Inspect both sides of renames
+  and all changed paths. Any change under `docs/release-evidence/`, or any `release-evidence/` head branch,
+  requires a matching evidence PR. The success branch requires exactly the three paths above for the approved
+  version. The `-failed` branch adds only the failure record for the Gate B version. The `-homebrew` branch
+  adds only the Homebrew record for a version with passing standalone evidence on the trusted base.
+  Evidence records are append-only. Reject evidence edits, renames, deletions, unknown paths and wrong
+  branches. Ordinary PRs pass this check when their complete diff leaves the evidence directory untouched. GitHub may
   suppress this trigger for SHA-like branch names. A missing verdict blocks merge. Document reopening the change
   from a supported branch name (the designated name for evidence PRs) and waiting for a verdict. The check
   guards against mistakes in the owner's own PR. The owner marks it
@@ -162,6 +166,11 @@ Verified against the current checkout on 2026-11-17:
   failure record as available. Diagnostics use separate conditional S3 objects outside the release handoff.
   Phase 3 proves owner retrieval after timeout and failure. On acceptance staple and validate the app, then
   ZIP and hash the final bytes.
+- The proposed bundle and plain-text Bash downloader have distinct trust paths. Phase 1 resolves whether
+  Apple's network-installer notarization guidance applies to the downloaded script run through Bash.
+  Freeze the format only after recording a source that covers this form or qualifying it with a sandbox
+  release and the supported launch path. If separate notarization applies, revise the artifact contract
+  before freezing it. See [Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow#Export-a-package-for-notarization).
 - Publish exactly four assets: `Pipecat-Service-Toolbar-X.Y.Z-arm64.zip`, `SHA256SUMS`, `install.sh` and
   the plain-text `release-manifest.txt`. Use an exact schema for schema version, app version/build, bundle ID, Team ID,
   architecture, minimum macOS, filename and SHA-256. Reject duplicate, missing or unknown keys and invalid values.
@@ -178,6 +187,8 @@ Verified against the current checkout on 2026-11-17:
   workflow overwrite guard.
 - Keep a durable owner-controlled signing ledger outside the repo. Before approving a signing attempt, record its
   approved SHA, run ID and attempt with a build higher than the published baseline and all prior ledger entries.
+  The owner checks the reviewed build against that maximum, records the compared values, and withholds
+  deployment approval for a lower or equal build even if its reservation key is unused.
   Serialize approvals and wait for the preceding signing attempt to end before approving the next. Under the
   protected environment, each signing run conditionally creates an immutable S3 reservation keyed by repository
   and build number before importing signing credentials. Bind it to the same SHA, run ID and attempt. A retry, error or
@@ -248,7 +259,8 @@ Verified against the current checkout on 2026-11-17:
   on drift and obtain fresh approval. The seconds between that recheck and publication are an accepted window, and
   the public check is the enforcement point. If it fails, record the release ID, approved commit and asset digests,
   observed digests or explicit unavailability, the failed checks and withdrawal status. Land that record as
-  `docs/release-evidence/X.Y.Z-failed.md` through an ordinary reviewed PR before publishing a correction.
+  `docs/release-evidence/X.Y.Z-failed.md` through the `release-evidence/X.Y.Z-failed` evidence-only PR before
+  publishing a correction.
   Keep the approved bytes privately for the compatibility audit. With owner authorization, withdraw the defective
   release if Phase 1 qualified withdrawal. If it remains public, flag it in its release notes. Publish the correction
   with a higher version and build. Only a passing release gets the success evidence and user-facing install command.
@@ -268,8 +280,8 @@ the private handoff primitives.
 
 ### Frozen contracts
 
-Published installers are immutable and old versions stay downloadable, so the first release freezes these.
-They are fixed before phase 4 and may change only through a new installer release:
+Published installer bytes remain fixed while the release exists. Withdrawal and the private archive path follow
+the shared release contract. The first release freezes the following contracts before Phase 4:
 
 - Cask token `pipecat-service-toolbar`.
 - Lock primitive (see "Installer state and removal"): a kernel advisory lock on `operation.lock`.
@@ -494,6 +506,9 @@ frozen-contract compatibility across published installers; review and merge orde
   certificate is unavailable); and a notarized bundle checked against a different expected Team ID for the last.
   Record that `spctl` assessment is enabled on the host and require the notarized-source rule explicitly.
   Confirm the real asset redirect hosts and URL shape from a release in a sandbox repository of the same visibility.
+  Use that sandbox to qualify the downloaded plain-text installer through the documented Bash entry. Record
+  quarantine and Gatekeeper behavior with a pre-assessment snapshot and the basis for applying Apple's
+  separate network-installer notarization guidance. Resolve any unclear requirement before freezing the format.
   Qualify the Caskroom metadata paths, a custom-prefix fixture visible from an inspected path, and an inactive
   custom copy with no evidence in the inspected paths. Record what the allowed file utilities see in each case.
   Use disposable state.
@@ -531,8 +546,9 @@ frozen-contract compatibility across published installers; review and merge orde
   Exercise an older reachable commit with identical workflow bytes and one with a different workflow blob.
   Record the job's own workflow ref/SHA. On mismatch, refuse before credential import, build or private upload.
   Test partial upload, rejected overwrite, cross-run inputs and early four-asset mode refusal with stub storage.
-  Test two run attempts for the same signing build, an older build than the owner's ledger allows, and
-  reservation persistence after failure. Prove an unsigned canary or cleanup probe cannot enter signing.
+  Test two run attempts for the same signing build and reservation persistence after failure in CI.
+  Exercise the owner's pre-approval ledger check with a lower, unused build and record the refusal before
+  deployment approval. Prove an unsigned canary or cleanup probe cannot enter signing.
   Test that `release.yml` uploads no Actions artifacts and that canary mode imports no signing credentials and is
   rejected for drafts.
 - With the release owner, choose a private predecessor build above baseline 474 and the phase 1 published-build
@@ -564,6 +580,10 @@ frozen-contract compatibility across published installers; review and merge orde
   Finder with networking disconnected. Record that the stapled app launches and the unstapled control is
   refused, alongside the command-line assessments.
   See [Apple's Gatekeeper testing guidance](https://developer.apple.com/forums/thread/130560).
+  Sign a throwaway app with the expected Developer ID team in the protected signing context. Keep its
+  distinct bundle ID and bytes out of the release handoff. Submit no notarization request for it.
+  Run the qualified Gatekeeper rule with the fixture's expected bundle ID and show it rejects the valid
+  signature for lack of notarization. Record this separately from the unstapled control before Gate B.
   Retain the predecessor ZIP, handoff record and digest privately. Record retention and access evidence, and verify
   that the retention date covers phase 6 plus the re-entry margin.
 - Record a cancellation and controlled packaging failure after signing-credential import and before app signing.
@@ -602,19 +622,20 @@ frozen-contract compatibility across published installers; review and merge orde
   prepublication recheck result, public check result, `install.sh` SHA-256 and permission steps per OS; the existing
   `test_docs.py` globs only `docs/*.md`), the approval record schema and the evidence-only PR's exact path allowlist.
   Land the required check at Gate B, before any evidence PR: `.github/workflows/evidence_check.yml`
-  (`pull_request_target`, no PR checkout) and `scripts/check_evidence_pr.py`. Resolve standalone evidence
+  (`pull_request_target`, no PR checkout) and `scripts/check_evidence_pr.py`. Resolve standalone and failure evidence
   against the Gate B release version in the trusted base's `app-version.json`. For Homebrew evidence, require the requested
   version's passing standalone evidence on the trusted base even if the app version there has advanced.
   Evaluate the complete diff for immutable base/head SHAs through GitHub metadata or Git objects as data.
   Fail on incomplete enumeration or revision drift. Qualify a check reporter that binds the enforced result
   to PR number, head repo and ref, base SHA and head SHA. Evaluate GitHub's test merge revision as a possible
   check target and prove GitHub rejects reuse across PRs and base revisions before enabling it. Limit write
-  permissions to check reporting. Stop at Gate B if the required check cannot enforce this contract. Test deletions,
-  renames, server pins, constraints and mixed edits on an evidence branch. Test a Phase 7 style diff on an
-  ordinary branch and the second `-homebrew` PR. A static test asserts that the workflow checks out no PR ref.
+  permissions to check reporting. Stop at Gate B if the required check cannot enforce this contract.
+  Test additions, edits, deletions and renames into or out of the evidence directory on ordinary and designated
+  branches. Test protected paths mixed with pin or constraint edits, and positive and negative cases for all three
+  evidence branch forms. A static test asserts that the workflow checks out no PR ref.
   Before making the check
   required on production `main`, require it in a sandbox with the same base workflow and branch protection.
-  With other required checks green, show that an ordinary PR and both valid evidence PR forms can merge and that
+  With other required checks green, show that an ordinary PR and all three valid evidence PR forms can merge and that
   an invalid evidence PR is blocked. Cover overlapping synchronize runs, a head change during file enumeration,
   a delayed Homebrew evidence PR, and branch recovery when a SHA-like name suppresses the event. Push a commit
   that invalidates passing evidence and confirm merge requires a fresh verdict on the latest revision.
@@ -674,7 +695,7 @@ frozen-contract compatibility across published installers; review and merge orde
 
 ### Phase 6: Publish the approved standalone candidate and verify it
 
-**Impl files:** new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps), `README.md` (install command) in the success evidence-only PR. Any new `docs/release-evidence/X.Y.Z-failed.md` and plan progress records land through ordinary PRs.
+**Impl files:** new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps), `README.md` (install command) in the success evidence-only PR. A failed release adds only `docs/release-evidence/X.Y.Z-failed.md` through its designated PR. Plan progress lands through a separate ordinary PR.
 **Test files:** `python_tests/test_distribution_contract.py` (evidence fields and path allowlist), `python_tests/test_docs.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_docs.py -q`
 **Goal:** Verify the approved bytes through the public install and update path.
@@ -882,9 +903,10 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
 - Decision (grilled): The standalone installer reads Caskroom metadata for Brew ownership and never runs `brew`. Any
   evidence of an unsupported prefix on an inspected path, unreadable cask metadata, or unresolved ownership stops
   the operation. The installation contract states the limit for invisible inactive custom copies.
-- Decision (grilled): A required `pull_request_target` check validates evidence PRs by head-branch designation
-  without executing PR code. Its verdict binds the PR and current base and head. A missing verdict blocks merge.
-  Phase 7 Homebrew evidence lands in a second designated PR.
+- Decision (grilled): A required `pull_request_target` check validates evidence PRs without executing PR code.
+  Require the matching head-branch designation and path set for every change to protected evidence.
+  Its verdict binds the PR and current base and head. A missing verdict blocks merge.
+  Phase 7 Homebrew evidence lands in its own designated PR.
 - Decision (grilled): Direct builds hold the per-user lock only while writing `build/`. This narrows the earlier
   shared-lock decision and accepts that builds and installs on one machine serialize.
 
@@ -965,7 +987,7 @@ sequenceDiagram
 | Build and package | Reviewed manual dispatch and signing approval | Approved SHA, version/build, signing reservation, temporary credentials | Store private handoff and separate diagnostics. Clean up credentials. | CI job |
 | Draft creation | Owner retrieves a complete private handoff | Run identity, commit, tag and verified asset digests | Draft ID bound to the selected run and assets | Owner workstation |
 | Candidate acceptance | Complete draft available | Exact standalone assets and isolated app state | Evidence tied to commit and digests. Discard test state. | Disposable test session |
-| Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Land success evidence through the evidence-only PR. Record failure and withdrawal through an ordinary PR. | Owner approval, then public test session |
+| Publish and verify | Owner accepts standalone evidence | Tested bytes and approved metadata | Land success or failure and withdrawal evidence through its designated PR. | Owner approval, then public test session |
 | Homebrew delivery | Phase 6 complete and phase 7 prerequisites verified | Published ZIP, matching guard logic and cask template | Cask acceptance/audit evidence; separately approved tap PR | Later test session and owner approval |
 | Install/upgrade | User invokes standalone or Brew | Receipt/Brew metadata and common lock. Standalone reconciles local state before download. | Verify the artifact and eligibility before quit. Persist bundle/receipt or recoverable backup, then release the lock. | Local process |
 | Developer build and install | User invokes build script or local recipe | Common lock, bundle-specific build paths, ownership and signing identity | Build output or verified developer bundle and receipt. Refuse managed destinations. | Local process |
