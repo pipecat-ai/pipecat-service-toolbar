@@ -215,11 +215,11 @@ Verified against the current checkout on 2026-11-17:
   next candidate takes a higher version. Retiring a stale draft deletes only the
   draft. Verify tag-present and tag-absent cases in a sandbox.
 - Use a GitHub-hosted ephemeral runner and a protected environment limited to protected `main` through its deployment
-  branch policy. Environments cannot restrict by workflow file. `main` is writable only by the release owner and the
-  trusted repository admins (after the non-admin writers are resolved below), so it requires status checks, blocks
+  branch policy. Environments cannot restrict by workflow file. `main` requires status checks, blocks
   force pushes and deletion and has an empty bypass list, but requires no PR review. The owner's local review
-  gauntlet is the review gate for each gate PR. Record self-merge, merges by the trusted admins and self-approval of
-  the environment deployment as accepted residual risk. The workflow-blob binding stops a changed `release.yml` from
+  gauntlet is the review gate for each gate PR. The owner accepts the repository's write principals (admins and
+  non-admin collaborators) as trusted and does not downgrade them. Record self-merge, unreviewed merges to `main`
+  by any trusted writer and self-approval of the environment deployment as accepted residual risk. The workflow-blob binding stops a changed `release.yml` from
   running against older scripts. Each signing deployment needs approval from one listed `release-signing` reviewer.
   Signing approval is a separate action from approval of the final draft. Self-approval by a listed reviewer is
   permitted. Disable the environment's administrator bypass. Confirm the environment and reviewer list in Phase 1.
@@ -239,10 +239,10 @@ Verified against the current checkout on 2026-11-17:
   are trusted to retain their GitHub rights and leave publication to the designated publisher. Phase 1 records
   effective writers, including users, teams, organisation owners, apps and deploy keys, and identifies principals
   that can change repository policy or edit the environment. Resolve any effective writer outside the approved
-  inventory before credentialed signing or publication: downgrade it below write access, or have the owner accept
-  it by name in the inventory record. The default resolution is to downgrade the non-admin writers. Hold release
-  work until none remains unresolved. The 2026-11-20 recheck
-  found 13 non-admin write collaborators outside the admin set. Keep the verified inventory in owner-controlled records.
+  inventory before credentialed signing or publication: have the owner accept it by name in the inventory record,
+  or downgrade it below write access. The owner has chosen acceptance and will not downgrade existing collaborators.
+  Hold release work until none remains unresolved. The 2026-11-20 recheck
+  found 13 non-admin write collaborators outside the admin set; the owner accepts them as trusted principals. Keep the verified inventory in owner-controlled records.
   In the sandbox, prove that the owner can publish a draft with no tag and that the new tag points to the approved
   SHA. Separately test tag-creation denial and publication denial for the workflow token and identities expected
   to lack write access, with a missing and an owner-created tag as applicable. Test that the ruleset also
@@ -969,10 +969,10 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
   documented paths. Phase 7 uses the merged evidence when pinning earlier installer releases.
 - Decision (grilled): Gate A merges the reviewed workflow, packager and predecessor metadata. Phase 3 passes the live
   trust checks and produces the signed predecessor fixture. Gate B lands every candidate input.
-- Decision (grilled): `main` is writable only by the release owner and the trusted admins once the 13 non-admin
-  writers are downgraded. It requires status checks, blocks force pushes and deletion and has an empty bypass list,
-  but needs no PR review. The local review gauntlet is the review gate. Self-merge and admin merges are accepted
-  residual risk. This replaces the earlier required-review rule.
+- Decision (grilled): `main` requires status checks, blocks force pushes and deletion and has an empty bypass list,
+  but needs no PR review. The local review gauntlet is the review gate. The owner accepts all 9 admins and 13
+  non-admin write collaborators as trusted and does not downgrade anyone. Self-merge and unreviewed merges by any of
+  them are accepted residual risk. This replaces the earlier required-review rule.
 - Decision (grilled): Only `release-signing` reviewers who can read the owner ledger stay on the reviewer list.
   Phase 1 verifies and records this. Owner self-approval and the owner's own ledger check are accepted residual risk.
 - Decision (grilled): Varun Singh is the designated publisher. Existing repository admins keep their GitHub access
@@ -1474,7 +1474,8 @@ host reported Gatekeeper assessments enabled and rejected the ad-hoc build 474 w
 `/usr/sbin/spctl --assess --type execute --verbose=4` (exit 3).
 
 2026-11-20 publication decision. The release owner accepted the existing repository admins as trusted principals
-and will handle publication. The GitHub API recheck reported nine admin principals and 13 other collaborators
+and will handle publication. The owner later also accepted the 13 non-admin write collaborators and declined to
+downgrade them. The GitHub API recheck reported nine admin principals and 13 other collaborators
 with write access. The complete effective-writer inventory still needs review before credentialed signing or
 publication. The `release-signing` environment allowed `main` and listed three reviewers (GitHub needs one
 approval per deployment), with self-review allowed and admin bypass disabled.
