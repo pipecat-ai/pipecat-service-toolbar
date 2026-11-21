@@ -215,13 +215,17 @@ Verified against the current checkout on 2026-11-17:
   next candidate takes a higher version. Retiring a stale draft deletes only the
   draft. Verify tag-present and tag-absent cases in a sandbox.
 - Use a GitHub-hosted ephemeral runner and a protected environment limited to protected `main` through its deployment
-  branch policy. Environments cannot restrict by workflow file. The release owner manages the release PRs, so `main`
-  requires status checks, blocks force pushes and deletion and has an empty bypass list, but requires no PR review.
-  The owner's local review gauntlet is the review gate for each gate PR. Record self-merge and self-approval of the
-  environment deployment as accepted residual risk. The workflow-blob binding stops a changed `release.yml` from
+  branch policy. Environments cannot restrict by workflow file. `main` is writable only by the release owner and the
+  trusted repository admins (after the non-admin writers are resolved below), so it requires status checks, blocks
+  force pushes and deletion and has an empty bypass list, but requires no PR review. The owner's local review
+  gauntlet is the review gate for each gate PR. Record self-merge, merges by the trusted admins and self-approval of
+  the environment deployment as accepted residual risk. The workflow-blob binding stops a changed `release.yml` from
   running against older scripts. Each signing deployment needs approval from one listed `release-signing` reviewer.
   Signing approval is a separate action from approval of the final draft. Self-approval by a listed reviewer is
   permitted. Disable the environment's administrator bypass. Confirm the environment and reviewer list in Phase 1.
+  Every listed reviewer must be able to read the owner signing ledger. Phase 1 records, per reviewer, whether they
+  can, and removes any who cannot. When the owner approves, the ledger check is the owner's own, accepted as residual
+  risk.
   Load signing secrets in Phase 3 after the secret-free denial and production upload canary pass. Inject the
   confirmed Team ID and reject placeholders. Mask secrets and use
   an ephemeral keychain and private key files. Clean up on normal exits, errors and catchable cancellation. Forced
@@ -236,7 +240,8 @@ Verified against the current checkout on 2026-11-17:
   effective writers, including users, teams, organisation owners, apps and deploy keys, and identifies principals
   that can change repository policy or edit the environment. Resolve any effective writer outside the approved
   inventory before credentialed signing or publication: downgrade it below write access, or have the owner accept
-  it by name in the inventory record. Hold release work until none remains unresolved. The 2026-11-20 recheck
+  it by name in the inventory record. The default resolution is to downgrade the non-admin writers. Hold release
+  work until none remains unresolved. The 2026-11-20 recheck
   found 13 non-admin write collaborators outside the admin set. Keep the verified inventory in owner-controlled records.
   In the sandbox, prove that the owner can publish a draft with no tag and that the new tag points to the approved
   SHA. Separately test tag-creation denial and publication denial for the workflow token and identities expected
@@ -964,9 +969,12 @@ Qualify Homebrew's supported lifecycle hooks in phase 7. Apply the current
   documented paths. Phase 7 uses the merged evidence when pinning earlier installer releases.
 - Decision (grilled): Gate A merges the reviewed workflow, packager and predecessor metadata. Phase 3 passes the live
   trust checks and produces the signed predecessor fixture. Gate B lands every candidate input.
-- Decision (grilled): The release owner manages the release PRs. `main` requires status checks, blocks force pushes and deletion and has
-  an empty bypass list, but needs no PR review. The local review gauntlet is the review gate, and self-merge is
-  accepted residual risk. This replaces the earlier required-review rule.
+- Decision (grilled): `main` is writable only by the release owner and the trusted admins once the 13 non-admin
+  writers are downgraded. It requires status checks, blocks force pushes and deletion and has an empty bypass list,
+  but needs no PR review. The local review gauntlet is the review gate. Self-merge and admin merges are accepted
+  residual risk. This replaces the earlier required-review rule.
+- Decision (grilled): Only `release-signing` reviewers who can read the owner ledger stay on the reviewer list.
+  Phase 1 verifies and records this. Owner self-approval and the owner's own ledger check are accepted residual risk.
 - Decision (grilled): Varun Singh is the designated publisher. Existing repository admins keep their GitHub access
   as trusted principals. One configured `release-signing` reviewer approves each signing deployment. The publisher
   separately approves the verified draft and publishes it using the owner procedure.
@@ -1470,6 +1478,9 @@ and will handle publication. The GitHub API recheck reported nine admin principa
 with write access. The complete effective-writer inventory still needs review before credentialed signing or
 publication. The `release-signing` environment allowed `main` and listed three reviewers (GitHub needs one
 approval per deployment), with self-review allowed and admin bypass disabled.
+
+The committed `evidence/pipecat-cask-spike-r3/README.md` is the pre-run record: its "a pass on this version would"
+wording predates the passing revision 3 run. These Findings are authoritative and the file is left untouched.
 
 2026-11-20 release sequence corrections. An alpha installer accepts its exact numeric version. The prerelease
 flag flows from candidate dispatch to public evidence. Stable acceptance upgrades an installation made by the
