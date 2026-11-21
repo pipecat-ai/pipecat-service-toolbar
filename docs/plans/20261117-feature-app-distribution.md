@@ -1,6 +1,6 @@
 # Task: Ship standalone installation and updates, then add Homebrew
 
-**Status**: Planned — public alpha workflow revised, review pending
+**Status**: Planned — review accepted, Phase 1 qualification pending
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
@@ -61,8 +61,8 @@ Verified against the current checkout on 2026-11-17:
   is the settings administrator (`admin: <recorded in Phase 1>`). The settings administrator performs every
   admin-only step: enabling immutable releases, disabling the environment's administrator bypass, the Actions
   policy, artifact retention, environment reviewer edits, and creating or editing rulesets. The settings
-  administrator also exports bypass actors, Actions policy, retention, installed apps, deploy keys and effective
-  writers, and attaches the exports to the owner's record at Phase 1, before the Phase 3 secret load, before each
+  administrator also exports the immutable-release setting, bypass actors, Actions policy, retention, installed apps,
+  deploy keys and effective writers, and attaches the exports to the owner's record at Phase 1, before the Phase 3 secret load, before each
   Phase 5 signed dispatch (including the stable repeat in Phase 7) and at Phase 6. The owner verifies each export
   and records the result in that phase's `## Findings` block; a missing or stale export stops the phase.
 - `release-signing` already holds three environment secrets created 2026-11-20: `APPLE_AUTHENTICATION_KEY`,
@@ -127,8 +127,9 @@ Verified against the current checkout on 2026-11-17:
   gates and the full `skein:review-gauntlet` on each implementation PR. Resolve findings and merge normally to `main`.
   Gate A lands the release workflow, packager and predecessor metadata (same version, raised build, no changelog entry).
   Gate B lands every candidate input, the evidence-only check, final version metadata, the numbered changelog entry
-  and candidate documentation. Gate S (Phase 7, the stable release's Gate B) lands the stable version, build,
-  numbered changelog entry and README change after the alpha's success evidence merges. Gate C (Phase 8) lands the
+  and candidate documentation. Gate S (Phase 7, the stable release's Gate B) lands the stable version, build
+  and numbered changelog entry after the alpha's success evidence merges. The stable success evidence PR updates
+  the README install command after public verification. Gate C (Phase 8) lands the
   canonical cask, its generator and CI check before the hosted tap merge.
 - `main`'s live ruleset carries a `pull_request` rule with zero required approvals, merge-only, and
   `require_extra_approval_for_unattributed_changes: true`. Every change to `main`, including each gate, lands
@@ -196,9 +197,9 @@ Verified against the current checkout on 2026-11-17:
   Keep Gate B's release version and corresponding evidence policy on `main` until the success evidence PR or
   the failure record merges. The one exemption is a retired version: a version that was never published and is
   abandoned by stray-tag retirement or expired-predecessor recovery. A retired version needs no evidence record.
-  The next candidate's numbered changelog entry is the retirement record and names each skipped version as never
-  released. `scripts/check_evidence_pr.py` accepts a base whose version advanced past a retired number only when that
-  changelog note exists. Other changes to `main` still require a fresh evidence verdict on the resulting base.
+  The PR that advances the version records each retired version it skips as never released in the new numbered
+  changelog entry. `scripts/check_evidence_pr.py` accepts a base whose version advanced past a retired number
+  only when that changelog note exists. Other changes to `main` still require a fresh evidence verdict on the resulting base.
   Gate S follows the same rule for the stable version. After the stable release's success evidence merges, phase 8
   can qualify hooks and tap access. The canonical render and interoperability matrix require the merged release
   evidence. Gate C marks the cask instructions pending until the hosted tap PR merges and a public install succeeds.
@@ -238,10 +239,11 @@ Verified against the current checkout on 2026-11-17:
   maximum known published build. Phase 1 builds the inventory from the GitHub release list and any manifests, and
   records explicitly that none exists if none does. Inventory legacy builds without manifests from trusted release
   records and stop real release preparation if the maximum is uncertain. Require a workflow overwrite guard and
-  GitHub immutable releases. Immutable releases are a pending setting: on 2026-11-21
-  `GET repos/{owner}/{repo}/immutable-releases` returned 404. The settings administrator enables them in Phase 1,
-  and the same GET must then return `enabled: true`. In the sandbox, confirm that a prerelease published from a
-  draft becomes immutable.
+  GitHub immutable releases. The write-role account received HTTP 404 from the admin-read endpoint on 2026-11-21,
+  leaving the setting unverified. In Phase 1, the settings administrator runs
+  `GET repos/{owner}/{repo}/immutable-releases` with admin read access, enables the setting if needed, and records
+  the response showing `enabled: true` in the administrator export. In the sandbox, confirm that a prerelease
+  published from a draft becomes immutable.
 - Keep a durable owner-controlled signing ledger in Pipecat-managed storage outside the public repo. The owner
   records the approved SHA, run ID and attempt with a build higher than the published baseline and all prior ledger
   entries. The owner records the compared values and refuses to reserve a lower or equal build. A listed reviewer
@@ -263,7 +265,7 @@ Verified against the current checkout on 2026-11-17:
   run and `scripts/verify_release.sh`, even when it points at the approved SHA, and the public check confirms the
   tag resolves to the approved commit. The ruleset leaves tag creation open and has no bypass, so a stray `vX.Y.Z`
   tag can never be moved or deleted: it retires that version number (see "retired version" under "Review and merge
-  gates") and the next candidate takes a higher version and names the retired one as never released in its
+  gates") and recovery advances to a higher untagged version and names the retired one as never released in its
   changelog entry. Retiring a stale draft deletes only the draft. Verify tag-present (elsewhere and at the approved
   SHA) and tag-absent cases in a sandbox.
 - Use a GitHub-hosted ephemeral runner and a protected environment limited to protected `main` through its deployment
@@ -573,12 +575,13 @@ the Phase 7 stable release ahead of Phase 8 Homebrew work.
 
 - Record signer/release owner, the settings administrator (`admin: <recorded in Phase 1>`), Team ID, credential
   availability and protection settings as verified or pending. Commit the Team ID as the reviewed constant at Gate A.
-  Inspect credential metadata only. The settings administrator enables immutable releases, disables the environment
-  administrator bypass, sets the Actions policy and artifact retention, and makes reviewer edits; the owner then
-  confirms with `gh api` (read-only, `write` role) that the `release-signing` environment, approved reviewers, branch
-  policy and `GET repos/{owner}/{repo}/immutable-releases` (`enabled: true`) match the shared release contract.
-  The settings administrator exports bypass actors, Actions policy, retention, installed apps, deploy keys and
-  effective writers and attaches them to the owner's record; the owner verifies them and records the export digests.
+  Inspect credential metadata only. The settings administrator verifies immutable releases with admin read access
+  and enables the setting if needed. The administrator disables the environment administrator bypass, sets the
+  Actions policy and artifact retention, and makes reviewer edits. The owner confirms the `release-signing`
+  environment, approved reviewers and branch policy using metadata available to the `write` role.
+  The settings administrator attaches the response showing `enabled: true` and exports for bypass actors, Actions
+  policy, retention, installed apps, deploy keys and effective writers to the owner's record. The owner verifies
+  the exports and records their digests.
   Verify the signing reviewer list separately from the publication inventory. Record what
   immutable releases allow for deletion. List the `release-signing` environment secret names with `gh api` and fail
   on any name other than `APPLE_AUTHENTICATION_KEY`, `APPLE_AUTHENTICATION_KEY_ID` and
@@ -814,8 +817,10 @@ the Phase 7 stable release ahead of Phase 8 Homebrew work.
   Test additions, edits, deletions and renames into or out of the evidence directory on ordinary and designated
   branches. Test protected paths mixed with pin or constraint edits, and positive and negative cases for all three
   evidence branch forms. Test retired versions: accept a base whose version advanced past a retired number when the
-  changelog note exists, and reject it when the note is missing or names the wrong version. A static test asserts
-  that the workflow checks out no PR ref.
+  changelog note exists, and reject it when the note is missing or names the wrong version. Cover the combined case
+  of an expired predecessor and a stray tag on the current unpublished version. Verify that recovery selects a
+  higher untagged ZIP-only predecessor and a still higher untagged candidate, and records retired versions at
+  each advance. A static test asserts that the workflow checks out no PR ref.
   Before making the check
   required on production `main`, require it in a sandbox with the same base workflow and branch protection.
   With other required checks green, show that an ordinary PR and all three valid evidence PR forms can merge and that
@@ -883,14 +888,18 @@ the Phase 7 stable release ahead of Phase 8 Homebrew work.
   alpha's installer and assets authenticated against its merged success evidence. Give the two headless jobs
   only `actions: read` and `contents: read`. Validate each archive before extraction and check availability
   before dispatching acceptance.
-- If the candidate artifact expires, retire its draft if present and produce a fresh candidate from a reviewed build above
-  the signing ledger maximum. If the first alpha's predecessor artifact expires after Gate B, retire any stale
-  candidate draft. Merge a focused recovery commit on current `main` that keeps `main`'s current unpublished
-  version (the abandoned candidate's) and reserves a higher build. Use the current reviewed workflow's ZIP-only dry-run mode to sign and verify that
-  build as the new predecessor. The abandoned candidate's version is now a retired version. Then review a fresh
-  Gate B commit with a higher version and build for the candidate, whose changelog entry names each retired
-  version as never released. Apply the workflow-blob check to each dispatch. Repeat hosted acceptance with both live, verified
-  handoffs.
+- If the candidate artifact expires, retire its draft if present and produce a fresh candidate from a reviewed
+  build above the signing ledger maximum. If the version has a stray tag, retire that version and advance to a
+  higher untagged version under the retirement rule.
+- If the first alpha's predecessor artifact expires after Gate B, retire any stale candidate draft. Use `main`'s
+  current unpublished version for the replacement predecessor if it is untagged. If it has a stray tag, choose
+  a higher untagged version and name the abandoned version as never released in the recovery commit's numbered
+  changelog entry. Merge a focused recovery commit on current `main` with the chosen version and a build above
+  the signing ledger maximum. Use the current reviewed workflow's ZIP-only dry-run mode to sign and verify
+  that build. Then review a fresh Gate B commit with an untagged candidate version and build both higher than
+  the replacement predecessor's. Record the skipped, never-published predecessor version in the candidate's
+  numbered changelog entry. Apply the workflow-blob and existing-tag checks to each dispatch. Repeat hosted
+  acceptance with both live, verified handoffs.
   Serve the downloaded bytes on loopback. For interactive guest checks, serve the same files from the existing
   Mac to the guest. Use test-only routing and CA trust. Verify hashes before each test and capture the
   qualified trace on both supported OS majors. Use the existing Mac for checks needing hardware it has.
@@ -953,15 +962,16 @@ the Phase 7 stable release ahead of Phase 8 Homebrew work.
 ### Phase 7: Stable release
 
 **Gate:** Gate S (the stable release's Gate B)
-**Impl files:** `app-version.json`, `CHANGELOG.md` and `README.md` (stable version PR, Gate S); `scripts/check_evidence_pr.py` and `python_tests/test_distribution_contract.py` if the second-success tests below need changes; then new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps) and `README.md` (install command) in the stable success evidence-only PR; this plan through a separate ordinary PR
+**Impl files:** `app-version.json` and `CHANGELOG.md` (stable version PR, Gate S); `scripts/check_evidence_pr.py` and `python_tests/test_distribution_contract.py` if the second-success tests below need changes; then new `docs/release-evidence/X.Y.Z.md`, `docs/migration.md` (observed steps) and `README.md` (install command) in the stable success evidence-only PR; this plan through a separate ordinary PR
 **Test files:** `python_tests/test_distribution_contract.py`, `python_tests/test_migration_contract.py`, `python_tests/test_docs.py`
 **Test command:** `uv run pytest python_tests/test_distribution_contract.py python_tests/test_migration_contract.py python_tests/test_docs.py -q`
 **Goal:** Publish a stable (`prerelease=false`) standalone release that upgrades from the verified public alpha, before any hook qualification.
 
 - Cut a focused PR from `main` after the alpha's success evidence merges. It lands a higher version and build, the
-  numbered changelog entry (naming any retired versions as never released) and the README change, with the full
-  `skein:review-gauntlet` and a regular merge. That merge is Gate S. The evidence check resolves the stable version
-  from the trusted base's `app-version.json`.
+  numbered changelog entry (naming any retired versions as never released), with the full `skein:review-gauntlet`
+  and a regular merge. That merge is Gate S. The evidence check resolves the stable version from the trusted
+  base's `app-version.json`. Keep the verified alpha command in the README until the stable success evidence PR
+  replaces it after public verification.
 - Evidence-check tests for a second success PR on a base that already holds alpha evidence: the alpha record stays
   append-only (edits, renames and deletions rejected); a second README and `docs/migration.md` edit is accepted; an
   alpha-version success PR is rejected after the bump. The exact path set requires all three paths, so the stable
@@ -1144,7 +1154,7 @@ Qualify Homebrew's supported lifecycle hooks in phase 8. Apply the current
 | Packager | Standalone installer and cask | Identical final ZIP/hash, manifest and bundled installer from one commit |
 | `scripts/build_install_sh.sh` (reads sources from a given commit) | `package_release.sh`, `release_handoff.sh verify`, bundled-mode tests | One deterministic `install.sh` assembly embedding `scripts/lib/install_app.sh`, `scripts/quit_app.sh` (child-process payload) and the Team ID constant from the same commit |
 | `main` (`.github/workflows/evidence_check.yml`, `scripts/check_evidence_pr.py`) and trusted base `app-version.json` | Every PR to `main`, including evidence PRs | `pull_request_target` trigger, no PR checkout, check-write permission only; a PR-bound verdict for PR, base and head; retired versions accepted only with the changelog note |
-| Settings administrator exports | Release owner | Bypass actors, Actions policy, retention, apps, deploy keys and writers at Phase 1, before Phase 3 secret load, before each Phase 5 signed dispatch and at Phase 6; `writers-diff` exits non-zero on an unlisted writer |
+| Settings administrator exports | Release owner | Immutable-release state, bypass actors, Actions policy, retention, apps, deploy keys and writers at Phase 1, before Phase 3 secret load, before each Phase 5 signed dispatch and at Phase 6; `writers-diff` exits non-zero on an unlisted writer |
 | Signing reviewer and durable signing ledger | Signing workflow | The release owner reserves the build (`candidate`) or records the standing `probe` or a `fixture` reservation before a listed reviewer approves the deployment after matching the class. Signed jobs refuse reruns. |
 | Signing workflow and GitHub Actions artifact | Release owner | `scripts/release_handoff.sh verify` checks the artifact ID, archive digest and mode's exact file set against the handoff record, exact-attempt logs and GitHub metadata. The owner retrieves detailed notarization diagnostics from Apple. |
 | Release owner | GitHub draft | `release_handoff.sh draft` uploads only the verified four-asset handoff and binds the draft to the approved SHA and tag |
@@ -1196,8 +1206,8 @@ Qualify Homebrew's supported lifecycle hooks in phase 8. Apply the current
   name; no workflow uses them before Phase 3's denial and canary checks pass.
 - Decision (2026-11-21): the PR-bound evidence verdict stays required; if it cannot be built, Gate B stops and the
   plan reopens.
-- Decision (2026-11-21): a retired version is a never-published version exempt from the evidence-merge rule; the
-  next candidate's changelog entry records it. A pre-existing tag, even at the approved SHA, retires the version.
+- Decision (2026-11-21): a retired version is a never-published version exempt from the evidence-merge rule. The
+  version-advancing PR's changelog entry records it. A pre-existing tag, even at the approved SHA, retires the version.
 - Decision (2026-11-21): the ledger has `candidate`, standing `probe` and `fixture` classes; only `candidate`
   consumes a build. The stable release is its own Phase 7 (Gate S) before Phase 8 Homebrew work.
 
@@ -1437,15 +1447,17 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   The owner creates the draft from those bytes. Phase 5 passes standalone acceptance.
 - `main`'s `pull_request` rule (zero approvals, extra-approval parameter recorded) is confirmed with `gh api`, and a
   trivial PR self-merges under it in Phase 1. The settings administrator's exports are attached and verified at
-  Phase 1, before the Phase 3 secret load, before each Phase 5 signed dispatch and at Phase 6; immutable releases
-  report `enabled: true`; `release-signing` holds no secret names beyond the three accepted ones before Phase 3.
+  Phase 1, before the Phase 3 secret load, before each Phase 5 signed dispatch and at Phase 6. The administrator's
+  response shows immutable releases `enabled: true`. `release-signing` holds no secret names beyond the three
+  accepted ones before Phase 3.
 - The writer inventory has one named acceptance line per principal (users, teams, organisation owners, apps,
   deploy keys), and `writers-diff` exits zero against each fresh export and non-zero on a stubbed extra writer.
 - Every listed `release-signing` reviewer has a recorded successful read of a named ledger entry, a reviewer
   without access was removed and the list re-read, and Phase 3 records the approving reviewer's reservation check.
 - Retired-version recovery: a pre-existing tag (including one at the approved SHA) stops the workflow and
-  `verify_release.sh`; the next candidate takes a higher version and build, its changelog entry names each retired
-  version as never released, and `check_evidence_pr.py` accepts the advanced base only with that note.
+  `verify_release.sh`. If the predecessor has also expired, recover it on a higher untagged version and build,
+  then advance to a still higher untagged candidate. Each version advance names the versions it retires as never
+  released, and `check_evidence_pr.py` accepts the advanced base only with that note.
 - `scripts/verify_release.sh` confirms the approved draft ID, SHA, tag, prerelease flag and four digests before publication. Phase 6
   verifies all published assets and tag plus quarantine/Gatekeeper, installs and upgrades from the public release,
   and records approval evidence. An evidence-only PR lands the release record and the two other allowlisted changes.
@@ -1465,7 +1477,8 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 - Gate S merges the stable version. The first stable candidate passes an upgrade from the verified public alpha
   before approval. Its draft, approval, publication and merged success evidence all use `prerelease=false`.
   The evidence check accepts the second success PR on a base holding alpha evidence, keeps the alpha record
-  append-only and rejects an alpha-version success PR after the bump.
+  append-only and rejects an alpha-version success PR after the bump. The README switches to the stable command
+  in that success evidence PR after public verification.
 
 ### Later delivery — Homebrew (Phase 8)
 
@@ -1480,7 +1493,7 @@ and authenticated public or archived bytes, including the failed and withdrawn r
   approves the matching tap PR. The hosted install succeeds before the project publishes the verified command
   in the project docs and announces cask availability.
 
-<!-- reviewed: 2026-11-21 @ d679d97dc80f595d8fe1e5f1f554e8275f0d9d5e -->
+<!-- reviewed: 2026-11-21 @ 6560b89260e9586bd8ddb79c9d080e9e16c0f78f -->
 
 ## Progress
 
@@ -1735,8 +1748,8 @@ build from current `main` supplies a new predecessor for a higher candidate. The
 review findings are pending.
 
 2026-11-21 review decisions. A live check reported that `vr000m` holds only the `write` role, and
-`GET repos/{owner}/{repo}/immutable-releases` returned 404 (not enabled). A named settings administrator now
-performs admin-only steps and supplies exports at each credentialed boundary. The `release-signing` environment
+`GET repos/{owner}/{repo}/immutable-releases` returned 404 from that account, leaving the setting unverified. A named
+settings administrator now performs admin-only steps and supplies exports at each credentialed boundary. The `release-signing` environment
 already holds `APPLE_AUTHENTICATION_KEY`, `APPLE_AUTHENTICATION_KEY_ID` and `APPLE_AUTHENTICATION_KEY_ISSUER_ID`,
 created 2026-11-20; they are accepted by name and unused until Phase 3's denial and canary checks pass. The former
 Phase 7 is split into Phase 7 (stable release, Gate S) and Phase 8 (Homebrew cask); earlier notes that say
