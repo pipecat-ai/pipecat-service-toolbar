@@ -163,7 +163,13 @@ basicConstraints = critical, CA:false
 
 
 def _sh(*cmd: str, **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60, **kw)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, **kw)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"{cmd[0]} exited {result.returncode}: {' '.join(cmd[1:4])}\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+    return result
 
 
 @pytest.fixture(scope="module")
