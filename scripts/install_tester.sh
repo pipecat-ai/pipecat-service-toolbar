@@ -29,7 +29,9 @@
 #
 # Contract (app copies): a copy is restored to, kept at, or left at the app path only after it
 # passes app_ok there (the pinned signer, a runnable main executable, and still the copy expected).
-# A copy that fails is never left at the app path and never deleted: it is moved into a named
+# Another program's copy that lands at the app path during a move stays only if it passes app_ok
+# itself, and the message says it was left there. A copy whose identity cannot be read counts as
+# unverified. A copy that fails is never left at the app path and never deleted: it is moved into a named
 # `.tester-leftover.*` directory (or left where it is if it cannot be moved) and the message says
 # "do not open it". The same holds for the build an update saves as `.tester-previous`.
 set -euo pipefail
@@ -363,11 +365,15 @@ app_ok() {
 }
 
 # Every move to the app path. $1 (inode $2) moves there with the exclusive rename, and stays only if
-# app_ok (with $4) then passes on what the rename put there. Whatever fails, including a copy that
-# replaced $1 during the rename (safe_move 4), is moved out to $STAGE/$3, which cleanup keeps in a
-# named .tester-leftover.* folder. Returns 0 placed and verified; 1 nothing moved; 2 the app path
-# was occupied, nothing moved; 3 moved but failed, and nothing is left at the app path; 5 moved and
-# failed, and it could not be moved out: an unverified copy is at the app path.
+# app_ok (with $4) then passes on what the rename put there. If another program's copy is there
+# instead (it replaced $1 or the app path during the rename: safe_move 4, or a different inode by
+# the time of the check), that copy stays only if it passes app_ok itself. Whatever fails is moved
+# out to $STAGE/$3, which cleanup keeps in a named .tester-leftover.* folder. A copy whose identity
+# cannot be read is unverified: never reported as moved out while the app path still holds it.
+# Returns 0 placed and verified; 1 nothing moved; 2 the app path was occupied, nothing moved; 3
+# moved but failed, and nothing is left at the app path; 5 moved and failed, and it could not be
+# moved out: an unverified copy is at the app path; 6 moved, but another program's copy is at the
+# app path, and it passes app_ok, so it was left there.
 place_at_target() {
     local src="$1" expected="$2" reject="$3" what="${4:-}" rc=0 actual
     safe_move "$src" "$TARGET" "$expected" || rc=$?
@@ -376,7 +382,13 @@ place_at_target() {
         4) ;;
         *) return "$rc" ;;
     esac
-    actual="$(inode_of "$TARGET")" || return 3
+    if ! actual="$(inode_of "$TARGET")"; then
+        exists "$TARGET" || return 3
+        return 5
+    fi
+    if [ "$actual" != "$expected" ] && app_ok "$TARGET" "$actual"; then
+        return 6
+    fi
     safe_move "$TARGET" "$STAGE/$reject" "$actual" && return 3
     exists "$TARGET" || return 3
     return 5
@@ -510,6 +522,10 @@ rollback() {
                 MOVED_ASIDE=""
                 ROLLBACK_NOTE="; the previous copy did not pass verification and could not be moved away again: $TARGET is an unverified build, do not open it"
                 ;;
+            6)
+                MOVED_ASIDE=""
+                ROLLBACK_NOTE="; another program changed the app while the previous copy was being restored: the copy now at $TARGET is not the previous copy, but it passes verification and was left there"
+                ;;
             *) ROLLBACK_NOTE="; could not restore the previous copy, check $PREV" ;;
         esac
     elif [ -z "$OLD_INODE" ]; then
@@ -530,19 +546,32 @@ swap() {
     local rc=0
     block_signals
     # 1. A stale .tester-previous (start-up found the app verified) makes room for the old app.
+    # A rename that happened but moved another program's copy (safe_move 4) is recorded too, so
+    # that rollback reports where the moved copy is instead of "nothing was changed".
     if [ -n "$STALE_INODE" ]; then
-        safe_move "$PREV" "$STAGE/superseded" "$STALE_INODE" || swap_fail "could not clear $PREV"
-        MOVED_SUPERSEDED=1
+        safe_move "$PREV" "$STAGE/superseded" "$STALE_INODE" || rc=$?
+        case "$rc" in
+            0) MOVED_SUPERSEDED=1 ;;
+            4)
+                MOVED_SUPERSEDED=1
+                swap_fail "another program changed $PREV while it was being cleared"
+                ;;
+            *) swap_fail "could not clear $PREV" ;;
+        esac
     elif exists "$PREV"; then
         swap_fail "$PREV appeared during the install"
     fi
     # 2. The installed app moves aside.
     if [ -n "$OLD_INODE" ]; then
+        rc=0
         safe_move "$TARGET" "$PREV" "$OLD_INODE" || rc=$?
         case "$rc" in
             0) MOVED_ASIDE=1 ;;
-            4) swap_fail "another program changed $TARGET while it was being moved aside; check $PREV" ;;
-            *) swap_fail "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove the app by hand, then run this again" ;;
+            4)
+                MOVED_ASIDE=1
+                swap_fail "another program changed $TARGET while it was being moved aside; what is now at $PREV was not verified, do not open it"
+                ;;
+            *) swap_fail "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove both the app and its rollback copy $PREV (if present) by hand (removing only the app makes the next run put the rollback copy back and stop here again), then run this again" ;;
         esac
     fi
     # 3-4. This run's copy moves in, never into something another program put at the target, and
@@ -553,6 +582,7 @@ swap() {
     case "$rc" in
         0) INSTALLED=1 ;;
         2) swap_fail "another program changed $TARGET during the install" ;;
+        6) swap_fail "another program changed $TARGET during the install: the copy there is not this build, but it passes verification and was left there" ;;
         3)
             REJECTED=1
             swap_fail "the copy at $TARGET failed verification after the move and was not left there"
@@ -588,9 +618,12 @@ clean_stage() {
                 echo "note: $PREV is not the copy this install saved there; it was left as it is" >&2
             fi
         fi
+        # The backup is checked again last, right before the delete: $PREV may have been replaced
+        # since backup_ok was set.
         if [ -n "$backup_ok" ] && [ -n "$MOVED_SUPERSEDED" ] &&
             [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] &&
-            [ "$(inode_of "$STAGE/superseded")" = "$STALE_INODE" ]; then
+            [ "$(inode_of "$STAGE/superseded")" = "$STALE_INODE" ] &&
+            app_ok "$PREV" "$OLD_INODE"; then
             chmod -R u+rwX "$STAGE/superseded" 2>/dev/null
             rm -rf "$STAGE/superseded"
         fi
@@ -605,7 +638,14 @@ clean_stage() {
                 case "${copy##*/}" in
                     rejected) echo "note: a copy that failed verification at $TARGET is kept at $copy; do not open it" >&2 ;;
                     unverified-previous) echo "note: a previous build that did not pass verification is kept at $copy, not as the rollback copy; do not open it" >&2 ;;
-                    superseded) echo "note: an earlier copy of the app that this install moved is kept at $copy" >&2 ;;
+                    superseded)
+                        # Start-up never verified a stale .tester-previous; verify it before naming it.
+                        if app_ok "$copy" "$STALE_INODE"; then
+                            echo "note: an earlier copy of the app that this install moved is kept at $copy" >&2
+                        else
+                            echo "note: an earlier copy of the app that this install moved is kept at $copy; it could not be verified, do not open it" >&2
+                        fi
+                        ;;
                     *) echo "note: could not remove $copy" >&2 ;;
                 esac
             done
@@ -662,6 +702,7 @@ recover_previous() {
         0) OLD_INODE="$previous_inode"; echo "restored the previous copy" ;;
         2) die "another program put something at $TARGET while the previous copy was being restored; check $PREV" ;;
         3 | 5) die "the copy restored from $PREV changed and did not pass verification at $TARGET; do not open it" ;;
+        6) die "another program changed $TARGET while the previous copy was being restored: the copy there is not the previous copy, but it passes verification and was left there; run this again to update it" ;;
         *) die "could not restore the previous copy from $PREV; nothing was changed" ;;
     esac
 }

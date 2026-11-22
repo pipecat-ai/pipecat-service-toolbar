@@ -163,7 +163,8 @@ regenerating the constraints. Other STT models follow `main`.
 Interim self-signed builds for known testers, until the Apple-signed alpha exists. Plan:
 [20261121-feature-selfsigned-tester-channel.md](plans/20261121-feature-selfsigned-tester-channel.md).
 `just app-tester-package` needs the self-signed `Code Signing` identity, a clean tree and a HEAD pushed
-to a branch that still exists on `origin` (it fetches with `--prune`, never pruning local tags). It refuses a tag that exists locally or on `origin`, and refuses as well when it cannot
+to a branch that still exists on `origin` (it fetches only branches, with `--prune` and an explicit
+branch refspec, so a configured tag mapping cannot prune local tags). It refuses a tag that exists locally or on `origin`, and refuses as well when it cannot
 ask `origin` (a `git ls-remote` failure other than "no such tag"). It builds with that identity,
 checks the bundle against the certificate pinned in `scripts/install_tester.sh`
 (`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a hidden
@@ -176,7 +177,10 @@ access lists removed, the pinned signer, an executable main binary, and the vers
 names. The install runs the same function on every download. The packager creates the checksum and
 manifest in scratch, removes any earlier drop of the same tag, then renames `<tag>.zip`,
 `<tag>.zip.sha256` and, last, `<tag>.manifest.json` into `dist/tester/`; the manifest marks a complete
-drop, and a run that fails while publishing removes what it had published. The tag rule, the pin and the limits come from the
+drop, and a run that fails while publishing removes what it had published. Publishing holds the
+`dist/tester/.tester-publish.lock` folder and ignores HUP, INT and TERM until it is done; a second run
+that reaches publication meanwhile refuses and names the lock (a hard-killed run leaves it for manual
+removal). The tag rule, the pin and the limits come from the
 installer itself (`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`,
 `--check-drop`), never from a second copy.
 The tag is `tester-<version>-b<build>-<shortsha>`; the recipe refuses a tag that exists, so a second

@@ -35,8 +35,10 @@ step "Checking the working tree"
 TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
 [ -z "$TREE_STATUS" ] || die "working tree is not clean; commit or stash first"
 # --prune drops remote-tracking refs of branches deleted on origin, which would otherwise still
-# count a commit as pushed. --no-prune-tags: never delete local tags (fetch.pruneTags config).
-git fetch --quiet --prune --no-prune-tags origin ||
+# count a commit as pushed. The command-line refspec replaces every configured remote.origin.fetch
+# mapping, so a configured `+refs/tags/*:refs/tags/*` cannot make --prune delete local tags (the
+# local tag check below must still see them); --no-prune-tags covers fetch.pruneTags.
+git fetch --quiet --prune --no-prune-tags origin '+refs/heads/*:refs/remotes/origin/*' ||
     die "cannot fetch origin; the pushed and on-main checks need current refs"
 COMMIT="$(git rev-parse HEAD)"
 if [ -z "$(git for-each-ref --contains "$COMMIT" refs/remotes/origin)" ]; then
@@ -104,11 +106,20 @@ ZIP="$TAG.zip"
 # so every publishing move is a rename on one volume (never a copy that an interrupted run leaves
 # half written). Cleanup, on every exit, removes it and, if publishing had started but not
 # finished, the drop's files in dist/tester, so no run leaves a partial or mixed drop there.
+# Publication holds a lock (a folder in dist/tester, created atomically by mkdir and removed only
+# by the run that created it), so two runs for the same tag never publish at once: without it, a
+# second run could publish while the first was between its moves, and the first one's cleanup
+# would then delete the second one's complete drop (or the two would mix their files). Tracking
+# this run's own files by inode would not stop the mixing, so publication is serialised instead.
 CHECK=""
 PUBLISHING=""
+PUBLISH_LOCK=""
 cleanup() {
     [ -z "$CHECK" ] || rm -rf "$CHECK"
     [ -z "$PUBLISHING" ] || rm -f "$OUT/$TAG.manifest.json" "$OUT/$ZIP.sha256" "$OUT/$ZIP"
+    if [ -n "$PUBLISH_LOCK" ]; then
+        rmdir "$PUBLISH_LOCK" 2>/dev/null || echo "note: could not remove $PUBLISH_LOCK" >&2
+    fi
 }
 trap cleanup EXIT
 mkdir -p "$OUT"
@@ -139,12 +150,25 @@ printf '{\n  "tag": "%s",\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",
     "$CREATED_UTC" > "$CHECK/$TAG.manifest.json"
 # Publication: an earlier drop of this tag goes first, manifest first, so it is never mixed with
 # the new files; then the ZIP, the checksum and, last, the manifest, which marks a complete drop.
+# HUP, INT and TERM are ignored from taking the lock until it is released, by this shell and the
+# mv children it starts: Bash 3.2 would otherwise run the EXIT trap at once, removing published
+# files while an mv still lands one. The lock and the variable naming it come into being together.
+LOCK_PATH="$OUT/.tester-publish.lock"
+trap '' HUP INT TERM
+if ! mkdir "$LOCK_PATH" 2>/dev/null; then
+    [ -d "$LOCK_PATH" ] || die "could not create $LOCK_PATH"
+    die "another package_tester.sh run is publishing into $OUT, or one was interrupted; if none is running, remove the folder $LOCK_PATH and run this again"
+fi
+PUBLISH_LOCK="$LOCK_PATH"
 PUBLISHING=1
 rm -f "$OUT/$TAG.manifest.json" "$OUT/$ZIP.sha256" "$OUT/$ZIP"
 mv "$CHECK/$ZIP" "$OUT/$ZIP"
 mv "$CHECK/$ZIP.sha256" "$OUT/$ZIP.sha256"
 mv "$CHECK/$TAG.manifest.json" "$OUT/$TAG.manifest.json"
 PUBLISHING=""
+rmdir "$PUBLISH_LOCK" 2>/dev/null || echo "note: could not remove $PUBLISH_LOCK" >&2
+PUBLISH_LOCK=""
+trap - HUP INT TERM
 
 echo
 echo "tag:     $TAG"

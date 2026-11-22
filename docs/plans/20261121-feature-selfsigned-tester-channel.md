@@ -499,9 +499,33 @@ identity, and the `--require` call is at `justfile:35`.
   `.tester-leftover.*` folders and a left `.tester-install.lock` (with any `.tester-install.*` staging
   folders), not only the app.
 
+- Review gauntlet round 6 (2026-11-22), the last fixer round. Stop rule, owner decision: the gauntlet stops
+  after round 6; later findings are recorded as known risks, and CI plus the UTM clean-guest run decide. The
+  round closes narrow gaps in the round 4-5 contract without redesigning it. CI: the `macos-app` job at
+  c188ced failed because `test_real_install_end_to_end` ran the installed fixture app and it was killed
+  (SIGKILL, -9) on the arm64 `macos-15` runner; the fixture's main executable was a copy of `/usr/bin/true`
+  (an Apple arm64e binary) re-signed with the throwaway identity, and macOS 15 kills a third-party-signed
+  arm64e process (inferred: it ran on a macOS 27 Apple silicon Mac). The fixtures now use a `#!/bin/sh`
+  script, which codesign signs as a generic bundle executable. Installer: `place_at_target` treats a copy
+  whose inode cannot be read as unverified and stuck at the app path (never reported as moved out); a copy
+  another program landed at the app path during one of the run's renames stays only if it passes `app_ok`
+  itself (new result 6, reported as "passes verification and was left there"), otherwise it is moved out
+  as before; swap steps 1 and 2 record a rename that moved another program's copy (`safe_move` 4), so
+  rollback no longer says "nothing was changed"; cleanup re-verifies `.tester-previous` as the saved copy
+  immediately before deleting the older backup; a kept stale `.tester-previous` (never verified at
+  start-up) is verified before it is named, and named with "do not open it" if it fails. The App
+  Management refusal and the guide now say to remove both the app and `.tester-previous` (removing only the
+  app makes the next run restore the rollback copy and stop at the same move). Packager: the fetch uses an
+  explicit branch-only refspec (a configured `+refs/tags/*:refs/tags/*` mapping made `--prune` delete local
+  tags before the local tag check); publication holds `dist/tester/.tester-publish.lock` (serialised rather
+  than tracking files by inode, which cannot stop two runs mixing files) and ignores HUP, INT and TERM
+  until it is done. Known risk, not changed: when another program puts a copy at the app path while the
+  run's rename is refused (`safe_move` 2), the run neither verifies nor names that copy, and a previous copy
+  that never verified can then stay at `.tester-previous` because the app path is occupied.
+
 ## Final Results
 
 Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install
-path, tester guide and docs index), with review-gauntlet rounds 1 to 5 and the follow-up review applied (Issues &
+path, tester guide and docs index), with review-gauntlet rounds 1 to 6 and the follow-up review applied (Issues &
 Solutions). Phase 5 (owner validation and first drop, including the required macOS 15 run) and Phase 6 (retire the
 channel) are pending.

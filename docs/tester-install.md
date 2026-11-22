@@ -113,11 +113,15 @@ one more step:
   Terminal window is installing), remove the folder it names, `~/Applications/.tester-install.lock`, and run the
   command again. The message also lists any staging or kept-copy folders beside the app.
 - `another program changed ... during the install`: another program created, moved or replaced the app
-  during the swap. Check the paths in the message for the installed app and its backup.
+  during the swap. Check the paths in the message for the installed app and its backup. If the message says
+  the copy there passes verification and was left there, that copy is a tester build the certificate check
+  accepted; run the command again to install the new one.
 - `could not move the installed app aside; if macOS asked about App Management, ...`: macOS stopped
   Terminal from moving the app. If macOS asked about App Management, allow Terminal in System Settings >
-  Privacy & Security > App Management, or remove the app by hand (quit it, then move
-  `~/Applications/Pipecat Service Toolbar.app` to the Trash); then run the command again.
+  Privacy & Security > App Management, or remove the app and its rollback copy by hand (quit it, then move
+  both `~/Applications/Pipecat Service Toolbar.app` and `~/Applications/.tester-previous` to the Trash);
+  then run the command again. Removing only the app is not enough: the next run first puts the rollback
+  copy back as the app, and macOS stops it at the same step.
 - A `note:` naming a `.tester-install.*` or `.tester-leftover.*` folder: an earlier install left it. Once the
   app works, you can remove it as in [Uninstall](#uninstall), step 3; tell the owner if one says a copy failed
   the certificate check.
