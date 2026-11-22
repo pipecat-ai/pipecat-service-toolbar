@@ -738,6 +738,19 @@ def test_success_writes_a_consistent_zip_checksum_and_manifest(repo):
     assert _git(repo.root, "status", "--porcelain") == ""  # dist/ is ignored
 
 
+def test_checksum_failure_leaves_no_partial_drop_or_damages_an_existing_one(repo):
+    for existing in (False, True):
+        if existing:
+            (repo.bin / "shasum").unlink()
+            result = repo.run()
+            assert result.returncode == 0, result.stderr
+        before = _snapshot(repo.out)
+        repo.stub("shasum", "#!/bin/bash\nexit 1\n")
+        result = repo.run()
+        assert result.returncode == 1 and "cannot compute the ZIP checksum" in result.stderr
+        assert _snapshot(repo.out) == before
+
+
 def test_a_pushed_branch_off_main_is_marked_rehearsal(repo):
     repo.commit_file(push=True, branch="feature/x")
     result = repo.run()

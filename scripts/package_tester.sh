@@ -31,7 +31,8 @@ die() { echo "error: $*" >&2; exit 1; }
 cd "$ROOT"
 
 step "Checking the working tree"
-[ -z "$(git status --porcelain)" ] || die "working tree is not clean; commit or stash first"
+TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
+[ -z "$TREE_STATUS" ] || die "working tree is not clean; commit or stash first"
 git fetch --quiet origin || die "cannot fetch origin; the pushed and on-main checks need current refs"
 COMMIT="$(git rev-parse HEAD)"
 if [ -z "$(git for-each-ref --contains "$COMMIT" refs/remotes/origin)" ]; then
@@ -105,18 +106,22 @@ step "Checking the ZIP as the installer will"
 "$INSTALLER" --check-drop "$CHECK/$ZIP" "$TAG"
 
 step "Writing the checksum and manifest"
-mkdir -p "$OUT"
-rm -f "$OUT/$ZIP" "$OUT/$ZIP.sha256" "$OUT/$TAG.manifest.json"
-mv "$CHECK/$ZIP" "$OUT/$ZIP"
 if command -v shasum >/dev/null 2>&1; then
-    ZIP_SHA256="$(shasum -a 256 "$OUT/$ZIP" | cut -d' ' -f1)"
+    ZIP_SHA256="$(shasum -a 256 <"$CHECK/$ZIP" | cut -d' ' -f1)" ||
+        die "cannot compute the ZIP checksum"
 else
-    ZIP_SHA256="$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)"
+    ZIP_SHA256="$(sha256sum <"$CHECK/$ZIP" | cut -d' ' -f1)" ||
+        die "cannot compute the ZIP checksum"
 fi
-printf '%s  %s\n' "$ZIP_SHA256" "$ZIP" > "$OUT/$ZIP.sha256"
+[[ "$ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "cannot compute the ZIP checksum"
+CREATED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s  %s\n' "$ZIP_SHA256" "$ZIP" > "$CHECK/$ZIP.sha256"
 printf '{\n  "tag": "%s",\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "on_main": %s,\n  "cert_sha1": "%s",\n  "zip": "%s",\n  "zip_sha256": "%s",\n  "created_utc": "%s"\n}\n' \
     "$TAG" "$VERSION" "$BUILD" "$COMMIT" "$ON_MAIN" "$CERT_SHA1" "$ZIP" "$ZIP_SHA256" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/$TAG.manifest.json"
+    "$CREATED_UTC" > "$CHECK/$TAG.manifest.json"
+mkdir -p "$OUT"
+mv "$CHECK/$ZIP.sha256" "$CHECK/$TAG.manifest.json" "$OUT/"
+mv "$CHECK/$ZIP" "$OUT/$ZIP"
 
 echo
 echo "tag:     $TAG"

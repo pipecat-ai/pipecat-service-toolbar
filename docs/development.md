@@ -172,8 +172,9 @@ folder and runs the installer's whole offline acceptance on it,
 no symbolic links, at most 10,000 entries and 1 GiB unpacked, then extraction, a check of what was
 extracted (only folders and regular files, only the app at the top), group/other write, setuid and
 access lists removed, the pinned signer, and the version and build the tag names. The install runs the
-same function on every download. Only a ZIP that passes becomes `dist/tester/<tag>.zip`, beside
-`<tag>.zip.sha256` and `<tag>.manifest.json`. The tag rule, the pin and the limits come from the
+same function on every download. The packager creates the checksum and
+manifest in scratch before moving `<tag>.zip`, `<tag>.zip.sha256` and `<tag>.manifest.json` into
+`dist/tester/`. The tag rule, the pin and the limits come from the
 installer itself (`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`,
 `--check-drop`), never from a second copy.
 The tag is `tester-<version>-b<build>-<shortsha>`; the recipe refuses a tag that exists, so a second
