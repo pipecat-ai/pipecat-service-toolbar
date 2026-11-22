@@ -382,7 +382,7 @@ sequenceDiagram
 - Docs updated; `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`, `swift test` and `just app-build`
   pass; code reviewed with `Review Gates: full`.
 
-<!-- review marker: pending /review-plan -->
+<!-- reviewed: 2026-11-22 @ 0ce29c43539aa162d9a8af38228327fe1dd9d6d2 -->
 
 ## Progress
 
