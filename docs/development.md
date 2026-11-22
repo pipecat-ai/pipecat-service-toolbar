@@ -165,15 +165,24 @@ Interim self-signed builds for known testers, until the Apple-signed alpha exist
 `just app-tester-package` needs the self-signed `Code Signing` identity, a clean tree and a HEAD pushed
 to `origin`. It builds with that identity, checks the bundle against the certificate pinned in
 `scripts/install_tester.sh` (`install_tester.sh --verify-only <app>`, a `codesign -R` verification),
-writes `dist/tester/<tag>.zip`, `<tag>.zip.sha256` and `<tag>.manifest.json`, and checks the bundle
-unpacked from the ZIP the same way. The tag is `tester-<version>-b<build>-<shortsha>`; the recipe
-refuses a tag that exists, so a second drop needs a new commit. Tester drops never change
-`app-version.json`. `TESTER_APP_BUNDLE=<app>` packages a prebuilt bundle and is for tests only.
+writes the ZIP, runs the installer's archive checks on it (`install_tester.sh --check-archive <zip>`:
+entries only inside the app, no symbolic links, at most 1 GiB unpacked), checks the bundle unpacked
+from the ZIP against the pin, and only then writes `dist/tester/<tag>.zip`, `<tag>.zip.sha256` and
+`<tag>.manifest.json`. The tag rule and the pin come from the installer itself
+(`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`), never from a second copy.
+The tag is `tester-<version>-b<build>-<shortsha>`; the recipe refuses a tag that exists, so a second
+drop needs a new commit. Tester drops never change `app-version.json` or `CHANGELOG.md`.
+`TESTER_APP_BUNDLE=<app>` packages a prebuilt bundle and is for tests only (see Build settings).
+
+The installer allows one run at a time per install directory: it holds the
+`.tester-install.lock` folder there while it runs, and a run that finds one refuses and names it
+(a hard-killed run leaves it; it is never removed automatically).
 
 Release checklist:
 
-1. Pull `main`, then run `just app-tester-package`. A tester drop needs `on_main: true`; `false` is a
-   rehearsal for a guest only.
+1. Pull `main`, then run `just app-tester-package`. Check `on_main` in the manifest before publishing:
+   send testers only a drop with `on_main: true`. The packager records `on_main` and prints a rehearsal
+   note when it is `false`, but does not refuse; such a drop is a rehearsal for a guest only.
 2. Publish: `gh release create <tag> --prerelease --target <manifest commit> dist/tester/<tag>*`.
    Never edit the assets afterwards; delete a bad drop and publish a new one from a new commit.
 3. Verify: `gh release view <tag> --json targetCommitish` names the manifest commit, and the downloaded
@@ -191,7 +200,8 @@ Environment variables read by `scripts/`:
 |---|---|---|
 | `SIGN_IDENTITY` | `build_app.sh`, `resolve_sign_identity.sh` | Code-signing identity (default `-`, ad hoc). Unset, `just app-open` and `just app-install` take the self-signed `Code Signing` identity from `resolve_sign_identity.sh` (which asks the keychain through `has_sign_identity.sh`): `app-open` falls back to ad hoc when it is missing, `app-install` fails before the build. An explicit value (a name, or the certificate's full SHA-1 hash) always wins. The keychain check is advisory, as codesign reads the value: a full SHA-1 in any case, or a case-insensitive substring of a name; two identities sharing a name are left to codesign at signing. Sign for distribution with `SIGN_IDENTITY="Developer ID Application: …" just app-build`. |
 | `CONFIG` | `build_app.sh` | Swift build configuration, `release` (default) or `debug`. |
-| `APP_INSTALL_DIR` | `just app-install` | Install destination (default `~/Applications`). For the identity it signs with, see `SIGN_IDENTITY`. |
+| `APP_INSTALL_DIR` | `just app-install`, `install_tester.sh` | Install destination (default `~/Applications`), for both the developer install and a tester drop. For the identity `just app-install` signs with, see `SIGN_IDENTITY`. |
+| `TESTER_APP_BUNDLE` | `package_tester.sh` | Test only: package this prebuilt bundle instead of building one with the self-signed identity. Never for a real drop. |
 | `BUNDLE_ID` | `build_app.sh` | Overrides `CFBundleIdentifier` (default `ai.pipecat.ServiceToolbar`); `just app-open` quits the id the build wrote. |
 | `QUIT_WAIT_SECS` | `quit_app.sh` | Whole seconds (default `30`) that `just app-open` and `just app-install` wait for a running copy to quit before launching or replacing the bundle: one deadline for the whole step, osascript calls included. Either recipe stops, without launching or replacing, on any non-zero exit of `quit_app.sh`; its header is the contract for the timing bound and the exit codes (a missing bundle id or a value that is not whole seconds is a usage error). Not the smoke's `QUIT_WAIT` below. |
 | `LAUNCH_WAIT` | `ui_smoke.sh` | Seconds (default `30`) `just app-smoke` waits for each launch's bootstrap to log its end. |

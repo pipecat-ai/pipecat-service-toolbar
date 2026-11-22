@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -33,9 +34,12 @@ real_codesign = pytest.mark.skipif(
 
 
 def _pin() -> str:
-    match = re.search(r'^TESTER_CERT_SHA1="([^"]*)"$', INSTALLER.read_text(), re.M)
-    assert match, "TESTER_CERT_SHA1 assignment not found"
-    return match.group(1)
+    """The pin as the installer reports it (``--print-pin``), not a second parse of its source."""
+    result = subprocess.run(
+        ["/bin/bash", str(INSTALLER), "--print-pin"], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
 
 
 def _run(script: Path, *args: str, env: dict[str, str] | None = None):
@@ -61,8 +65,30 @@ def _code_lines() -> list[str]:
 
 def test_pin_is_one_uppercase_sha1_constant():
     text = INSTALLER.read_text()
-    assert len(re.findall(r"^TESTER_CERT_SHA1=", text, re.M)) == 1
+    assert len(re.findall(r"^TESTER_CERT_SHA1=", text, re.MULTILINE)) == 1
     assert re.fullmatch(r"[0-9A-F]{40}", _pin())
+    assert f'TESTER_CERT_SHA1="{_pin()}"' in text
+
+
+@pytest.mark.parametrize(
+    ("tag", "rc"),
+    [
+        ("tester-1.0.0-b1-abc1234", 0),
+        ("tester-10.20.30-b999-0123456789ab", 0),
+        ("tester-1.0-b1-abc1234", 1),
+        ("tester-1.0.0-alpha.1-b1-abc1234", 1),
+        ("tester-1.0.0-b1-ABCDEF1", 1),
+        ("v1.0.0", 1),
+    ],
+)
+def test_check_tag_mode_answers_with_the_installers_own_pattern(tag, rc):
+    assert _run(INSTALLER, "--check-tag", tag).returncode == rc
+
+
+def test_print_pin_and_check_tag_usage_errors():
+    assert _run(INSTALLER, "--print-pin", "extra").returncode == 2
+    assert _run(INSTALLER, "--check-tag").returncode == 2
+    assert _run(INSTALLER, "--check-tag", "a", "b").returncode == 2
 
 
 def test_installer_has_no_eval_sudo_or_requirement_text_parse():
@@ -290,7 +316,7 @@ def pinned_installer(throwaway_identity, tmp_path):
             r'^TESTER_CERT_SHA1=".*"$',
             f'TESTER_CERT_SHA1="{sha1}"',
             INSTALLER.read_text(),
-            flags=re.M,
+            flags=re.MULTILINE,
         )
     )
     return copy
@@ -352,8 +378,11 @@ def test_real_tampered_bundle_is_rejected(throwaway_identity, pinned_installer, 
 NAME = "Pipecat Service Toolbar.app"
 VERSION, BUILD = "9.8.7", "321"
 
+# STUB_DITTO_EXTRA adds a top-level entry to a written ZIP; STUB_DITTO_PLANT makes extraction
+# write something the ZIP's central directory does not show (as real ditto can, from fields
+# unzip does not read).
 _DITTO_STUB = """#!/usr/bin/env python3
-import os, sys, zipfile
+import os, shutil, sys, zipfile
 a = sys.argv[1:]
 if a[:3] == ["-c", "-k", "--keepParent"]:
     src, dst = a[3], a[4]
@@ -364,8 +393,21 @@ if a[:3] == ["-c", "-k", "--keepParent"]:
             for f in files:
                 p = os.path.join(d, f)
                 z.write(p, os.path.join(base, os.path.relpath(p, src)))
+        if os.environ.get("STUB_DITTO_EXTRA"):
+            z.writestr(os.environ["STUB_DITTO_EXTRA"], b"x")
 elif a[:2] == ["-x", "-k"]:
     zipfile.ZipFile(a[2]).extractall(a[3])
+    plant = os.environ.get("STUB_DITTO_PLANT", "")
+    app = os.path.join(a[3], "Pipecat Service Toolbar.app")
+    if plant == "symlink":
+        os.symlink("/Users", os.path.join(app, "Contents", "link"))
+    elif plant == "fifo":
+        os.mkfifo(os.path.join(app, "Contents", "pipe"))
+    elif plant == "top-symlink":
+        shutil.move(app, os.path.join(a[3], ".real"))
+        os.symlink(".real", app)
+    elif plant == "extra":
+        open(os.path.join(a[3], "extra"), "w").close()
 else:
     sys.exit("ditto stub: unsupported " + " ".join(a))
 """
@@ -512,7 +554,7 @@ def repo(tmp_path):
 
 def _recipe_body(name: str) -> str:
     text = JUSTFILE.read_text()
-    match = re.search(rf"^{re.escape(name)}[^\n]*:\n((?:[ \t]+.*\n|\n)+)", text, re.M)
+    match = re.search(rf"^{re.escape(name)}[^\n]*:\n((?:[ \t]+.*\n|\n)+)", text, re.MULTILINE)
     assert match, f"recipe {name} not found"
     return match.group(1)
 
@@ -531,6 +573,7 @@ def test_packager_checks_before_building_and_verifies_before_zipping():
         'build_app.sh"',
         '--verify-only "$BUNDLE"',
         "ditto -c -k --keepParent",
+        '--check-archive "$CHECK/$ZIP"',
         "ditto -x -k",
         '--verify-only "$CHECK/$NAME"',
         "shasum",
@@ -646,8 +689,7 @@ def _consistent(repo: PackagerRepo) -> dict:
         info = plistlib.loads(z.read(f"{NAME}/Contents/Info.plist"))
     assert info["CFBundleShortVersionString"] == manifest["version"]
     assert info["CFBundleVersion"] == str(manifest["build"])
-    pin = re.search(r'^TESTER_CERT_SHA1="([^"]*)"$', INSTALLER.read_text(), re.M).group(1)
-    assert manifest["cert_sha1"] == pin
+    assert manifest["cert_sha1"] == _pin()
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", manifest["created_utc"])
     return manifest
 
@@ -689,12 +731,32 @@ def test_packager_never_reads_the_pin_from_a_second_copy(repo):
     assert len(re.findall(r"[0-9A-F]{40}", code)) == 0
 
 
+def test_packager_asks_the_installer_instead_of_parsing_its_source():
+    code = "\n".join(
+        line for line in PACKAGER.read_text().splitlines() if not line.lstrip().startswith("#")
+    )
+    assert not re.search(r"\bsed\b|\bgrep\b|\bawk\b", code)
+    assert '"$INSTALLER" --check-tag "$TAG"' in code
+    assert '"$INSTALLER" --print-pin' in code
+
+
+def test_a_zip_the_installer_would_refuse_is_never_published(repo):
+    """The packager runs the installer's archive gate on the ZIP it wrote."""
+    result = repo.run(STUB_DITTO_EXTRA="stray.txt")  # a top-level entry beside the app
+    assert result.returncode != 0
+    assert "outside" in result.stderr, result.stderr
+    assert not repo.out.exists() or not list(repo.out.iterdir())
+
+
 @real_codesign
 def test_real_packaging_end_to_end(throwaway_identity, tmp_path):
     """Real ditto and codesign: a bundle signed by the pinned identity packages and verifies."""
     sha1, keychain = throwaway_identity
     pinned = re.sub(
-        r'^TESTER_CERT_SHA1=".*"$', f'TESTER_CERT_SHA1="{sha1}"', INSTALLER.read_text(), flags=re.M
+        r'^TESTER_CERT_SHA1=".*"$',
+        f'TESTER_CERT_SHA1="{sha1}"',
+        INSTALLER.read_text(),
+        flags=re.MULTILINE,
     )
     repo = PackagerRepo(tmp_path, installer_text=pinned, stubs=False)
     repo.bundle = _write_bundle(tmp_path / "signed")
@@ -703,6 +765,18 @@ def test_real_packaging_end_to_end(throwaway_identity, tmp_path):
     assert result.returncode == 0, result.stderr + result.stdout
     manifest = _consistent_real(repo, sha1)
     assert manifest["cert_sha1"] == sha1
+    # The real ditto ZIP goes through the real installer (only curl and osascript stubbed).
+    (tmp_path / "inst").mkdir()
+    installer = tmp_path / "inst-installer.sh"
+    installer.write_text(pinned)
+    env = InstallEnv(tmp_path / "inst", installer=installer)
+    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign", "mv"):
+        (env.bin / name).unlink()
+    for suffix in (".zip", ".zip.sha256"):
+        shutil.copy(repo.out / f"{repo.tag}{suffix}", env.release / f"{repo.tag}{suffix}")
+    installed = env.run(repo.tag)
+    assert installed.returncode == 0, installed.stderr + installed.stdout
+    assert f"installed {repo.tag}" in installed.stdout
     # An ad-hoc bundle is refused and nothing is written.
     (tmp_path / "second").mkdir()
     repo2 = PackagerRepo(tmp_path / "second", installer_text=pinned, stubs=False)
@@ -726,8 +800,12 @@ def _consistent_real(repo: PackagerRepo, sha1: str) -> dict:
 TAG = f"tester-{VERSION}-b{BUILD}-abc1234"
 BASE_URL = "https://github.com/pipecat-ai/pipecat-service-toolbar/releases/download"
 
+# STUB_CURL_SLEEP holds a download open (an overlapping run); STUB_CURL_RM removes a path, as
+# something outside the installer might while it runs.
 _CURL_STUB = """#!/bin/bash
 echo "$*" >> "$STUB_CURL_LOG"
+[ -z "${STUB_CURL_SLEEP:-}" ] || sleep "$STUB_CURL_SLEEP"
+[ -z "${STUB_CURL_RM:-}" ] || rm -rf "$STUB_CURL_RM"
 out=""; url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
@@ -744,6 +822,7 @@ echo "${STUB_ARM:-1}"
 """
 
 _SW_VERS_STUB = """#!/bin/bash
+[ -z "${STUB_MACOS_FAIL:-}" ] || exit 1
 echo "${STUB_MACOS-26.0}"
 """
 
@@ -751,9 +830,13 @@ _UNAME_STUB = """#!/bin/bash
 echo "${STUB_UNAME:-arm64}"
 """
 
+# STUB_OSA_RC set: answer exactly STUB_OSA_OUT on stdout and STUB_OSA_ERR on stderr, exit STUB_OSA_RC.
 _OSASCRIPT_STUB = """#!/bin/bash
 n=$(( $(cat "$STUB_OSA_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$STUB_OSA_COUNT"
+if [ -n "${STUB_OSA_RC:-}" ]; then
+  printf '%s' "${STUB_OSA_OUT:-}"; printf '%s' "${STUB_OSA_ERR:-}" >&2; exit "$STUB_OSA_RC"
+fi
 [ -z "${STUB_OSA_FAIL:-}" ] || exit 1
 if [ -n "${STUB_OSA_UNKNOWN:-}" ]; then
   echo "syntax error: Can\u2019t get application id \"ai.pipecat.ServiceToolbar\". (-1728)" >&2
@@ -791,7 +874,7 @@ exit 0
 _MV_STUB = """#!/bin/bash
 n=$(( $(cat "$STUB_MV_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$STUB_MV_COUNT"
-[ "${STUB_MV_FAIL:-0}" != "$n" ] || { echo "mv: injected failure $n" >&2; exit 1; }
+case ",${STUB_MV_FAIL:-}," in *",$n,"*) echo "mv: injected failure $n" >&2; exit 1 ;; esac
 exec /bin/mv "$@"
 """
 
@@ -1251,6 +1334,313 @@ def test_installer_fetches_only_the_fixed_release_host_with_hardening_flags(inst
     assert "http://" not in code
 
 
+# -- installer: one run at a time, and the last good copy survives -----------------------------
+#
+# Contract: the last verified-good app copy (the app once it verifies, otherwise .tester-previous)
+# is never deleted while the installed copy is unverified, and only one installer runs per
+# install directory. Start-up state space: app absent/good/bad x previous absent/good x lock
+# free/held; then every failure point of the swap, followed by a retry.
+
+LOCK_NAME = ".tester-install.lock"
+
+
+def _prev(env: InstallEnv) -> Path:
+    return env.dest / ".tester-previous"
+
+
+def _build_at(app: Path) -> str | None:
+    plist = app / "Contents/Info.plist"
+    return plistlib.loads(plist.read_bytes())["CFBundleVersion"] if plist.is_file() else None
+
+
+def _place(env: InstallEnv, where: Path, signer: str, build: str) -> None:
+    app = _write_bundle(env.tmp / f"src-{where.name}", version=f"0.0.{build}", build=build)
+    (app / "Contents/SIGNER").write_text(signer)
+    shutil.move(str(app), str(where))
+
+
+@pytest.mark.parametrize("lock", ["free", "held"])
+@pytest.mark.parametrize("prev", ["absent", "good"])
+@pytest.mark.parametrize("app", ["absent", "good", "bad"])
+def test_start_up_state_space(inst, app, prev, lock):
+    if app != "absent":
+        _place(inst, inst.target, app, "1")
+    if prev != "absent":
+        _place(inst, _prev(inst), prev, "2")
+    if lock == "held":
+        (inst.dest / LOCK_NAME).mkdir()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run()
+    if lock == "held":
+        assert result.returncode != 0
+        assert "another tester install" in result.stderr
+        assert str(inst.dest / LOCK_NAME) in result.stderr
+        assert _snapshot(inst.home) == before  # the other run's lock and copies stay
+        assert not inst.logs["curl"].exists()
+        return
+    assert not (inst.dest / LOCK_NAME).exists()
+    if app == "bad" and prev == "good":
+        # The previous copy may be the last good one: nothing is touched, and it is named.
+        assert result.returncode != 0
+        assert str(_prev(inst)) in result.stderr and "nothing was changed" in result.stderr
+        assert _snapshot(inst.home) == before
+        assert not inst.logs["curl"].exists()
+        return
+    assert result.returncode == 0, result.stderr
+    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert _build_at(inst.target) == BUILD
+    if app == "absent" and prev == "good":
+        assert "restored the previous copy" in result.stdout
+
+
+def _good_copy_left(env: InstallEnv) -> bool:
+    """A copy that passes the (stub) pin check is at the app path, or the old one is kept."""
+    for app in (env.target, _prev(env)):
+        signer = app / "Contents/SIGNER"
+        if signer.is_file() and signer.read_text() == "good":
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("inject", "ok", "app_build", "prev_build"),
+    [
+        ({"STUB_MV_FAIL": "1"}, False, "1", None),  # moving the old app aside
+        ({"STUB_MV_FAIL": "2"}, False, "1", None),  # moving the new app in; restored
+        ({"STUB_MV_FAIL": "2,3"}, False, None, "1"),  # ... and the restore fails
+        ({"STUB_FAIL_ON_CALL": "3"}, False, "1", None),  # post-swap check fails; restored
+        ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "3"}, False, BUILD, "1"),  # rejected stays
+        ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "4"}, False, None, "1"),  # restore fails
+        ({"STUB_MV_FAIL": "3"}, True, BUILD, "1"),  # clearing the replaced copy fails
+    ],
+    ids=[
+        "aside",
+        "move-in",
+        "move-in+restore",
+        "verify",
+        "verify+reject",
+        "verify+restore",
+        "clear-replaced",
+    ],
+)
+def test_every_swap_failure_and_its_retry_keep_a_good_copy(inst, inject, ok, app_build, prev_build):
+    inst.install_old()  # build 1, verifies
+    inst.publish()
+    result = inst.run(**inject)
+    assert (result.returncode == 0) is ok, result.stderr
+    assert _build_at(inst.target) == app_build
+    assert _build_at(_prev(inst)) == prev_build
+    assert not (inst.dest / LOCK_NAME).exists()
+    if inst.target.exists() and _build_at(inst.target) == BUILD and not ok:
+        # The build that failed its check is still installed: it says so, and where the good
+        # copy is. From here on it keeps failing the check.
+        assert str(inst.target) in result.stderr and "do not open it" in result.stderr
+        assert str(_prev(inst)) in result.stderr
+        (inst.target / "Contents/SIGNER").write_text("bad")
+    assert _good_copy_left(inst)
+    retry = inst.run(STUB_CURL_FAIL="all")  # a retry that fails as well
+    assert retry.returncode != 0
+    assert _good_copy_left(inst), retry.stderr
+    assert not (inst.dest / LOCK_NAME).exists()
+
+
+def test_a_first_install_that_cannot_reject_its_copy_says_so(inst):
+    inst.publish()
+    result = inst.run(STUB_FAIL_ON_CALL="3", STUB_MV_FAIL="2")  # mv 1 moves it in, mv 2 rejects
+    assert result.returncode != 0
+    assert "could not be moved aside" in result.stderr and "do not open it" in result.stderr
+    assert str(inst.target) in result.stderr and "no previous copy" in result.stderr
+
+
+def test_staging_keeps_the_previous_copy_when_no_app_is_left(inst):
+    """Cleanup never deletes a staged copy while neither the app nor .tester-previous exists."""
+    inst.install_old()
+    _place(inst, _prev(inst), "good", "2")
+    inst.publish()
+    result = inst.run(STUB_CURL_FAIL="all", STUB_CURL_RM=str(inst.target))
+    assert result.returncode != 0
+    assert _build_at(_prev(inst)) == "2", result.stderr
+    assert _staging_left(inst) == []
+
+
+def test_a_second_installer_refuses_while_one_runs(inst):
+    inst.install_old()
+    inst.publish()
+    first = subprocess.Popen(
+        ["/bin/bash", str(inst.installer), TAG],
+        env=inst.env(STUB_CURL_SLEEP="3"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        for _ in range(200):
+            if _staging_left(inst):
+                break
+            time.sleep(0.05)
+        second = inst.run()
+    finally:
+        out, err = first.communicate(timeout=60)
+    assert second.returncode != 0, second.stdout
+    assert "another tester install" in second.stderr
+    assert first.returncode == 0, err
+    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert _build_at(inst.target) == BUILD
+
+
+# -- installer: what extraction writes ---------------------------------------------------------
+
+
+def _with_declared_sizes(path: Path, sizes: dict[str, int]) -> None:
+    """Rewrite central-directory uncompressed sizes, the field ``unzip -Z`` reports."""
+    data = bytearray(path.read_bytes())
+    at = 0
+    while (at := data.find(b"PK\x01\x02", at)) >= 0:
+        name_len = int.from_bytes(data[at + 28 : at + 30], "little")
+        name = data[at + 46 : at + 46 + name_len].decode()
+        if name in sizes:
+            data[at + 24 : at + 28] = sizes[name].to_bytes(4, "little")
+        at += 4
+    path.write_bytes(bytes(data))
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [
+        {f"{NAME}/Contents/big": 0xFFFF0000},
+        {
+            f"{NAME}/Contents/a": 400_000_000,
+            f"{NAME}/Contents/b": 400_000_000,
+            f"{NAME}/Contents/c": 400_000_000,
+        },
+    ],
+    ids=["one-entry", "sum-of-entries"],
+)
+def test_an_archive_that_unpacks_too_large_is_refused_before_extraction(inst, sizes):
+    inst.install_old()
+    extra = [(name, b"x", "file") for name in sizes]
+    zip_path = inst.publish(entries=_bundle_entries(extra=extra))
+    _with_declared_sizes(zip_path, sizes)
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    (inst.release / f"{TAG}.zip.sha256").write_text(f"{digest}  {TAG}.zip\n")
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "unpacks to" in result.stderr, result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_an_archive_at_the_size_limit_is_accepted(inst):
+    zip_path = inst.publish(entries=_bundle_entries(extra=[(f"{NAME}/Contents/a", b"x", "file")]))
+    assert _run(inst.installer, "--check-archive", str(zip_path)).returncode == 0
+    limit = int(
+        re.search(r"^MAX_UNZIPPED_BYTES=(\d+)", INSTALLER.read_text(), re.MULTILINE).group(1)
+    )
+    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": limit - 4096})
+    assert _run(inst.installer, "--check-archive", str(zip_path)).returncode == 0
+    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": limit + 1})
+    assert _run(inst.installer, "--check-archive", str(zip_path)).returncode == 1
+
+
+@pytest.mark.parametrize(
+    ("plant", "message"),
+    [
+        ("symlink", "other than files and folders"),
+        ("fifo", "other than files and folders"),
+        ("top-symlink", "other than files and folders"),
+        ("extra", "more than the app"),
+    ],
+)
+def test_what_extraction_wrote_is_checked_before_verification(inst, plant, message):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(STUB_DITTO_PLANT=plant)
+    assert result.returncode != 0 and message in result.stderr, result.stderr
+    assert _snapshot(inst.home) == before
+    assert not inst.logs["codesign"].exists() or "extract" not in inst.logs["codesign"].read_text()
+
+
+real_ditto = pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("ditto") is None, reason="needs macOS ditto"
+)
+
+
+@real_ditto
+def test_real_ditto_symlink_hidden_from_unzip_is_refused(inst):
+    """A non-Unix host entry with symlink mode bits: unzip -Z shows no `l`, ditto makes a link."""
+    (inst.bin / "ditto").unlink()
+    zip_path = inst.release / f"{TAG}.zip"
+    entries = _bundle_entries(extra=[(f"{NAME}/Contents/link", b"../../../outside", "symlink")])
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for name, payload, kind in entries:
+            info = zipfile.ZipInfo(name)
+            info.create_system = 0  # MS-DOS host
+            mode = 0o40755 if payload is None else 0o120777 if kind == "symlink" else 0o100644
+            info.external_attr = (mode << 16) | (0x10 if payload is None else 0)
+            z.writestr(info, payload or b"")
+    listing = _sh("unzip", "-Z", str(zip_path)).stdout
+    assert not re.search(r"^l", listing, re.MULTILINE)  # the central-directory check cannot see it
+    digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+    (inst.release / f"{TAG}.zip.sha256").write_text(f"{digest}  {TAG}.zip\n")
+    inst.install_old()
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "other than files and folders" in result.stderr, result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_check_archive_mode_is_the_archive_gate_alone(inst, tmp_path):
+    good = inst.publish()
+    result = _run(inst.installer, "--check-archive", str(good), env=inst.env())
+    assert result.returncode == 0, result.stderr
+    bad = tmp_path / "bad.zip"
+    _make_zip(bad, _bundle_entries(extra=[("Other.app/x", b"x", "file")]))
+    refused = _run(inst.installer, "--check-archive", str(bad), env=inst.env())
+    assert refused.returncode == 1 and "outside" in refused.stderr
+    assert _run(inst.installer, "--check-archive", str(tmp_path / "nope.zip")).returncode == 2
+    assert _run(inst.installer, "--check-archive").returncode == 2
+    assert _run(inst.installer, "--check-archive", str(good), "x").returncode == 2
+    assert list(inst.dest.iterdir()) == [] and not inst.logs["curl"].exists()
+
+
+# -- installer: platform and running-app probes ------------------------------------------------
+
+
+def test_a_failing_sw_vers_is_reported(inst):
+    inst.publish()
+    result = inst.run(STUB_MACOS_FAIL="1")
+    assert result.returncode != 0
+    assert "could not read the macOS version" in result.stderr
+    assert not inst.logs["curl"].exists()
+
+
+_1728 = 'execution error: Can’t get application id "ai.pipecat.ServiceToolbar". (-1728)\n'
+
+
+@pytest.mark.parametrize(
+    ("rc", "out", "err", "proceeds"),
+    [
+        ("0", "false\n", "", True),
+        ("0", "false\n", "osascript: warning: some noise\n", True),  # stderr is not the answer
+        ("0", "true\n", "", False),
+        ("0", "maybe\n", "", False),
+        ("0", "", _1728, False),  # -1728 counts only with a failed exit
+        ("1", _1728, "", False),  # ... and only on stderr
+        ("1", "", _1728, True),
+        ("1", "", "some other failure\n", False),
+        ("1", "false\n", "", False),
+    ],
+)
+def test_running_probe_reads_stdout_stderr_and_exit_apart(inst, rc, out, err, proceeds):
+    inst.publish()
+    result = inst.run(STUB_OSA_RC=rc, STUB_OSA_OUT=out, STUB_OSA_ERR=err)
+    assert (result.returncode == 0) is proceeds, result.stderr
+    if not proceeds:
+        assert "quit" in result.stderr or "could not tell" in result.stderr
+        assert not inst.target.exists()
+
+
 # -- fidelity: the stubs match the real tools (darwin only) -------------------------------------
 
 
@@ -1342,14 +1732,42 @@ def test_guide_has_the_one_liner_with_placeholders_not_a_real_commit():
     text = GUIDE.read_text()
     one_liner = re.search(r"^curl .*$", text, re.M)
     assert one_liner, "no curl one-liner"
+    # -q first: curl reads ~/.curlrc (which can set `insecure`) unless -q is the first argument.
+    # The quotes keep zsh, the default macOS shell, from expanding `=https`.
     assert one_liner.group(0) == (
-        "curl -fsSL https://raw.githubusercontent.com/pipecat-ai/pipecat-service-toolbar/"
+        "curl -q -fsSL --proto '=https' --proto-redir '=https' "
+        "https://raw.githubusercontent.com/pipecat-ai/pipecat-service-toolbar/"
         "<INSTALLER_COMMIT_SHA>/scripts/install_tester.sh | bash -s -- <TAG>"
     )
     assert not re.search(r"\b[0-9a-f]{40}\b", text), (
         "a real commit SHA must not be committed in the guide"
     )
     assert "scripts/install_tester.sh" in text
+
+
+def test_guide_defines_success_by_the_installed_line():
+    """`curl ... | bash` exits 0 when the download fails, so the exit status proves nothing."""
+    text = _guide()
+    assert "`installed tester-`" in text
+    assert "nothing was installed" in text and "when the download itself fails" in text
+
+
+def test_guide_uninstall_removes_what_an_interrupted_install_leaves():
+    section = GUIDE.read_text().split("## Uninstall", 1)[1].split("\n## ", 1)[0]
+    assert "~/Applications/.tester-previous" in section
+    assert "~/Applications/.tester-install.*" in section
+
+
+def test_development_docs_match_the_tester_scripts():
+    text = (REPO_ROOT / "docs/development.md").read_text()
+    rows = {
+        line.split("|")[1].strip(): line for line in text.splitlines() if line.startswith("| `")
+    }
+    assert "install_tester.sh" in rows["`APP_INSTALL_DIR`"]
+    assert "package_tester.sh" in rows["`TESTER_APP_BUNDLE`"]
+    section = text.split("## Tester drops", 1)[1].split("\n## ", 1)[0]
+    assert "`CHANGELOG.md`" in section and "--check-archive" in section
+    assert "needs `on_main: true`" not in section and "does not refuse" in section
 
 
 def test_guide_states_the_gatekeeper_bypass_and_the_audience_limit():

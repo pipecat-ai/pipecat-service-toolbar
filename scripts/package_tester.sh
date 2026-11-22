@@ -8,8 +8,11 @@
 #
 # Refuses, before building, a missing self-signed identity, a dirty tree, a HEAD that is not
 # pushed, and a tag that already exists. After building it runs install_tester.sh --verify-only
-# on the bundle and again on the bundle unpacked from the ZIP it just wrote, so what ships is
-# what was verified. It never touches app-version.json, rulesets or release evidence.
+# on the bundle, install_tester.sh --check-archive on the ZIP it just wrote, and --verify-only
+# again on the bundle unpacked from that ZIP, so what ships is what was verified and what every
+# installer accepts. The tag rule and the pin come from the installer's own modes (--check-tag,
+# --print-pin), never from reading its source. It never touches app-version.json, rulesets or
+# release evidence.
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -43,13 +46,13 @@ VERSION="$(read_json version)"
 BUILD="$(read_json build)"
 SHORT="$(git rev-parse --short=7 HEAD)"
 TAG="tester-$VERSION-b$BUILD-$SHORT"
-# The installer refuses any tag outside its pattern (read from it, never duplicated here), so a
-# drop named otherwise (a pre-release version such as 1.0.0-alpha.1) could never be installed.
-TAG_PATTERN="$(sed -n "s/^TAG_PATTERN='\(.*\)'$/\1/p" "$INSTALLER")"
-[ -n "$TAG_PATTERN" ] || die "could not read the tag pattern from install_tester.sh"
-[[ "$TAG" =~ $TAG_PATTERN ]] || die "tag $TAG is not one install_tester.sh accepts; fix app-version.json before a tester drop"
-# The pin is read from the one committed copy, never duplicated here.
-CERT_SHA1="$(sed -n 's/^TESTER_CERT_SHA1="\([0-9A-F]*\)"$/\1/p' "$INSTALLER")"
+# The installer refuses any tag outside its pattern (asked, never duplicated here), so a drop
+# named otherwise (a pre-release version such as 1.0.0-alpha.1) could never be installed.
+"$INSTALLER" --check-tag "$TAG" 2>/dev/null \
+    || die "tag $TAG is not one install_tester.sh accepts; fix app-version.json before a tester drop"
+# The pin comes from the one committed copy, never duplicated here. A bare assignment keeps the
+# helper's failure visible to set -e.
+CERT_SHA1="$("$INSTALLER" --print-pin)"
 [[ "$CERT_SHA1" =~ ^[0-9A-F]{40}$ ]] || die "could not read the certificate pin from install_tester.sh"
 
 if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null \
@@ -82,6 +85,9 @@ ZIP="$TAG.zip"
 CHECK="$(mktemp -d "${TMPDIR:-/tmp}/tester-package.XXXXXX")"
 trap 'rm -rf "$CHECK"' EXIT
 ditto -c -k --keepParent "$BUNDLE" "$CHECK/$ZIP"
+
+step "Checking the ZIP as the installer will"
+"$INSTALLER" --check-archive "$CHECK/$ZIP"
 
 step "Verifying the bundle unpacked from the ZIP"
 ditto -x -k "$CHECK/$ZIP" "$CHECK"

@@ -411,6 +411,17 @@ identity, and the `--require` call is at `justfile:35`.
 
 ## Issues & Solutions
 
+- Review gauntlet round 1 (2026-11-21), installer recovery and archive trust. This amends the Architecture
+  Decisions line "no journal, lock or receipt": the installer now takes a lock, `.tester-install.lock` (an
+  atomic `mkdir` beside the app, removed on exit, never removed automatically when stale), because two
+  overlapping runs shared `.tester-previous` and could delete the previous app. Still no journal or receipt.
+  Start-up recovery with both the app and `.tester-previous` present now verifies the app against the pin and
+  clears `.tester-previous` only if it passes; otherwise it changes nothing and names the kept copy. A rejected
+  copy that cannot be moved aside is a loud failure. After `ditto` the installer checks the extracted tree (no
+  symlink, device, FIFO or socket; only the app at the top), because `unzip` and `ditto` read different ZIP
+  fields, and it refuses a ZIP whose listed unpacked size exceeds 1 GiB. New modes `--check-archive`,
+  `--check-tag` and `--print-pin`; the packager calls them instead of reading the installer's source.
+
 ## Final Results
 
 Not implemented.
