@@ -386,7 +386,7 @@ sequenceDiagram
 
 ## Progress
 
-- [ ] Phase 1: Signer pin and verifier
+- [x] Phase 1: Signer pin and verifier
 - [ ] Phase 2: Package a tester build
 - [ ] Phase 3: Install path
 - [ ] Phase 4: Tester guide and docs index
