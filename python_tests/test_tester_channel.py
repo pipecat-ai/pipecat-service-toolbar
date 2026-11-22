@@ -1589,8 +1589,8 @@ def test_a_first_install_that_cannot_reject_its_copy_says_so(inst):
     assert str(inst.target) in result.stderr and "no previous copy" in result.stderr
 
 
-def test_staging_keeps_the_previous_copy_when_no_app_is_left(inst):
-    """Cleanup never deletes a staged copy while neither the app nor .tester-previous exists."""
+def test_a_failed_download_leaves_the_previous_copy_when_the_app_disappears(inst):
+    """Fails before the swap: .tester-previous is never moved, whatever happens to the app."""
     inst.install_old()
     _place(inst, _prev(inst), "good", "2")
     inst.publish()
@@ -1598,6 +1598,41 @@ def test_staging_keeps_the_previous_copy_when_no_app_is_left(inst):
     assert result.returncode != 0
     assert _build_at(_prev(inst)) == "2", result.stderr
     assert _staging_left(inst) == []
+
+
+@pytest.mark.parametrize("restore", ["ok", "fails"])
+def test_a_staged_previous_copy_survives_a_swap_failure_with_no_app_left(inst, restore):
+    """Swap step 1 moves the stale .tester-previous into staging; then the app vanishes and step 2
+    fails. The staged copy goes back to .tester-previous or, if it cannot, to a named leftover:
+    never deleted with the staging folder, though neither the app nor .tester-previous exists."""
+    inst.install_old()
+    _place(inst, _prev(inst), "good", "2")
+    inst.publish()
+    inject = {"STUB_MV_FAIL": "2"} if restore == "fails" else {}  # mv 2 is the restore
+    result = inst.run(
+        STUB_MV_HOOK_AT="1",  # right after step 1 moved .tester-previous to staging
+        STUB_MV_HOOK_AFTER="1",
+        STUB_MV_HOOK='rm -rf "$TGT"',
+        TGT=str(inst.target),
+        **inject,
+    )
+    assert result.returncode != 0
+    assert "could not move the installed app aside" in result.stderr, result.stderr
+    assert "installed tester-" not in result.stdout
+    assert not inst.target.exists()
+    assert _staging_left(inst) == [], result.stderr
+    assert not (inst.dest / LOCK_NAME).exists()
+    leftovers = [p for p in inst.dest.iterdir() if p.name.startswith(".tester-leftover.")]
+    if restore == "ok":
+        assert leftovers == []
+        staged_copy = _prev(inst)
+    else:
+        assert not _prev(inst).exists()
+        (kept,) = leftovers
+        staged_copy = kept / "superseded"
+        assert f"kept at {staged_copy}" in result.stderr, result.stderr
+    # The only app copy left is the staged one, at the one place the outcome names.
+    assert _bundles(inst) == {staged_copy: "2"}, result.stderr
 
 
 # Contract (swap and cleanup ownership): a run deletes only what it created, and the copies it
@@ -1842,6 +1877,106 @@ def test_a_signal_during_the_swap_is_ignored_and_the_swap_completes(inst, sig):
     assert _build_at(inst.target) == BUILD
 
 
+# Holds the named tool's call on a matching path for STUB_HOLD_SECS after the real tool ran,
+# touching STUB_HOLD_MARK first: the window in which a signal lands.
+_HOLD_STUB = """#!/bin/bash
+out="$({real} "$@")"; rc=$?
+[ -z "$out" ] || printf '%s\\n' "$out"
+case " $* " in *"$STUB_HOLD_MATCH"*) touch "$STUB_HOLD_MARK"; sleep "$STUB_HOLD_SECS" ;; esac
+exit "$rc"
+"""
+
+
+def _hold(env: InstallEnv, tool: str, match: str) -> dict[str, str]:
+    real = shutil.which(tool)
+    assert real is not None and not real.startswith(str(env.bin)), real
+    stub = env.bin / tool
+    stub.write_text(_HOLD_STUB.format(real=real))
+    stub.chmod(0o755)
+    return {
+        "STUB_HOLD_MATCH": match,
+        "STUB_HOLD_MARK": str(env.tmp / "hold.mark"),
+        "STUB_HOLD_SECS": "1",
+    }
+
+
+def _signal_when_held(argv: list[str], env: dict[str, str], sig: str):
+    """Start the run in its own process group and signal the group, as Control-C or a closed
+    Terminal window does, once the held call has done its work."""
+    import signal
+
+    mark = Path(env["STUB_HOLD_MARK"])
+    run = subprocess.Popen(
+        argv,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(400):
+            if mark.exists():
+                break
+            time.sleep(0.025)
+        assert mark.exists(), "the held call never ran"
+        os.killpg(run.pid, getattr(signal, sig))
+    finally:
+        out, err = run.communicate(timeout=60)
+    return run.returncode, out, err
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP", "SIGINT", "SIGPIPE", "SIGQUIT"])
+def test_a_signal_during_cleanup_is_ignored_and_cleanup_finishes(inst, sig):
+    """A failed run's cleanup removes its staging folder and then its lock. A second signal while
+    it runs (here during its rm of the download) must not end the shell with the lock held."""
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    env = inst.env(STUB_CURL_FAIL=f"{TAG}.zip.sha256", **_hold(inst, "rm", "/probe.err"))
+    rc, out, err = _signal_when_held(["/bin/bash", str(inst.installer), TAG], env, sig)
+    assert rc == 1 and "could not download the checksum" in err, err
+    assert not (inst.dest / LOCK_NAME).exists(), err
+    assert _staging_left(inst) == [], err
+    assert _snapshot(inst.home) == before, err
+
+
+# Contract (lock and staging acquisition): whenever a trap can run, LOCK is set exactly when this
+# run created the lock, and STAGE and STAGE_INODE name the staging folder exactly when it exists.
+# A signal that lands between creating one and naming it is discarded, never acted on in between.
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGINT"])
+@pytest.mark.parametrize(
+    ("tool", "match"),
+    [("mkdir", f"/{LOCK_NAME} "), ("mktemp", "/.tester-install.XXXXXX ")],
+    ids=["lock", "staging"],
+)
+def test_a_signal_between_creating_and_naming_the_lock_or_staging_leaves_nothing(
+    inst, tool, match, sig
+):
+    inst.install_old()
+    inst.publish()
+    env = inst.env(**_hold(inst, tool, match))
+    rc, out, err = _signal_when_held(["/bin/bash", str(inst.installer), TAG], env, sig)
+    # The signal is discarded and the run completes; either way nothing it created is left.
+    assert not (inst.dest / LOCK_NAME).exists(), err
+    assert _staging_left(inst) == [], err
+    assert rc == 0 and f"installed {TAG}" in out, err
+    assert _bundles(inst) == {inst.target: BUILD, _prev(inst): "1"}
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGINT"])
+def test_a_signal_while_check_drop_creates_its_scratch_folder_leaves_nothing(inst, sig):
+    zip_path = inst.publish()
+    scratch = inst.tmp / "tmpdir"
+    scratch.mkdir()
+    env = inst.env(TMPDIR=str(scratch), **_hold(inst, "mktemp", "/tester-check-drop.XXXXXX "))
+    rc, out, err = _signal_when_held(
+        ["/bin/bash", str(inst.installer), "--check-drop", str(zip_path), TAG], env, sig
+    )
+    assert list(scratch.iterdir()) == [], err
+    assert rc == 0 and "ok:" in out, err
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="needs macOS chflags")
 @pytest.mark.parametrize("outcome", ["success", "failure"])
 def test_a_staging_folder_that_cannot_be_removed_is_named_then_and_later(inst, outcome):
@@ -1940,12 +2075,18 @@ def test_an_archive_that_unpacks_too_large_is_refused_before_extraction(inst, si
 UNPACKED_LIMIT = 1 << 30  # 1 GiB
 ENTRY_LIMIT = 10_000
 DOWNLOAD_LIMIT = 250 << 20  # 250 MiB
+PATH_LIMIT = 1024  # bytes
 
 
 def test_the_documented_limits_are_the_ones_the_tests_assert():
     section = (REPO_ROOT / "docs/development.md").read_text().split("## Tester drops", 1)[1]
     section = " ".join(section.split("\n## ", 1)[0].split())
-    for text in ("250 MiB", "1 GiB", "10,000 entries"):
+    for text in (
+        f"a ZIP of at most {DOWNLOAD_LIMIT >> 20} MiB",
+        f"{UNPACKED_LIMIT >> 30} GiB unpacked",
+        f"{ENTRY_LIMIT:,} entries",
+        f"paths of at most {PATH_LIMIT:,} bytes",
+    ):
         assert text in section, text
 
 
@@ -2032,13 +2173,81 @@ def test_the_entry_count_is_bounded_before_extraction(inst):
     assert not inst.logs["ditto"].exists()
 
 
-def test_a_zip_over_the_download_cap_is_refused_offline(inst, tmp_path):
+@pytest.mark.parametrize("over", [0, 1], ids=["at-cap", "one-byte-over"])
+def test_the_zip_size_cap_is_checked_before_unzip_reads_it(inst, tmp_path, over):
+    """MAX_ZIP_BYTES is inclusive. Sparse files of zeros: a ZIP at the cap passes the size check
+    and only then fails to read as an archive; one byte over is refused before unzip runs."""
+    real = shutil.which("unzip")
+    assert real is not None
+    log = inst.tmp / "unzip.log"
+    wrapper = inst.bin / "unzip"
+    wrapper.write_text(f'#!/bin/bash\necho "$*" >> "{log}"\nexec "{real}" "$@"\n')
+    wrapper.chmod(0o755)
     big = tmp_path / "big.zip"
     with big.open("wb") as f:
-        f.truncate(DOWNLOAD_LIMIT + 1)  # sparse: the size check comes before anything reads it
+        f.truncate(DOWNLOAD_LIMIT + over)
     result = _check_drop(inst, big)
+    assert result.returncode == 1, result.stderr
+    if over:
+        assert f"more than the {DOWNLOAD_LIMIT} allowed" in result.stderr, result.stderr
+        assert not log.exists()
+    else:
+        assert "more than the" not in result.stderr, result.stderr
+        assert "cannot read the archive" in result.stderr, result.stderr
+        assert log.exists()
+    assert not inst.logs["ditto"].exists()
+
+
+@pytest.fixture
+def utf8_locale() -> str:
+    listed = subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split()
+    utf8 = next((loc for loc in ("en_US.UTF-8", "C.UTF-8", "C.utf8") if loc in listed), None)
+    if utf8 is None:
+        pytest.skip("no UTF-8 locale on this host")
+    return utf8
+
+
+# Over PATH_LIMIT bytes but under PATH_LIMIT characters: only a byte count refuses it.
+_LONG_NAME = f"{NAME}/Contents/" + "/".join(["é" * 100] * 6)  # 200-byte components, < NAME_MAX
+
+
+def test_a_path_over_the_byte_limit_is_refused_before_extraction_in_a_utf8_locale(
+    inst, tmp_path, utf8_locale
+):
+    """`curl | bash` inherits the person's UTF-8 locale. Stock unzip already fails on a name of
+    PATH_LIMIT bytes or more (whatever the locale), so the refusal can come from it."""
+    assert len(_LONG_NAME.encode()) > PATH_LIMIT > len(_LONG_NAME)
+    bad = tmp_path / "long.zip"
+    _make_zip(bad, _bundle_entries(extra=[(_LONG_NAME, b"x", "file")]))
+    result = _check_drop(inst, bad, LC_ALL=utf8_locale, LANG=utf8_locale)
     assert result.returncode == 1
-    assert f"more than the {DOWNLOAD_LIMIT} allowed" in result.stderr, result.stderr
+    assert (
+        "cannot read the archive" in result.stderr
+        or f"a path longer than {PATH_LIMIT} bytes" in result.stderr
+    ), result.stderr
+    assert not inst.logs["ditto"].exists()
+
+
+def test_the_path_limit_counts_bytes_not_characters_in_a_utf8_locale(inst, tmp_path, utf8_locale):
+    """The installer's own check is the backstop for an unzip that lists such a name. Under a
+    UTF-8 locale ${#name} counts characters; the check must count bytes (LC_ALL=C)."""
+    real = shutil.which("unzip")
+    assert real is not None
+    short = f"{NAME}/Contents/long"
+    zip_path = tmp_path / "long.zip"
+    _make_zip(zip_path, _bundle_entries(extra=[(short, b"x", "file")]))
+    names = _sh(real, "-Z1", str(zip_path)).stdout.replace(short, _LONG_NAME)
+    mocked = inst.bin / "unzip"
+    mocked.write_text(
+        '#!/bin/bash\n[ "$1" = -Z1 ] && { printf "%s" "$NAMES"; exit 0; }\nexec "$REAL_UNZIP" "$@"\n'
+    )
+    mocked.chmod(0o755)
+    result = _check_drop(
+        inst, zip_path, NAMES=names, REAL_UNZIP=real, LC_ALL=utf8_locale, LANG=utf8_locale
+    )
+    assert result.returncode == 1
+    assert f"a path longer than {PATH_LIMIT} bytes" in result.stderr, result.stderr
+    assert not inst.logs["ditto"].exists()
 
 
 def test_check_drop_mode_is_the_whole_offline_acceptance(inst, tmp_path):
@@ -2290,7 +2499,7 @@ def _guide() -> str:
 
 def test_guide_has_the_one_liner_with_placeholders_not_a_real_commit():
     text = GUIDE.read_text()
-    one_liner = re.search(r"^curl .*$", text, re.M)
+    one_liner = re.search(r"^curl .*$", text, re.MULTILINE)
     assert one_liner, "no curl one-liner"
     # -q first: curl reads ~/.curlrc (which can set `insecure`) unless -q is the first argument.
     # The quotes keep zsh, the default macOS shell, from expanding `=https`.
@@ -2323,6 +2532,42 @@ def test_guide_covers_the_installers_refusals_and_what_it_leaves():
     assert "~/Applications/.tester-leftover.*" in text
 
 
+@pytest.mark.parametrize(
+    ("message", "steps"),
+    [
+        # Stop: a build the pin rejects is never retried or worked around.
+        ("not signed by the pinned tester certificate", ("Stop", "tell the owner")),
+        # Corruption on the way: one retry, then the owner.
+        ("the download is corrupt (SHA-256 mismatch)", ("once more", "tell the owner")),
+        # The running-app probe failed: quit by hand, then retry.
+        ("could not tell whether the app is running", ("quit", "by hand", "run the command again")),
+    ],
+)
+def test_guide_says_what_to_do_for_each_refusal_the_installer_prints(message, steps):
+    assert message in INSTALLER.read_text(), message
+    section = GUIDE.read_text().split("## If the installer refuses", 1)[1].split("\n## ", 1)[0]
+    bullets = [" ".join(b.split()) for b in section.split("\n- ")[1:]]
+    (bullet,) = [b for b in bullets if b.startswith("`") and message in b.split("`")[1]]
+    for step in steps:
+        assert step.lower() in bullet.lower(), (step, bullet)
+
+
+def test_guide_and_development_docs_describe_the_retained_rollback_copy():
+    """A successful update keeps the build it replaced at .tester-previous (owner decision)."""
+    text = _guide()
+    update = " ".join(GUIDE.read_text().split("## Update", 1)[1].split("\n## ", 1)[0].split())
+    assert "~/Applications/.tester-previous" in update and "rollback copy" in update
+    assert "rollback copy" in " ".join(
+        GUIDE.read_text().split("## Uninstall", 1)[1].split("\n## ", 1)[0].split()
+    )
+    dev = " ".join((REPO_ROOT / "docs/development.md").read_text().split())
+    header = INSTALLER.read_text().split("\nset -euo pipefail", 1)[0]
+    for doc in (text, dev, " ".join(header.split())):
+        assert "rollback copy" in doc
+        for stale in ("removes the previous", "previous copy is deleted", "deletes the previous"):
+            assert stale not in doc, stale
+
+
 def test_guide_uninstall_removes_what_an_interrupted_install_leaves():
     section = GUIDE.read_text().split("## Uninstall", 1)[1].split("\n## ", 1)[0]
     assert "~/Applications/.tester-previous" in section
@@ -2341,6 +2586,16 @@ def test_development_docs_match_the_tester_scripts():
     assert "`CHANGELOG.md`" in section and "--check-drop <zip> <tag>" in section
     assert "--check-archive" not in text
     assert "needs `on_main: true`" not in section and "does not refuse" in section
+    # The packager packages HEAD (clean, pushed); it does not pull. An offline check has no download.
+    flat = " ".join(section.split())
+    assert (
+        "Pull `main`" not in flat
+        and "Check out the commit to package (`main` for a real drop)" in flat
+    )
+    assert "MiB downloaded" not in flat
+    # Owner decision: a macOS 15 clean-guest run is required before a drop.
+    (macos15,) = [line for line in section.splitlines() if line.strip().startswith("| macOS 15 |")]
+    assert macos15.split("|")[2].strip() == "yes", macos15
 
 
 def test_guide_states_the_gatekeeper_bypass_and_the_audience_limit():

@@ -15,13 +15,15 @@
 # (--verify-only, --check-drop, --check-tag, --print-pin) instead of reading this file.
 # Runs under stock macOS Bash 3.2.
 #
-# What it touches: the app bundle in the install directory, a `.tester-previous` sibling while it
-# swaps and as a rollback copy, its own `.tester-install.*` staging directory, the `.tester-install.lock` directory that
+# What it touches: the app bundle in the install directory, a `.tester-previous` sibling (during
+# the swap, and after a successful install as the rollback copy: the build that install
+# replaced), its own `.tester-install.*` staging directory, the `.tester-install.lock` directory that
 # keeps a second run out, and a `.tester-leftover.*` directory when a failed run has to keep an
 # app copy it moved. Nothing else: no state, caches, models or preferences, and never sudo.
 #
 # What it deletes: only what the run itself created (its download, checksum, probe output and
-# unpacked copy), and a superseded backup once its own copy and the latest backup are in place. A copy
+# unpacked copy), and the older rollback copy once its own copy and the new rollback copy are in
+# place. A successful install never deletes the build it replaced. A copy
 # it moved out of the way on a run that did not finish is put back where possible, otherwise
 # kept in a `.tester-leftover.*` directory and named; never deleted.
 set -euo pipefail
@@ -38,7 +40,8 @@ MIN_MACOS_MAJOR=15
 MAX_ZIP_BYTES=262144000       # 250 MiB; the app's ZIP is ~20 MB
 MAX_UNZIPPED_BYTES=1073741824 # 1 GiB, ~20x the unpacked app; bounds what extraction may write
 MAX_ENTRIES=10000             # the app's ZIP has ~45 entries; bounds what extraction may create
-MAX_PATH_BYTES=1024           # macOS PATH_MAX; bounds the listing the checks read
+MAX_PATH_BYTES=1024           # macOS PATH_MAX; bounds the listing the checks read (stock unzip
+                              # already fails on a name of 1024 bytes or more; this is the backstop)
 MAX_SUM_BYTES=4096
 
 # State of one install run, read by rollback and cleanup.
@@ -73,7 +76,10 @@ die() {
 # only after the foreground child (curl, ditto, codesign, mv) has exited, so cleanup and the
 # lock release never race it. Without these traps Bash 3.2 runs the EXIT trap at once and leaves
 # the child running. During the swap the signals are ignored, by the shell and by the mv and
-# codesign children it starts, so the swap always completes or rolls back.
+# codesign children it starts, so the swap always completes or rolls back. They are ignored as
+# well during cleanup (so a second signal cannot cut it short with the lock held) and while the
+# lock, the staging folder or the scratch folder is created together with the variable that
+# names it (so cleanup always knows what this run created).
 catch_signals() {
     trap 'exit 129' HUP
     trap 'exit 130' INT
@@ -211,6 +217,8 @@ fetch() {
 # check_extracted_tree checks what ditto actually wrote before anything is verified or moved.
 check_archive_shape() {
     local zip="$1" totals count names entry listing missing archive_status
+    # C locale: ${#entry} counts bytes, not the characters of the UTF-8 locale `curl | bash`
+    # inherits, and ZipInfo renders names one byte at a time.
     local LC_ALL=C ZIPINFO="" ZIPINFOOPT=""
     export LC_ALL ZIPINFO ZIPINFOOPT
     # Bound what extraction may create and write: the download cap bounds compressed bytes only,
@@ -262,7 +270,12 @@ check_archive_shape() {
     done <<EOF
 $names
 EOF
-    # A symlink entry could redirect a later entry out of the staging directory. The listing is
+    # An early refusal of a symlink entry the listing shows (a Unix-host entry marked `l`). It is
+    # not what keeps extraction inside the staging directory: an entry from a FAT (host 0) or NTFS
+    # (host 11) host with symlink mode bits lists with no `l`, and ditto still makes a link of it.
+    # What protects is that ditto creates symlinks last and keeps every path inside its
+    # destination, and that check_extracted_tree refuses any symlink after extraction, before
+    # anything is verified or moved. The listing is
     # read in full and searched through a here-string: `unzip -Z | grep -q` under pipefail
     # reports the pipeline as failed (unzip dies of SIGPIPE once grep exits on the first match)
     # whenever the listing outgrows the pipe buffer, and the symlink would go unseen.
@@ -379,9 +392,11 @@ check_drop() {
         return 2
     fi
     trap remove_scratch EXIT
-    catch_signals
+    # The scratch folder and CHECK_SCRATCH come into being with no trap able to run in between.
+    block_signals
     CHECK_SCRATCH="$(mktemp -d "$scratch_base/tester-check-drop.XXXXXX")" ||
         die "could not create a scratch folder"
+    catch_signals
     accept_drop "$zip" "$tag" "$CHECK_SCRATCH"
     echo "ok: $zip is a drop the installer accepts for $tag (version $DROP_VERSION, build $DROP_BUILD)"
 }
@@ -400,16 +415,23 @@ report_strays() {
 # Only one installer at a time per install directory: a second run would share $PREV with the
 # first. mkdir is atomic. A lock left by a run that was killed is never removed here: the
 # message names it, and the person removes it once no install is running.
+# Contract: whenever a trap can run, LOCK is set exactly when this run created the lock, so
+# cleanup releases this run's lock and never another's. A signal trap runs between commands, so
+# mkdir and the assignment run with signals ignored: a signal then is discarded, never acted on
+# between them (which left the lock behind with LOCK still empty).
 acquire_lock() {
-    local lock="$1" dest
+    local lock="$1" dest rc=0
     dest="$(dirname "$lock")"
-    if ! mkdir "$lock" 2>/dev/null; then
+    block_signals
+    mkdir "$lock" 2>/dev/null || rc=$?
+    [ "$rc" -ne 0 ] || LOCK="$lock"
+    catch_signals
+    if [ "$rc" -ne 0 ]; then
         [ -d "$lock" ] || die "could not create $lock"
         echo "error: another tester install is running in $dest, or one was interrupted; if none is running, remove the folder $lock and run this again" >&2
         report_strays "$dest" "also beside the app:"
         exit 1
     fi
-    LOCK="$lock"
 }
 
 # Undo the swap's completed steps in reverse order, each only as far as its destination is free
@@ -591,8 +613,12 @@ install_drop() {
     catch_signals
     acquire_lock "$dest/.tester-install.lock"
     report_strays "$dest" "an earlier install that failed or was interrupted left"
+    # As for the lock: cleanup removes only a staging folder it can name and identify, so the
+    # folder, STAGE and STAGE_INODE come into being with no trap able to run in between.
+    block_signals
     STAGE="$(mktemp -d "$dest/.tester-install.XXXXXX")"
     STAGE_INODE="$(inode_of "$STAGE")" || die "cannot identify the staging folder"
+    catch_signals
     check_not_running
     recover_previous
 

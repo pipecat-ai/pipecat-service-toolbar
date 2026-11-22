@@ -393,6 +393,10 @@ sequenceDiagram
 - [ ] Phase 5: Owner validation and first drop
 - [ ] Phase 6: Retire the channel
 
+Still pending before the first drop (2026-11-22): the macOS 15 clean-guest run (now a required row in the
+`docs/development.md` release checklist; the exclusive rename is unproven there) and the full Phase 5 release
+smoke test on a clean guest.
+
 ## Findings
 
 Planning only. Target: first tester drop by 2026-11-25.
@@ -444,8 +448,30 @@ identity, and the `--require` call is at `justfile:35`.
   remaining budget, refuses ambiguous path renderings, and resolves staging paths before reading plists.
   The packager computes the checksum and writes the manifest before moving the release files out of scratch.
 
+- Review gauntlet round 3 (2026-11-22). Owner decisions, final: (1) a successful install keeps the build it
+  replaced at `.tester-previous` as a rollback copy; the guide's Update and Uninstall sections and
+  `docs/development.md` say so, and uninstall removes it. This supersedes the Requirements line above the review
+  marker that says the installer "removes the previous one" and the Phase 3 test line that says a `.tester-previous`
+  beside an app "is removed". (2) The swap's no-overwrite move is `renamex_np` with `RENAME_EXCL`, called through
+  `osascript -l JavaScript` (`safe_move`); a macOS 15 clean-guest run is a required row in the release checklist,
+  superseding Phase 5's "plus macOS 15 if a guest or Mac is available". Deferred by the owner: binding the tag's
+  commit to the bundle, the bundled uv execute bit, splitting the test module, and the install lock design.
+  Codex edits retained from the follow-up review: the retained backup, the exclusive rename, the per-entry
+  unpacked-size check against the remaining budget, the refusal of ambiguous path renderings, and the main
+  executable check. Round 3 fixes: cleanup ignores signals, so a second signal cannot end it with the lock
+  held; the lock, the staging folder and `--check-drop`'s scratch folder are created together with the variable
+  that names them with signals ignored, so no trap runs between the two (a signal there left the lock behind
+  with `LOCK` empty); the path-length check counts bytes in the C locale (stock unzip already fails on names of
+  1,024 bytes or more, so this is the backstop); the comment on the `unzip -Z` symlink check no longer claims
+  it stops a symlink redirect (a FAT or NTFS host entry lists with no `l`; ditto's ordering and the
+  post-extraction tree check are what protect); the guide covers the pin, checksum and running-probe refusals;
+  the release checklist names the commit to package instead of "Pull main". Regression tests send real signals
+  during cleanup and between creation and naming, pin the 250 MiB ZIP cap at and one byte over, and pin the
+  byte-counted path limit under a UTF-8 locale.
+
 ## Final Results
 
 Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install
-path, tester guide and docs index), with review-gauntlet rounds 1 and 2 applied (Issues & Solutions). Phase 5
-(owner validation and first drop) and Phase 6 (retire the channel) are pending.
+path, tester guide and docs index), with review-gauntlet rounds 1 to 3 and the follow-up review applied (Issues &
+Solutions). Phase 5 (owner validation and first drop, including the required macOS 15 run) and Phase 6 (retire the
+channel) are pending.

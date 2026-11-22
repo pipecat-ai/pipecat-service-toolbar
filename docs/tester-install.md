@@ -48,12 +48,14 @@ The installer:
 - stops if another install is running in the same folder. An install that was interrupted can leave its lock,
   the folder `~/Applications/.tester-install.lock`; the message names it, and once no install is running you
   remove that folder and run the command again;
-- puts the app at `~/Applications/Pipecat Service Toolbar.app` and keeps the previous build hidden at
-  `~/Applications/.tester-previous`. If the swap fails, the installer tries to restore that copy. If the
-  app in place fails verification and a backup exists, the installer prints how to restore it by hand;
-- removes the older backup after a later update succeeds and the latest backup is in place. If it cannot
-  put a copy back, the installer keeps it in a `~/Applications/.tester-leftover.*` folder and prints
-  the path. It also lists any staging or leftover folders from earlier runs;
+- puts the app at `~/Applications/Pipecat Service Toolbar.app` and, on an update, moves the build it
+  replaces to `~/Applications/.tester-previous` (hidden). That copy stays after a successful update as a
+  rollback copy. If the swap fails, the installer tries to restore it. If the app in place fails
+  verification and a backup exists, the installer prints how to restore it by hand;
+- keeps one rollback copy: a later successful update replaces `.tester-previous` with the build it
+  replaced and removes the older one. If it cannot put a copy back, the installer keeps it in a
+  `~/Applications/.tester-leftover.*` folder and prints the path. It also lists any staging or leftover
+  folders from earlier runs;
 - finishes the swap even if you press Control-C or close the window during it, and at any other point stops
   cleanly, cleaning up only once the step it was on has ended;
 - touches nothing else: not your app data, caches, models or preferences, and it never uses `sudo`.
@@ -63,12 +65,18 @@ The installer:
 Run the command from the owner's newest message. Your Microphone and Speech permissions carry over, because every
 tester build is signed by the same certificate.
 
+After a successful update the build it replaced stays at `~/Applications/.tester-previous` as a rollback copy
+(it takes disk space as large as the app). To go back to it, quit the app, move
+`~/Applications/Pipecat Service Toolbar.app` to the Trash and rename `.tester-previous` to
+`Pipecat Service Toolbar.app`. The next successful update replaces the rollback copy.
+
 ## Uninstall
 
 1. In the app, turn off **Open at Login**, then choose **Quit**.
 2. Remove `~/Applications/Pipecat Service Toolbar.app`.
-3. Remove the backup and any folders beside it that an install left, if present: `~/Applications/.tester-previous`,
-   any `~/Applications/.tester-install.*` folders (staging folders and the lock) and any
+3. Remove the rollback copy and any folders beside it that an install left, if present:
+   `~/Applications/.tester-previous` (the build the last update replaced), any
+   `~/Applications/.tester-install.*` folders (staging folders and the lock) and any
    `~/Applications/.tester-leftover.*` folders (app copies an install kept). They are hidden in Finder; in
    Terminal, `ls -a ~/Applications` shows them.
 
@@ -82,10 +90,18 @@ build it showed. If two drops share a version and build, the tag is how we tell 
 
 ## If the installer refuses
 
-Stop and tell the owner what it printed. Do not download the ZIP in a browser and do not use Privacy & Security >
-**Open Anyway**: a browser download is flagged by Gatekeeper, and Open Anyway skips the certificate check that
-this channel relies on, so neither is supported. Some messages need one more step:
+Unless a message below says otherwise, stop and tell the owner what it printed. Do not download the ZIP in a
+browser and do not use Privacy & Security > **Open Anyway**: a browser download is flagged by Gatekeeper, and
+Open Anyway skips the certificate check that this channel relies on, so neither is supported. Some messages need
+one more step:
 
+- `... not signed by the pinned tester certificate`: the download is not intact and signed with the owner's
+  certificate. Stop: do not run the command again or try another way to install it, and tell the owner what
+  it printed. The installer refuses before it replaces anything.
+- `the download is corrupt (SHA-256 mismatch)`: the download was damaged on the way. Run the command once more;
+  if it says this again, stop and tell the owner.
+- `could not tell whether the app is running`: quit Pipecat Service Toolbar by hand (its menu bar icon, then
+  **Quit**, or **Stop All & Quit** while servers are running), then run the command again.
 - `... is an unverified build, do not open it`: the new copy failed the certificate check after it was put in
   place and could not be moved away. Do not open the app until the owner replies; the message also says where
   your previous copy is, if there was one.

@@ -168,8 +168,8 @@ ask `origin` (a `git ls-remote` failure other than "no such tag"). It builds wit
 checks the bundle against the certificate pinned in `scripts/install_tester.sh`
 (`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a scratch
 folder and runs the installer's whole offline acceptance on it,
-`install_tester.sh --check-drop <zip> <tag>`: at most 250 MiB downloaded, entries only inside the app,
-unambiguous ASCII paths with explicit parent folders, no symbolic links, at most 10,000 entries and
+`install_tester.sh --check-drop <zip> <tag>`: a ZIP of at most 250 MiB, entries only inside the app,
+unambiguous ASCII paths of at most 1,024 bytes with explicit parent folders, no symbolic links, at most 10,000 entries and
 1 GiB unpacked, then extraction, a check of what was
 extracted (only folders and regular files, only the app at the top), group/other write, setuid and
 access lists removed, the pinned signer, an executable main binary, and the version and build the tag
@@ -186,16 +186,20 @@ The installer allows one run at a time per install directory: it holds the
 `.tester-install.lock` folder there while it runs, and a run that finds one refuses and names it
 (a hard-killed run leaves it for manual removal). HUP, INT, QUIT, PIPE and TERM end a run only
 after its current command has finished, and are ignored during the swap and cleanup. The swap uses
-macOS exclusive rename so it requires an install volume that supports it. A successful update keeps
-the previous copy at `.tester-previous`. Cleanup removes the older backup after verifying the update
-and identifying both the latest backup and the superseded copy. A copy that cannot be restored goes in
+macOS exclusive rename (`renamex_np` with `RENAME_EXCL`, called through `osascript -l JavaScript`) so it
+requires an install volume that supports it. A successful update keeps the build it replaced at
+`.tester-previous` as a rollback copy; it is never deleted by that update, and removing the tester app
+by hand includes removing it. Cleanup removes the older rollback copy after verifying the update
+and identifying both the new rollback copy and the superseded one. A copy that cannot be restored goes in
 a named `.tester-leftover.*` folder. Every run names the `.tester-install.*` and `.tester-leftover.*`
 folders it finds beside the app and never
 removes them.
 
 Release checklist:
 
-1. Pull `main`, then run `just app-tester-package`. To recheck a ZIP by hand (no network, no install),
+1. Check out the commit to package (`main` for a real drop), then run `just app-tester-package`. The
+   packager does not check out or pull anything: it packages HEAD, which must be a clean tree pushed to
+   `origin`. To recheck a ZIP by hand (no network, no install),
    run `scripts/install_tester.sh --check-drop dist/tester/<tag>.zip <tag>`. Check `on_main` in the manifest before publishing:
    send testers only a drop with `on_main: true`. The packager records `on_main` and prints a rehearsal
    note when it is `false`, but does not refuse; such a drop is a rehearsal for a guest only.
@@ -205,8 +209,14 @@ Release checklist:
    ZIP's SHA-256 equals the manifest's `zip_sha256`.
 4. Fill `<INSTALLER_COMMIT_SHA>` (the manifest commit) and `<TAG>` in the one-liner from
    `docs/tester-install.md` and send it to testers directly. Never post it publicly.
-5. Validate on a clean guest before the first invitation (plan, Phase 5). Never replace your own
-   installed app or reset real state as a shortcut.
+5. Validate on a clean guest before the first invitation (plan, Phase 5), running every Phase 5 check
+   on each guest below. A missing or failed row blocks the drop. Never replace your own installed app or
+   reset real state as a shortcut.
+
+   | Clean guest | Required | Why |
+   |---|---|---|
+   | macOS 26 | yes | The plan's Phase 5 guest (26.6.2). |
+   | macOS 15 | yes | The oldest version the guide supports; the swap's exclusive rename (`renamex_np` through `osascript -l JavaScript`) is unproven there. |
 
 ## Build settings
 
