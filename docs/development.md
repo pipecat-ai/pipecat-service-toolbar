@@ -163,24 +163,37 @@ regenerating the constraints. Other STT models follow `main`.
 Interim self-signed builds for known testers, until the Apple-signed alpha exists. Plan:
 [20261121-feature-selfsigned-tester-channel.md](plans/20261121-feature-selfsigned-tester-channel.md).
 `just app-tester-package` needs the self-signed `Code Signing` identity, a clean tree and a HEAD pushed
-to `origin`. It builds with that identity, checks the bundle against the certificate pinned in
-`scripts/install_tester.sh` (`install_tester.sh --verify-only <app>`, a `codesign -R` verification),
-writes the ZIP, runs the installer's archive checks on it (`install_tester.sh --check-archive <zip>`:
-entries only inside the app, no symbolic links, at most 1 GiB unpacked), checks the bundle unpacked
-from the ZIP against the pin, and only then writes `dist/tester/<tag>.zip`, `<tag>.zip.sha256` and
-`<tag>.manifest.json`. The tag rule and the pin come from the installer itself
-(`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`), never from a second copy.
+to `origin`. It refuses a tag that exists locally or on `origin`, and refuses as well when it cannot
+ask `origin` (a `git ls-remote` failure other than "no such tag"). It builds with that identity,
+checks the bundle against the certificate pinned in `scripts/install_tester.sh`
+(`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a scratch
+folder and runs the installer's whole offline acceptance on it,
+`install_tester.sh --check-drop <zip> <tag>`: at most 250 MiB downloaded, entries only inside the app,
+no symbolic links, at most 10,000 entries and 1 GiB unpacked, then extraction, a check of what was
+extracted (only folders and regular files, only the app at the top), group/other write, setuid and
+access lists removed, the pinned signer, and the version and build the tag names. The install runs the
+same function on every download. Only a ZIP that passes becomes `dist/tester/<tag>.zip`, beside
+`<tag>.zip.sha256` and `<tag>.manifest.json`. The tag rule, the pin and the limits come from the
+installer itself (`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`,
+`--check-drop`), never from a second copy.
 The tag is `tester-<version>-b<build>-<shortsha>`; the recipe refuses a tag that exists, so a second
 drop needs a new commit. Tester drops never change `app-version.json` or `CHANGELOG.md`.
 `TESTER_APP_BUNDLE=<app>` packages a prebuilt bundle and is for tests only (see Build settings).
 
 The installer allows one run at a time per install directory: it holds the
 `.tester-install.lock` folder there while it runs, and a run that finds one refuses and names it
-(a hard-killed run leaves it; it is never removed automatically).
+(a hard-killed run leaves it; it is never removed automatically). HUP, INT and TERM end a run only
+after its current command has finished, and are ignored during the swap, so the lock is released
+only once nothing of the run is still moving files. A run deletes only what it created, and the
+copies it replaced once its own copy is verified in place; a copy it moved out of the way on a run
+that did not finish goes back, or stays in a `.tester-leftover.*` folder that the run names. Every
+run names the `.tester-install.*` and `.tester-leftover.*` folders it finds beside the app and never
+removes them.
 
 Release checklist:
 
-1. Pull `main`, then run `just app-tester-package`. Check `on_main` in the manifest before publishing:
+1. Pull `main`, then run `just app-tester-package`. To recheck a ZIP by hand (no network, no install),
+   run `scripts/install_tester.sh --check-drop dist/tester/<tag>.zip <tag>`. Check `on_main` in the manifest before publishing:
    send testers only a drop with `on_main: true`. The packager records `on_main` and prints a rehearsal
    note when it is `false`, but does not refuse; such a drop is a rehearsal for a guest only.
 2. Publish: `gh release create <tag> --prerelease --target <manifest commit> dist/tester/<tag>*`.

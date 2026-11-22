@@ -421,7 +421,23 @@ identity, and the `--require` call is at `justfile:35`.
   symlink, device, FIFO or socket; only the app at the top), because `unzip` and `ditto` read different ZIP
   fields, and it refuses a ZIP whose listed unpacked size exceeds 1 GiB. New modes `--check-archive`,
   `--check-tag` and `--print-pin`; the packager calls them instead of reading the installer's source.
+- Review gauntlet round 2 (2026-11-22), three mechanisms redesigned rather than patched. (1) Swap and cleanup
+  ownership: a run deletes only what it created, and the copies it replaced only once its own copy is verified in
+  place and is still its own (checked by inode); every app move goes through one primitive that refuses an
+  occupied destination and detects and undoes `mv` nesting a copy inside a directory another program created; a
+  failed swap is undone in reverse order, and a copy that cannot go back is kept in a named `.tester-leftover.*`
+  folder, never deleted; a stale `.tester-previous` is cleared inside the swap, not before the download. HUP, INT
+  and TERM end a run only after the running command exits (Bash 3.2 otherwise ran the EXIT trap, and released
+  the lock, while `mv` still ran) and are ignored during the swap. Every run names the `.tester-install.*` and
+  `.tester-leftover.*` folders it finds and never removes them. (2) One acceptance gate: `--check-drop <zip>
+  <tag>` replaces `--check-archive` and runs the installer's whole offline acceptance (250 MiB download cap,
+  central directory incl. a 10,000-entry cap and listed parent folders, 1 GiB unpacked, extraction, extracted
+  tree, removal of group/other write, setuid and ACLs that the ZIP can carry and codesign does not seal, pinned
+  signer, version and build against the tag); the install and the packager call the same function. (3) The
+  packager refuses when `git ls-remote` fails for any reason other than "no such tag" (exit 2).
 
 ## Final Results
 
-Not implemented.
+Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install
+path, tester guide and docs index), with review-gauntlet rounds 1 and 2 applied (Issues & Solutions). Phase 5
+(owner validation and first drop) and Phase 6 (retire the channel) are pending.

@@ -7,12 +7,16 @@
 # Plan: docs/plans/20261121-feature-selfsigned-tester-channel.md
 #
 # Refuses, before building, a missing self-signed identity, a dirty tree, a HEAD that is not
-# pushed, and a tag that already exists. After building it runs install_tester.sh --verify-only
-# on the bundle, install_tester.sh --check-archive on the ZIP it just wrote, and --verify-only
-# again on the bundle unpacked from that ZIP, so what ships is what was verified and what every
-# installer accepts. The tag rule and the pin come from the installer's own modes (--check-tag,
-# --print-pin), never from reading its source. It never touches app-version.json, rulesets or
-# release evidence.
+# pushed, a tag the installer would refuse, and a tag that already exists locally or on origin (a
+# remote lookup that fails for any other reason than "no such tag" refuses too). After building it
+# runs install_tester.sh --verify-only on the bundle, writes the ZIP in a scratch folder and runs
+# install_tester.sh --check-drop <zip> <tag> on it: the installer's own acceptance of a download,
+# every step except the network and the swap (download cap, central-directory paths, symlinks,
+# entry count and unpacked size, extraction, the extracted tree, mode and ACL normalisation, the
+# pinned signer, and the version and build the tag names). Only a ZIP that passes moves into
+# dist/. The tag rule, the pin and the limits come from the installer's own modes (--check-tag,
+# --print-pin, --check-drop), never from reading its source. It never touches app-version.json,
+# rulesets or release evidence.
 set -euo pipefail
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -55,10 +59,19 @@ TAG="tester-$VERSION-b$BUILD-$SHORT"
 CERT_SHA1="$("$INSTALLER" --print-pin)"
 [[ "$CERT_SHA1" =~ ^[0-9A-F]{40}$ ]] || die "could not read the certificate pin from install_tester.sh"
 
-if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null \
-    || git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null; then
     die "tag $TAG already exists; a second drop needs a new commit"
 fi
+# `ls-remote --exit-code` exits 2 when no ref matches; any other failure (network, auth, a broken
+# remote) means the tag could not be checked, which is not the same as absent.
+LS_REMOTE_RC=0
+LS_REMOTE_ERR="$(git ls-remote --exit-code --tags origin "refs/tags/$TAG" 2>&1 >/dev/null)" \
+    || LS_REMOTE_RC=$?
+case "$LS_REMOTE_RC" in
+    0) die "tag $TAG already exists on origin; a second drop needs a new commit" ;;
+    2) ;;
+    *) die "could not check whether tag $TAG exists on origin (git ls-remote exited $LS_REMOTE_RC: ${LS_REMOTE_ERR%%$'\n'*})" ;;
+esac
 
 if [ -n "${TESTER_APP_BUNDLE:-}" ]; then
     BUNDLE="$TESTER_APP_BUNDLE"
@@ -87,21 +100,9 @@ trap 'rm -rf "$CHECK"' EXIT
 ditto -c -k --keepParent "$BUNDLE" "$CHECK/$ZIP"
 
 step "Checking the ZIP as the installer will"
-"$INSTALLER" --check-archive "$CHECK/$ZIP"
-
-step "Verifying the bundle unpacked from the ZIP"
-ditto -x -k "$CHECK/$ZIP" "$CHECK"
-[ -d "$CHECK/$NAME" ] || die "the ZIP does not unpack to '$NAME'"
-"$INSTALLER" --verify-only "$CHECK/$NAME"
-
-# The bundle inside the ZIP must carry the version and build the tag names.
-plist_value() { python3 -c \
-    'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))[sys.argv[2]])' \
-    "$CHECK/$NAME/Contents/Info.plist" "$1"; }
-[ "$(plist_value CFBundleShortVersionString)" = "$VERSION" ] \
-    || die "bundle version does not match app-version.json ($VERSION)"
-[ "$(plist_value CFBundleVersion)" = "$BUILD" ] \
-    || die "bundle build does not match app-version.json ($BUILD)"
+# The installer's whole offline acceptance, in its own scratch folder: what passes here is what
+# every installer at this commit accepts for $TAG (whose version and build are app-version.json's).
+"$INSTALLER" --check-drop "$CHECK/$ZIP" "$TAG"
 
 step "Writing the checksum and manifest"
 mkdir -p "$OUT"
