@@ -87,13 +87,17 @@ check_platform() {
 }
 
 # Refuse while the app runs: replacing a live bundle leaves the old build running. The same
-# probe scripts/quit_app.sh uses.
+# probe scripts/quit_app.sh uses. A Mac that has never seen the app (a first install) makes
+# osascript fail with -1728 "Can't get application id": LaunchServices knows no app with that
+# id, and a running app is always known to it, so that answer means "not running". stderr is
+# read for it; any other failure or answer is "cannot tell" and refuses.
 check_not_running() {
     local answer
-    answer="$(osascript -e "application id \"$BUNDLE_ID\" is running" 2>/dev/null || true)"
+    answer="$(osascript -e "application id \"$BUNDLE_ID\" is running" 2>&1 || true)"
     case "$answer" in
         false) ;;
         true) die "the app is running; quit Pipecat Service Toolbar, then run this again" ;;
+        *"(-1728)"*) ;;
         *) die "could not tell whether the app is running; quit it and run this again" ;;
     esac
 }
@@ -108,7 +112,7 @@ fetch() {
 }
 
 check_archive_shape() {
-    local zip="$1" names entry
+    local zip="$1" names entry listing
     names="$(unzip -Z1 "$zip")" || die "cannot read the archive"
     [ -n "$names" ] || die "the archive is empty"
     while IFS= read -r entry; do
@@ -122,8 +126,12 @@ check_archive_shape() {
     done <<EOF
 $names
 EOF
-    # A symlink entry could redirect a later entry out of the staging directory.
-    if unzip -Z "$zip" | grep -q '^l'; then
+    # A symlink entry could redirect a later entry out of the staging directory. The listing is
+    # read in full and searched through a here-string: `unzip -Z | grep -q` under pipefail
+    # reports the pipeline as failed (unzip dies of SIGPIPE once grep exits on the first match)
+    # whenever the listing outgrows the pipe buffer, and the symlink would go unseen.
+    listing="$(unzip -Z "$zip")" || die "cannot read the archive"
+    if grep -q '^l' <<<"$listing"; then
         die "the archive holds a symbolic link"
     fi
 }
@@ -134,11 +142,17 @@ cleanup() {
     fi
 }
 
-# Put the previous copy back at $1 from $2 after a failed swap.
+# Put the previous copy back at $1 from $2 after a failed swap. Prints the sentence that ends
+# the caller's error message, so it never claims a restore that did not happen. It refuses to
+# `mv` onto an existing $1: that would nest the previous copy inside it.
 restore_previous() {
     local target="$1" prev="$2"
-    if [ -e "$prev" ] && ! mv "$prev" "$target"; then
-        echo "error: could not restore the previous copy; it is at $prev" >&2
+    if [ ! -e "$prev" ]; then
+        echo "; there was no previous copy to restore"
+    elif [ -e "$target" ] || ! mv "$prev" "$target"; then
+        echo "; could not restore the previous copy, it is at $prev"
+    else
+        echo "; the previous copy was restored"
     fi
 }
 
@@ -213,13 +227,11 @@ install_drop() {
             die "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove the app by hand, then run this again"
     fi
     if ! mv "$extract/$BUNDLE_NAME" "$target"; then
-        restore_previous "$target" "$prev"
-        die "could not install; the previous copy was restored"
+        die "could not install$(restore_previous "$target" "$prev")"
     fi
     if ! verify_signer "$target" >/dev/null; then
         mv "$target" "$STAGE/rejected" || true
-        restore_previous "$target" "$prev"
-        die "the installed copy failed verification; the previous copy was restored"
+        die "the installed copy failed verification$(restore_previous "$target" "$prev")"
     fi
     if [ -e "$prev" ]; then
         mv "$prev" "$STAGE/replaced" || echo "note: the previous copy is left at $prev" >&2

@@ -602,8 +602,8 @@ def test_a_bundle_the_pin_rejects_is_never_zipped(repo):
 def test_a_zip_whose_unpacked_bundle_fails_is_not_published(repo):
     result = repo.run(STUB_FAIL_FROM="3")  # calls 1-2 verify the built bundle, 3-4 the unpacked one
     assert result.returncode != 0
-    names = sorted(p.name for p in repo.out.iterdir())
-    assert not any(n.endswith((".sha256", ".manifest.json")) for n in names), names
+    # The ZIP is verified in a scratch directory: nothing unverified is left for `gh release create`.
+    assert not repo.out.exists() or not list(repo.out.iterdir())
 
 
 def test_bundle_version_must_match_app_version_json(repo):
@@ -611,6 +611,18 @@ def test_bundle_version_must_match_app_version_json(repo):
     repo.bundle = _write_bundle(repo.tmp / "bundle2", version="0.0.1")
     result = repo.run()
     assert result.returncode != 0 and "version" in result.stderr
+
+
+def test_a_tag_the_installer_would_refuse_is_refused_before_building(repo):
+    (repo.root / "app-version.json").write_text(
+        json.dumps({"version": "1.0.0-alpha.1", "build": int(BUILD)})
+    )
+    _git(repo.root, "add", "app-version.json")
+    _git(repo.root, "commit", "-q", "-m", "prerelease version")
+    _git(repo.root, "push", "-q", "origin", "HEAD")
+    result = repo.run()
+    assert result.returncode != 0 and "install_tester.sh accepts" in result.stderr
+    assert not repo.out.exists()
 
 
 def test_bundle_must_carry_the_app_name(repo):
@@ -743,6 +755,10 @@ _OSASCRIPT_STUB = """#!/bin/bash
 n=$(( $(cat "$STUB_OSA_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$STUB_OSA_COUNT"
 [ -z "${STUB_OSA_FAIL:-}" ] || exit 1
+if [ -n "${STUB_OSA_UNKNOWN:-}" ]; then
+  echo "syntax error: Can\u2019t get application id \"ai.pipecat.ServiceToolbar\". (-1728)" >&2
+  exit 1
+fi
 if [ "$n" -gt 1 ] && [ -n "${STUB_RUNNING_LATER:-}" ]; then echo "$STUB_RUNNING_LATER"; exit 0; fi
 echo "${STUB_RUNNING:-false}"
 """
@@ -1052,6 +1068,21 @@ def test_archive_shape_is_checked_before_extraction(inst, extra, message):
     assert _snapshot(inst.home) == before
 
 
+def test_a_symlink_is_refused_in_an_archive_longer_than_a_pipe_buffer(inst):
+    """`unzip -Z | grep -q` under pipefail misses an early symlink once the listing is large."""
+    link = [(f"{NAME}/Contents/link", b"/Users", "symlink")]
+    filler = [
+        (f"{NAME}/Contents/Resources/some/long/path/for/an/entry/file_{n:05d}.txt", b"x", "file")
+        for n in range(3000)
+    ]
+    inst.install_old()
+    inst.publish(entries=_bundle_entries(extra=link + filler))
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "symbolic link" in result.stderr, result.stderr
+    assert _snapshot(inst.home) == before
+
+
 def test_wrong_signer_is_refused_and_the_installed_app_is_untouched(inst):
     inst.install_old()
     inst.publish(entries=_bundle_entries(signer="bad"))
@@ -1097,6 +1128,14 @@ def test_a_running_or_unknowable_app_is_never_replaced(inst, extra):
     assert _snapshot(inst.home) == before
 
 
+def test_an_app_launch_services_has_never_seen_is_not_running(inst):
+    """A first install: osascript fails with -1728, which quit_app.sh also reads as not running."""
+    inst.publish()
+    result = inst.run(STUB_OSA_UNKNOWN="1")
+    assert result.returncode == 0, result.stderr
+    assert inst.target.is_dir() and _staging_left(inst) == []
+
+
 def test_a_failed_staging_copy_leaves_the_installed_app(inst):
     inst.install_old()
     inst.publish()
@@ -1122,6 +1161,14 @@ def test_failing_to_move_the_new_app_in_restores_the_previous_copy(inst):
     result = inst.run(STUB_MV_FAIL="2")
     assert result.returncode != 0 and "previous copy was restored" in result.stderr
     assert _snapshot(inst.home) == before
+
+
+def test_failing_to_move_the_new_app_in_on_a_first_install_claims_no_restore(inst):
+    inst.publish()
+    result = inst.run(STUB_MV_FAIL="1")  # no old app, so the first mv is the move-in
+    assert result.returncode != 0 and "could not install" in result.stderr
+    assert "was restored" not in result.stderr and "no previous copy" in result.stderr
+    assert [p.name for p in inst.dest.iterdir()] == []
 
 
 def test_a_failed_verification_after_the_swap_restores_the_previous_copy(inst):
@@ -1225,7 +1272,25 @@ def test_stubbed_tool_output_matches_the_real_tools(tmp_path):
     z = tmp_path / "s.zip"
     _make_zip(z, [("a", b"x", "file"), ("b", b"a", "symlink")])
     listing = _sh("unzip", "-Z", str(z)).stdout.splitlines()
-    assert [ln[0] for ln in listing if ln[:1] in "-l"] == ["-", "l"]
+    assert [ln[0] for ln in listing if ln and ln[0] in "-l"] == ["-", "l"]
+    # The installer reads a first install's osascript failure by its -1728 text.
+    probe = subprocess.run(
+        ["osascript", "-e", 'application id "ai.pipecat.NoSuchApp.fidelity" is running'],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert probe.returncode != 0 and "(-1728)" in probe.stderr, probe.stderr
+    stub_path = tmp_path / "osascript"
+    stub_path.write_text(_OSASCRIPT_STUB)
+    stub_path.chmod(0o755)
+    stub_probe = subprocess.run(
+        [str(stub_path), "-e", "x"],
+        env={**os.environ, "STUB_OSA_COUNT": str(tmp_path / "osa.count"), "STUB_OSA_UNKNOWN": "1"},
+        capture_output=True,
+        text=True,
+    )
+    assert stub_probe.returncode == probe.returncode and "(-1728)" in stub_probe.stderr
 
 
 @real_codesign

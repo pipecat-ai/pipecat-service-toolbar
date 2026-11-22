@@ -43,6 +43,14 @@ VERSION="$(read_json version)"
 BUILD="$(read_json build)"
 SHORT="$(git rev-parse --short=7 HEAD)"
 TAG="tester-$VERSION-b$BUILD-$SHORT"
+# The installer refuses any tag outside its pattern (read from it, never duplicated here), so a
+# drop named otherwise (a pre-release version such as 1.0.0-alpha.1) could never be installed.
+TAG_PATTERN="$(sed -n "s/^TAG_PATTERN='\(.*\)'$/\1/p" "$INSTALLER")"
+[ -n "$TAG_PATTERN" ] || die "could not read the tag pattern from install_tester.sh"
+[[ "$TAG" =~ $TAG_PATTERN ]] || die "tag $TAG is not one install_tester.sh accepts; fix app-version.json before a tester drop"
+# The pin is read from the one committed copy, never duplicated here.
+CERT_SHA1="$(sed -n 's/^TESTER_CERT_SHA1="\([0-9A-F]*\)"$/\1/p' "$INSTALLER")"
+[[ "$CERT_SHA1" =~ ^[0-9A-F]{40}$ ]] || die "could not read the certificate pin from install_tester.sh"
 
 if git rev-parse --quiet --verify "refs/tags/$TAG" >/dev/null \
     || git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
@@ -58,7 +66,8 @@ else
     SIGN_IDENTITY="$("$SCRIPTS/resolve_sign_identity.sh" --require)"
     export SIGN_IDENTITY
     [ "$SIGN_IDENTITY" != "-" ] || die "ad-hoc signing is not a tester build; unset SIGN_IDENTITY"
-    "$SCRIPTS/build_app.sh"
+    # CONFIG pinned: build_app.sh reads it from the environment, and a debug build is no drop.
+    CONFIG=release "$SCRIPTS/build_app.sh"
     BUNDLE="$ROOT/build/$NAME"
 fi
 [ "$(basename "$BUNDLE")" = "$NAME" ] || die "bundle must be named '$NAME'"
@@ -68,14 +77,14 @@ step "Verifying the built bundle against the pin"
 
 step "Writing the ZIP"
 ZIP="$TAG.zip"
-mkdir -p "$OUT"
-rm -f "$OUT/$ZIP" "$OUT/$ZIP.sha256" "$OUT/$TAG.manifest.json"
-ditto -c -k --keepParent "$BUNDLE" "$OUT/$ZIP"
-
-step "Verifying the bundle unpacked from the ZIP"
+# The ZIP is written and verified in a scratch directory and moved into dist/ only once it
+# passes, so a failed run leaves no unverified ZIP there for `gh release create dist/tester/<tag>*`.
 CHECK="$(mktemp -d "${TMPDIR:-/tmp}/tester-package.XXXXXX")"
 trap 'rm -rf "$CHECK"' EXIT
-ditto -x -k "$OUT/$ZIP" "$CHECK"
+ditto -c -k --keepParent "$BUNDLE" "$CHECK/$ZIP"
+
+step "Verifying the bundle unpacked from the ZIP"
+ditto -x -k "$CHECK/$ZIP" "$CHECK"
 [ -d "$CHECK/$NAME" ] || die "the ZIP does not unpack to '$NAME'"
 "$INSTALLER" --verify-only "$CHECK/$NAME"
 
@@ -89,14 +98,15 @@ plist_value() { python3 -c \
     || die "bundle build does not match app-version.json ($BUILD)"
 
 step "Writing the checksum and manifest"
+mkdir -p "$OUT"
+rm -f "$OUT/$ZIP" "$OUT/$ZIP.sha256" "$OUT/$TAG.manifest.json"
+mv "$CHECK/$ZIP" "$OUT/$ZIP"
 if command -v shasum >/dev/null 2>&1; then
     ZIP_SHA256="$(shasum -a 256 "$OUT/$ZIP" | cut -d' ' -f1)"
 else
     ZIP_SHA256="$(sha256sum "$OUT/$ZIP" | cut -d' ' -f1)"
 fi
 printf '%s  %s\n' "$ZIP_SHA256" "$ZIP" > "$OUT/$ZIP.sha256"
-# The pin is read from the one committed copy, never duplicated here.
-CERT_SHA1="$(sed -n 's/^TESTER_CERT_SHA1="\([0-9A-F]*\)"$/\1/p' "$INSTALLER")"
 printf '{\n  "tag": "%s",\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "on_main": %s,\n  "cert_sha1": "%s",\n  "zip": "%s",\n  "zip_sha256": "%s",\n  "created_utc": "%s"\n}\n' \
     "$TAG" "$VERSION" "$BUILD" "$COMMIT" "$ON_MAIN" "$CERT_SHA1" "$ZIP" "$ZIP_SHA256" \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/$TAG.manifest.json"
