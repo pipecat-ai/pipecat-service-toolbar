@@ -1,0 +1,63 @@
+require "json"
+require "digest"
+
+spike_state = @STATE@
+fixture_version = @VERSION@
+source_path = __FILE__
+
+probe = lambda do |event, removal|
+  lock_path = File.join(spike_state, "operation.lock")
+  marker_path = File.join(spike_state, "refuse-quit")
+  marker_present = File.file?(marker_path)
+  refuses = removal && marker_present
+  $pipecat_spike_lock ||= File.open(lock_path, File::RDWR | File::CREAT, 0o600)
+  unless $pipecat_spike_lock.flock(File::LOCK_EX | File::LOCK_NB)
+    raise "spike: operation lock already held"
+  end
+
+  pid = Process.spawn("/usr/bin/lockf", "-k", "-t", "0", lock_path, "/usr/bin/true",
+                      out: File::NULL, err: File::NULL)
+  contender_exit = Process.wait2(pid).last.exitstatus
+
+  File.open(File.join(spike_state, "events.jsonl"), "a") do |log|
+    log.puts(JSON.generate(
+      time: Time.now.to_f, pid: Process.pid, version: fixture_version, event: event,
+      source_path: source_path, source_sha256: File.file?(source_path) ? Digest::SHA256.file(source_path).hexdigest : nil,
+      marker_path: marker_path, marker_present: marker_present, decision: refuses ? "refuse" : "allow",
+      lock_fd: $pipecat_spike_lock.fileno, lock_inode: $pipecat_spike_lock.stat.ino,
+      contender_exit: contender_exit
+    ))
+  end
+  raise "spike: contender did not report lock contention (#{contender_exit.inspect})" unless contender_exit == 75
+  raise "spike: simulated quit refusal" if refuses
+end
+
+cask "pipecat-toolbar-lock-spike-retry" do
+  version @VERSION@
+  sha256 @SHA@
+  url @URL@
+  name "Toolbar Lock Spike Retry"
+  desc "Disposable installer lock fixture"
+  homepage "https://github.com/pipecat-ai/pipecat-service-toolbar"
+
+  app "Toolbar Lock Spike Retry.app"
+
+  preflight do
+    probe.call("install-preflight", false)
+  end
+
+  postflight do
+    probe.call("install-postflight", false)
+    if fixture_version == "2.0" && File.file?(File.join(spike_state, "fail-v2"))
+      raise "spike: injected failure after successor app move"
+    end
+  end
+
+  uninstall_preflight do
+    probe.call("uninstall-preflight", true)
+  end
+
+  uninstall_postflight do
+    probe.call("uninstall-postflight", false)
+  end
+end
