@@ -436,6 +436,14 @@ identity, and the `--require` call is at `justfile:35`.
   signer, version and build against the tag); the install and the packager call the same function. (3) The
   packager refuses when `git ls-remote` fails for any reason other than "no such tag" (exit 2).
 
+- Follow-up review (2026-11-22) supersedes the round 2 swap and archive details. The installer checks that
+  the pinned bundle's main executable can run, uses Darwin exclusive rename, and records both app identities
+  before swapping. A successful update retains the latest backup at `.tester-previous`. Cleanup removes a
+  superseded backup only when it recognises the verified target and both backup identities. QUIT and PIPE
+  use the same signal policy as HUP, INT and TERM. The installer counts individual ZIP sizes against the
+  remaining budget, refuses ambiguous path renderings, and resolves staging paths before reading plists.
+  The packager computes the checksum and writes the manifest before moving the release files out of scratch.
+
 ## Final Results
 
 Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install

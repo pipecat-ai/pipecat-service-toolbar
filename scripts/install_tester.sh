@@ -16,12 +16,12 @@
 # Runs under stock macOS Bash 3.2.
 #
 # What it touches: the app bundle in the install directory, a `.tester-previous` sibling while it
-# swaps, its own `.tester-install.*` staging directory, the `.tester-install.lock` directory that
+# swaps and as a rollback copy, its own `.tester-install.*` staging directory, the `.tester-install.lock` directory that
 # keeps a second run out, and a `.tester-leftover.*` directory when a failed run has to keep an
 # app copy it moved. Nothing else: no state, caches, models or preferences, and never sudo.
 #
 # What it deletes: only what the run itself created (its download, checksum, probe output and
-# unpacked copy), and the app copies it replaced once its own copy is verified in place. A copy
+# unpacked copy), and a superseded backup once its own copy and the latest backup are in place. A copy
 # it moved out of the way on a run that did not finish is put back where possible, otherwise
 # kept in a `.tester-leftover.*` directory and named; never deleted.
 set -euo pipefail
@@ -47,8 +47,9 @@ LOCK=""
 TARGET=""
 PREV=""
 OWN_INODE=""        # inode of the app this run unpacked: proves a copy is this run's own
-STALE_PREV=""       # start-up found .tester-previous beside an app that verifies
-HAD_APP=""          # an app was at the target when the swap began
+STAGE_INODE=""
+OLD_INODE=""        # inode at the target when the install began (or recovered there)
+STALE_INODE=""      # inode at .tester-previous beside a verified target at start-up
 AT_MOVE_IN=""       # the swap reached step 3
 MOVED_SUPERSEDED="" # swap step 1 done: .tester-previous is in staging as superseded
 MOVED_ASIDE=""      # swap step 2 done: the installed app is at .tester-previous
@@ -68,7 +69,7 @@ die() {
     exit 1
 }
 
-# Signal policy. Outside the swap, HUP, INT and TERM end the run through `exit`, which bash runs
+# Signal policy. Outside the swap and cleanup, these signals end the run through `exit`, which bash runs
 # only after the foreground child (curl, ditto, codesign, mv) has exited, so cleanup and the
 # lock release never race it. Without these traps Bash 3.2 runs the EXIT trap at once and leaves
 # the child running. During the swap the signals are ignored, by the shell and by the mv and
@@ -76,11 +77,13 @@ die() {
 catch_signals() {
     trap 'exit 129' HUP
     trap 'exit 130' INT
+    trap 'exit 131' QUIT
+    trap 'exit 141' PIPE
     trap 'exit 143' TERM
 }
 
 block_signals() {
-    trap '' HUP INT TERM
+    trap '' HUP INT QUIT PIPE TERM
 }
 
 # Return 0 only when the bundle is intact and signed by the pinned certificate.
@@ -108,9 +111,9 @@ verify_signer() {
 
 sha256_of() {
     if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        shasum -a 256 <"$1" | cut -d' ' -f1
     else
-        sha256sum "$1" | cut -d' ' -f1
+        sha256sum <"$1" | cut -d' ' -f1
     fi
 }
 
@@ -134,31 +137,29 @@ exists() {
     [ -e "$1" ] || [ -L "$1" ]
 }
 
-# The only way an app copy is moved. `mv src dst` puts src *inside* dst when dst is a directory,
-# and another program (`just app-install`, Finder) can create the target at any moment. So:
-#   0  dst is now the very object src was (same inode), and src is gone;
-#   1  nothing moved (src missing, or mv failed);
-#   2  nothing moved: dst was already taken;
-#   3  mv nested src inside a dst that appeared meanwhile; it was moved back to src;
-#   4  as 3, but it could not be moved back: it is at dst/<name>, and a note says so.
+# The kernel enforces the vacant destination even if Finder or another installer creates it
+# after the shell's check. A plain mv can overwrite a path or move the source inside it.
 safe_move() {
-    local src="$1" dst="$2" ino nested
-    ino="$(inode_of "$src")" || return 1
-    [ -n "$ino" ] || return 1
+    local src="$1" dst="$2" expected="$3"
+    [ -n "$expected" ] && [ "$(inode_of "$src")" = "$expected" ] || return 1
     if exists "$dst"; then
         return 2
     fi
-    mv "$src" "$dst" || return 1
-    if [ "$(inode_of "$dst")" = "$ino" ] && ! exists "$src"; then
-        return 0
+    # RENAME_EXCL is 0x4 in Darwin's <sys/stdio.h>. Both paths are on the install volume.
+    if ! osascript -l JavaScript -e '
+        ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]);
+        function run(paths) {
+            if ($.renamex_np(paths[0], paths[1], 4) !== 0) throw Error("exclusive rename failed");
+        }' "$src" "$dst" >/dev/null; then
+        if exists "$dst"; then
+            return 2
+        fi
+        return 1
     fi
-    nested="$dst/${src##*/}"
-    if [ "$(inode_of "$nested")" = "$ino" ] && ! exists "$src" && mv "$nested" "$src" &&
-        [ "$(inode_of "$src")" = "$ino" ]; then
-        return 3
+    if [ "$(inode_of "$dst")" != "$expected" ]; then
+        echo "note: $src or $dst changed during the move; check both locations" >&2
+        return 4
     fi
-    echo "note: $src was moved inside $dst, which appeared meanwhile, and could not be moved back; it is at $nested" >&2
-    return 4
 }
 
 check_platform() {
@@ -209,7 +210,9 @@ fetch() {
 # word: ditto reads other fields than unzip (local headers, a non-Unix host's mode bits), so
 # check_extracted_tree checks what ditto actually wrote before anything is verified or moved.
 check_archive_shape() {
-    local zip="$1" totals count bytes names entry listing missing
+    local zip="$1" totals count names entry listing missing archive_status
+    local LC_ALL=C ZIPINFO="" ZIPINFOOPT=""
+    export LC_ALL ZIPINFO ZIPINFOOPT
     # Bound what extraction may create and write: the download cap bounds compressed bytes only,
     # and empty entries add no bytes. The total line reads
     # "<n> files, <bytes> bytes uncompressed, <bytes> bytes compressed: <ratio>".
@@ -220,13 +223,25 @@ check_archive_shape() {
     esac
     [ "$count" -le "$MAX_ENTRIES" ] ||
         die "the archive holds $count entries, more than the $MAX_ENTRIES allowed"
-    bytes="${totals#*, }"
-    bytes="${bytes%% bytes uncompressed*}"
-    case "$bytes" in
-        '' | *[!0-9]*) die "cannot read the archive's unpacked size" ;;
+    # ZipInfo's totals can wrap. Check every size against the remaining budget before adding it.
+    listing="$(unzip -Zl "$zip")" || die "cannot read the archive"
+    archive_status="$(awk -v expected="$count" -v limit="$MAX_UNZIPPED_BYTES" '
+        NR <= 2 { next }
+        /^[0-9]+ files?, / { footer++; next }
+        {
+            if (footer || $4 !~ /^[0-9]+$/) invalid = 1
+            else if ($4 + 0 > limit - total) oversized = 1
+            else total += $4 + 0
+            entries++
+        }
+        END {
+            if (invalid || entries != expected || footer != 1) print "invalid"
+            else if (oversized) print "oversized"
+        }' <<<"$listing")" || die "cannot read the archive"
+    case "$archive_status" in
+        invalid) die "cannot read the archive's unpacked size" ;;
+        oversized) die "the archive unpacks to more than the $MAX_UNZIPPED_BYTES bytes allowed" ;;
     esac
-    [ "$bytes" -le "$MAX_UNZIPPED_BYTES" ] ||
-        die "the archive unpacks to $bytes bytes, more than the $MAX_UNZIPPED_BYTES allowed"
     names="$(unzip -Z1 "$zip")" || die "cannot read the archive"
     [ -n "$names" ] || die "the archive is empty"
     while IFS= read -r entry; do
@@ -239,6 +254,11 @@ check_archive_shape() {
         case "/$entry/" in
             */../* | */./*) die "the archive holds an unsafe path: $entry" ;;
         esac
+        # In the C locale ZipInfo substitutes ? for non-ASCII bytes and caret escapes for
+        # control characters. Neither representation is a reliable folder key.
+        case "$entry" in
+            *'?'* | *'^'[@-_]* | *[[:cntrl:]]*) die "the archive holds an ambiguous path: $entry" ;;
+        esac
     done <<EOF
 $names
 EOF
@@ -246,7 +266,6 @@ EOF
     # read in full and searched through a here-string: `unzip -Z | grep -q` under pipefail
     # reports the pipeline as failed (unzip dies of SIGPIPE once grep exits on the first match)
     # whenever the listing outgrows the pipe buffer, and the symlink would go unseen.
-    listing="$(unzip -Z "$zip")" || die "cannot read the archive"
     if grep -q '^l' <<<"$listing"; then
         die "the archive holds a symbolic link"
     fi
@@ -274,7 +293,7 @@ check_extracted_tree() {
     [ -z "$odd" ] || die "the archive unpacks to something other than files and folders: ${odd%%$'\n'*}"
     [ -d "$extract/$BUNDLE_NAME" ] || die "the archive does not unpack to $BUNDLE_NAME"
     [ "$(ls -A "$extract" | wc -l | tr -d ' ')" = "1" ] || die "the archive holds more than the app"
-    count="$(find "$extract" -mindepth 1 -print | wc -l | tr -d ' ')" ||
+    count="$(find "$extract" -mindepth 1 -print0 | tr -cd '\000' | wc -c | tr -d ' ')" ||
         die "cannot read the unpacked archive"
     [ "$count" -le "$MAX_ENTRIES" ] || die "the archive unpacks to $count entries, more than the $MAX_ENTRIES allowed"
 }
@@ -293,11 +312,23 @@ normalise_modes() {
     [ -z "$loose" ] || die "the unpacked app is writable by others: ${loose%%$'\n'*}"
 }
 
+check_main_executable() {
+    local app="$1" executable
+    executable="$(plist_value "$app" CFBundleExecutable)" || executable=""
+    case "$executable" in
+        '' | . | .. | */*) echo "error: the app has an invalid main executable name" >&2; return 1 ;;
+    esac
+    if [ ! -f "$app/Contents/MacOS/$executable" ] || [ ! -x "$app/Contents/MacOS/$executable" ]; then
+        echo "error: the app's main executable cannot be run: $executable" >&2
+        return 1
+    fi
+}
+
 # The one offline acceptance of a downloaded drop, used by the install and by --check-drop (and
 # so by the packager). $1 the ZIP, $2 the tag, $3 an empty scratch folder. Dies unless every check
 # passes: the tag, the download cap, the central directory (paths, no symlink, entry count,
 # unpacked size), extraction, the extracted tree, mode and ACL normalisation, the pinned signer,
-# and the version and build the tag names. Then the verified app is at $3/$BUNDLE_NAME and
+# an executable main binary, and the version and build the tag names. The verified app is at $3/$BUNDLE_NAME and
 # DROP_VERSION and DROP_BUILD hold its version and build.
 accept_drop() {
     local zip="$1" tag="$2" scratch="$3" version build size app
@@ -319,6 +350,7 @@ accept_drop() {
     app="$scratch/$BUNDLE_NAME"
     verify_signer "$app" >/dev/null ||
         die "refusing a build that is not signed by the pinned tester certificate"
+    check_main_executable "$app" || exit 1
     DROP_VERSION="$(plist_value "$app" CFBundleShortVersionString)" || DROP_VERSION=""
     DROP_BUILD="$(plist_value "$app" CFBundleVersion)" || DROP_BUILD=""
     if [ "$DROP_VERSION" != "$version" ] || [ "$DROP_BUILD" != "$build" ]; then
@@ -327,6 +359,7 @@ accept_drop() {
 }
 
 remove_scratch() {
+    block_signals
     set +e
     if [ -n "$CHECK_SCRATCH" ] && [ -d "$CHECK_SCRATCH" ]; then
         chmod -R u+rwX "$CHECK_SCRATCH" 2>/dev/null
@@ -338,14 +371,16 @@ remove_scratch() {
 # --check-drop: accept_drop on a local ZIP, in a scratch folder of its own (removed on exit).
 # No network, no install directory.
 check_drop() {
-    local zip="$1" tag="$2"
+    local zip="$1" tag="$2" scratch_base="${TMPDIR:-/tmp}"
+    case "$zip" in /*) ;; *) zip="$PWD/$zip" ;; esac
+    case "$scratch_base" in /*) ;; *) scratch_base="$PWD/$scratch_base" ;; esac
     if [ ! -f "$zip" ]; then
         echo "error: not a file: $zip" >&2
         return 2
     fi
     trap remove_scratch EXIT
     catch_signals
-    CHECK_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/tester-check-drop.XXXXXX")" ||
+    CHECK_SCRATCH="$(mktemp -d "$scratch_base/tester-check-drop.XXXXXX")" ||
         die "could not create a scratch folder"
     accept_drop "$zip" "$tag" "$CHECK_SCRATCH"
     echo "ok: $zip is a drop the installer accepts for $tag (version $DROP_VERSION, build $DROP_BUILD)"
@@ -384,30 +419,30 @@ rollback() {
     ROLLBACK_NOTE=""
     if [ -z "$MOVED_SUPERSEDED$MOVED_ASIDE$MOVED_IN" ]; then
         ROLLBACK_NOTE="; nothing was changed"
-        [ -z "$AT_MOVE_IN" ] || [ -n "$HAD_APP" ] ||
+        [ -z "$AT_MOVE_IN" ] || [ -n "$OLD_INODE" ] ||
             ROLLBACK_NOTE="$ROLLBACK_NOTE; there was no previous copy to restore"
         return 0
     fi
     if [ -n "$MOVED_IN" ]; then
         if [ "$(inode_of "$TARGET")" != "$OWN_INODE" ]; then
             ROLLBACK_NOTE="; $TARGET is not the copy this install put there and was left as it is"
-        elif safe_move "$TARGET" "$STAGE/rejected"; then
+        elif safe_move "$TARGET" "$STAGE/rejected" "$OWN_INODE"; then
             MOVED_IN=""
         else
             ROLLBACK_NOTE="; the installed copy could not be moved aside: $TARGET is an unverified build, do not open it"
         fi
     fi
     if [ -n "$MOVED_ASIDE" ]; then
-        if safe_move "$PREV" "$TARGET"; then
+        if safe_move "$PREV" "$TARGET" "$OLD_INODE"; then
             MOVED_ASIDE=""
             ROLLBACK_NOTE="$ROLLBACK_NOTE; the previous copy was restored"
         else
-            ROLLBACK_NOTE="$ROLLBACK_NOTE; could not restore the previous copy, it is at $PREV"
+            ROLLBACK_NOTE="$ROLLBACK_NOTE; could not restore the previous copy, check $PREV"
         fi
-    elif [ -z "$HAD_APP" ]; then
+    elif [ -z "$OLD_INODE" ]; then
         ROLLBACK_NOTE="$ROLLBACK_NOTE; there was no previous copy to restore"
     fi
-    if [ -n "$MOVED_SUPERSEDED" ] && safe_move "$STAGE/superseded" "$PREV"; then
+    if [ -n "$MOVED_SUPERSEDED" ] && safe_move "$STAGE/superseded" "$PREV" "$STALE_INODE"; then
         MOVED_SUPERSEDED="" # otherwise cleanup keeps it and names it
     fi
 }
@@ -417,92 +452,92 @@ swap_fail() {
     die "$1$ROLLBACK_NOTE"
 }
 
-# The swap, with HUP, INT and TERM ignored. Each move goes through safe_move; any failure rolls
-# back. The copies it replaced are deleted (by cleanup) only once this run's own copy is verified
-# at the target.
+# The swap runs with signals blocked. A verified update retains the previous copy as a backup.
 swap() {
     local rc=0
     block_signals
     # 1. A stale .tester-previous (start-up found the app verified) makes room for the old app.
-    if exists "$PREV"; then
-        [ -n "$STALE_PREV" ] || swap_fail "$PREV appeared during the install"
-        safe_move "$PREV" "$STAGE/superseded" || swap_fail "could not clear $PREV"
+    if [ -n "$STALE_INODE" ]; then
+        safe_move "$PREV" "$STAGE/superseded" "$STALE_INODE" || swap_fail "could not clear $PREV"
         MOVED_SUPERSEDED=1
+    elif exists "$PREV"; then
+        swap_fail "$PREV appeared during the install"
     fi
     # 2. The installed app moves aside.
-    if exists "$TARGET"; then
-        HAD_APP=1
-        safe_move "$TARGET" "$PREV" ||
+    if [ -n "$OLD_INODE" ]; then
+        safe_move "$TARGET" "$PREV" "$OLD_INODE" ||
             swap_fail "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove the app by hand, then run this again"
         MOVED_ASIDE=1
     fi
     # 3. This run's copy moves in, never into something another program put at the target.
     AT_MOVE_IN=1
-    safe_move "$STAGE/extract/$BUNDLE_NAME" "$TARGET" || rc=$?
+    safe_move "$STAGE/extract/$BUNDLE_NAME" "$TARGET" "$OWN_INODE" || rc=$?
     case "$rc" in
         0) MOVED_IN=1 ;;
-        2 | 3 | 4) swap_fail "another program put something at $TARGET during the install; it was left as it is" ;;
+        2 | 4) swap_fail "another program changed $TARGET during the install" ;;
         *) swap_fail "could not install" ;;
     esac
     # 4. The installed copy verifies, and is still this run's own.
     verify_signer "$TARGET" >/dev/null || swap_fail "the installed copy failed verification"
+    check_main_executable "$TARGET" || swap_fail "the installed copy is not executable"
     [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] ||
         swap_fail "another program replaced $TARGET during the install"
     INSTALLED=1
-    # 5. The replaced copy goes to staging, deleted with it.
-    if [ -n "$MOVED_ASIDE" ]; then
-        safe_move "$PREV" "$STAGE/replaced" || echo "note: the previous copy is left at $PREV" >&2
-    fi
     catch_signals
 }
 
-# EXIT trap. Runs after the last child has exited (see catch_signals). Deletes only what this run
-# created, plus, once its own copy is verified in place, the copies it replaced. A copy it moved
-# in from the install directory on a run that did not finish (superseded, or a rejected copy that
-# is not its own) is kept: the staging folder becomes .tester-leftover.<same suffix> and each copy
-# is named. Then releases the lock, if this run took it.
-cleanup() {
+# Delete the older backup only when the verified install and latest backup are in place.
+# Keep any unrecognised or unrestored app in a named staging or leftover folder.
+clean_stage() {
     local copy kept="" leftover
-    set +e
-    if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then
-        if [ -n "$INSTALLED" ]; then
-            chmod -R u+rwX "$STAGE" 2>/dev/null
-            rm -rf "$STAGE"
-        else
-            rm -f "$STAGE/probe.err" "$STAGE/drop.zip" "$STAGE/drop.zip.sha256"
-            if [ -d "$STAGE/extract" ]; then
-                chmod -R u+rwX "$STAGE/extract" 2>/dev/null
-                rm -rf "$STAGE/extract"
-            fi
-            if exists "$STAGE/rejected" && [ -n "$OWN_INODE" ] &&
-                [ "$(inode_of "$STAGE/rejected")" = "$OWN_INODE" ]; then
-                chmod -R u+rwX "$STAGE/rejected" 2>/dev/null
-                rm -rf "$STAGE/rejected"
-            fi
-            # Only these names are copies moved in from the install directory; anything else
-            # left is this run's own and could not be removed.
-            for copy in superseded replaced rejected; do
-                ! exists "$STAGE/$copy" || kept=1
+    if [ -n "$STAGE" ] && [ -n "$STAGE_INODE" ] &&
+        [ "$(inode_of "$STAGE")" = "$STAGE_INODE" ]; then
+        rm -f "$STAGE/probe.err" "$STAGE/drop.zip" "$STAGE/drop.zip.sha256"
+        if [ -d "$STAGE/extract" ]; then
+            chmod -R u+rwX "$STAGE/extract" 2>/dev/null
+            rm -rf "$STAGE/extract"
+        fi
+        if [ -n "$OWN_INODE" ] && [ "$(inode_of "$STAGE/rejected")" = "$OWN_INODE" ]; then
+            chmod -R u+rwX "$STAGE/rejected" 2>/dev/null
+            rm -rf "$STAGE/rejected"
+        fi
+        if [ -n "$INSTALLED" ] && [ -n "$MOVED_SUPERSEDED" ] &&
+            [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] &&
+            [ "$(inode_of "$PREV")" = "$OLD_INODE" ] &&
+            [ "$(inode_of "$STAGE/superseded")" = "$STALE_INODE" ]; then
+            chmod -R u+rwX "$STAGE/superseded" 2>/dev/null
+            rm -rf "$STAGE/superseded"
+        fi
+        for copy in superseded rejected; do
+            ! exists "$STAGE/$copy" || kept=1
+        done
+        if [ -n "$kept" ]; then
+            leftover="$(dirname "$STAGE")/.tester-leftover.${STAGE##*.}"
+            safe_move "$STAGE" "$leftover" "$STAGE_INODE" || leftover="$STAGE"
+            for copy in "$leftover"/* "$leftover"/.[!.]*; do
+                exists "$copy" || continue
+                case "${copy##*/}" in
+                    rejected) echo "note: a copy from the failed swap is kept at $copy; do not open it" >&2 ;;
+                    superseded) echo "note: an earlier copy of the app that this install moved is kept at $copy" >&2 ;;
+                    *) echo "note: could not remove $copy" >&2 ;;
+                esac
             done
-            if [ -n "$kept" ]; then
-                leftover="$(dirname "$STAGE")/.tester-leftover.${STAGE##*.}"
-                safe_move "$STAGE" "$leftover" || leftover="$STAGE"
-                for copy in "$leftover"/* "$leftover"/.[!.]*; do
-                    exists "$copy" || continue
-                    case "${copy##*/}" in
-                        rejected) echo "note: a copy that failed the certificate check is kept at $copy; do not open it" >&2 ;;
-                        superseded | replaced) echo "note: an earlier copy of the app that this install moved is kept at $copy" >&2 ;;
-                        *) echo "note: could not remove $copy" >&2 ;;
-                    esac
-                done
-            else
-                rmdir "$STAGE" 2>/dev/null
-            fi
+        else
+            rmdir "$STAGE" 2>/dev/null
         fi
         if [ -z "$kept" ] && exists "$STAGE"; then
             echo "note: could not remove this install's staging folder $STAGE; remove it once no install is running" >&2
         fi
+    elif [ -n "$STAGE" ] && exists "$STAGE"; then
+        echo "note: the staging path could not be identified and was kept at $STAGE" >&2
     fi
+}
+
+# The EXIT trap waits for cleanup's children before releasing the lock.
+cleanup() {
+    block_signals
+    set +e
+    clean_stage
     if [ -n "$LOCK" ]; then
         rmdir "$LOCK" 2>/dev/null || echo "note: could not remove $LOCK" >&2
     fi
@@ -513,22 +548,28 @@ cleanup() {
 # the swap clears it (so a run that fails before the swap leaves it where it is); if it does not,
 # $PREV may be the last good copy, so nothing is touched.
 recover_previous() {
-    local rc=0
+    local rc=0 previous_inode
+    if exists "$TARGET"; then
+        OLD_INODE="$(inode_of "$TARGET")" || die "cannot identify the installed app"
+    fi
     exists "$PREV" || return 0
-    if ! exists "$TARGET"; then
+    previous_inode="$(inode_of "$PREV")" || die "cannot identify the previous copy at $PREV"
+    if [ -z "$OLD_INODE" ]; then
         block_signals
-        safe_move "$PREV" "$TARGET" || rc=$?
+        safe_move "$PREV" "$TARGET" "$previous_inode" || rc=$?
         catch_signals
         case "$rc" in
-            0) echo "restored the previous copy left by an interrupted install" ;;
-            2 | 3) die "another program put something at $TARGET while the previous copy was being restored; nothing was changed, the previous copy is at $PREV" ;;
+            0) OLD_INODE="$previous_inode"; echo "restored the previous copy" ;;
+            2) die "another program put something at $TARGET while the previous copy was being restored; check $PREV" ;;
             4) die "could not restore the previous copy from $PREV" ;;
             *) die "could not restore the previous copy from $PREV; nothing was changed" ;;
         esac
-    elif verify_signer "$TARGET" >/dev/null 2>&1; then
-        STALE_PREV=1
+    elif verify_signer "$TARGET" >/dev/null 2>&1 &&
+        check_main_executable "$TARGET" 2>/dev/null &&
+        [ "$(inode_of "$TARGET")" = "$OLD_INODE" ]; then
+        STALE_INODE="$previous_inode"
     else
-        die "the installed app at $TARGET does not pass the certificate check, and $PREV holds the copy from before it; nothing was changed. To go back to that copy, move $TARGET to the Trash and rename $PREV to \"$BUNDLE_NAME\"; or tell the owner what this printed"
+        die "the installed app at $TARGET could not be verified, and $PREV holds the copy from before it; nothing was changed. To go back to that copy, move $TARGET to the Trash and rename $PREV to \"$BUNDLE_NAME\"; or tell the owner what this printed"
     fi
 }
 
@@ -542,6 +583,7 @@ install_drop() {
     check_platform
 
     dest="${APP_INSTALL_DIR:-$HOME/Applications}"
+    case "$dest" in /*) ;; *) dest="$PWD/$dest" ;; esac
     TARGET="$dest/$BUNDLE_NAME"
     PREV="$dest/.tester-previous"
     mkdir -p "$dest"
@@ -550,6 +592,7 @@ install_drop() {
     acquire_lock "$dest/.tester-install.lock"
     report_strays "$dest" "an earlier install that failed or was interrupted left"
     STAGE="$(mktemp -d "$dest/.tester-install.XXXXXX")"
+    STAGE_INODE="$(inode_of "$STAGE")" || die "cannot identify the staging folder"
     check_not_running
     recover_previous
 
@@ -580,6 +623,13 @@ install_drop() {
     check_not_running # it may have been started during the download
 
     swap
+
+    block_signals
+    (set +e; clean_stage) || true
+    STAGE=""
+    [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] ||
+        die "another program changed $TARGET during cleanup; check the app and backup paths ($TARGET and $PREV)"
+    catch_signals
 
     echo "installed $tag: version $DROP_VERSION, build $DROP_BUILD"
     [ -z "$old_version" ] || echo "replaced version $old_version, build $old_build"

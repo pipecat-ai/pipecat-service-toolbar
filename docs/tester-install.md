@@ -48,14 +48,12 @@ The installer:
 - stops if another install is running in the same folder. An install that was interrupted can leave its lock,
   the folder `~/Applications/.tester-install.lock`; the message names it, and once no install is running you
   remove that folder and run the command again;
-- puts the app at `~/Applications/Pipecat Service Toolbar.app` and keeps your previous copy (at
-  `~/Applications/.tester-previous` while it swaps) until the new one verifies, restoring it if anything fails.
-  If an earlier install was interrupted and the app in place fails the certificate check, it changes nothing and
-  says how to go back to the previous copy;
-- deletes only what it downloaded and unpacked, and your previous copy once the new one is verified in place. If
-  it stops before that and cannot put a copy back, it keeps it in a `~/Applications/.tester-leftover.*` folder and
-  prints where; it never deletes it. Each run names any `.tester-install.*` or `.tester-leftover.*` folder it
-  finds there, and never removes one;
+- puts the app at `~/Applications/Pipecat Service Toolbar.app` and keeps the previous build hidden at
+  `~/Applications/.tester-previous`. If the swap fails, the installer tries to restore that copy. If the
+  app in place fails verification and a backup exists, the installer prints how to restore it by hand;
+- removes the older backup after a later update succeeds and the latest backup is in place. If it cannot
+  put a copy back, the installer keeps it in a `~/Applications/.tester-leftover.*` folder and prints
+  the path. It also lists any staging or leftover folders from earlier runs;
 - finishes the swap even if you press Control-C or close the window during it, and at any other point stops
   cleanly, cleaning up only once the step it was on has ended;
 - touches nothing else: not your app data, caches, models or preferences, and it never uses `sudo`.
@@ -69,7 +67,7 @@ tester build is signed by the same certificate.
 
 1. In the app, turn off **Open at Login**, then choose **Quit**.
 2. Remove `~/Applications/Pipecat Service Toolbar.app`.
-3. Remove what an interrupted or failed install can leave beside it, if present: `~/Applications/.tester-previous`,
+3. Remove the backup and any folders beside it that an install left, if present: `~/Applications/.tester-previous`,
    any `~/Applications/.tester-install.*` folders (staging folders and the lock) and any
    `~/Applications/.tester-leftover.*` folders (app copies an install kept). They are hidden in Finder; in
    Terminal, `ls -a ~/Applications` shows them.
@@ -94,8 +92,8 @@ this channel relies on, so neither is supported. Some messages need one more ste
 - `another tester install is running ..., or one was interrupted`: if no other install is running (no other
   Terminal window is installing), remove the folder it names, `~/Applications/.tester-install.lock`, and run the
   command again. The message also lists any staging or kept-copy folders beside the app.
-- `another program put something at ...`: something else (another install, Finder) wrote the app while the
-  installer ran. It left that app as it is and says where your previous copy is.
+- `another program changed ... during the install`: another program created, moved or replaced the app
+  during the swap. Check the paths in the message for the installed app and its backup.
 - A `note:` naming a `.tester-install.*` or `.tester-leftover.*` folder: an earlier install left it. Once the
   app works, you can remove it as in [Uninstall](#uninstall), step 3; tell the owner if one says a copy failed
   the certificate check.

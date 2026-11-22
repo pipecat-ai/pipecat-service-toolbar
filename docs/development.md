@@ -169,10 +169,11 @@ checks the bundle against the certificate pinned in `scripts/install_tester.sh`
 (`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a scratch
 folder and runs the installer's whole offline acceptance on it,
 `install_tester.sh --check-drop <zip> <tag>`: at most 250 MiB downloaded, entries only inside the app,
-no symbolic links, at most 10,000 entries and 1 GiB unpacked, then extraction, a check of what was
+unambiguous ASCII paths with explicit parent folders, no symbolic links, at most 10,000 entries and
+1 GiB unpacked, then extraction, a check of what was
 extracted (only folders and regular files, only the app at the top), group/other write, setuid and
-access lists removed, the pinned signer, and the version and build the tag names. The install runs the
-same function on every download. The packager creates the checksum and
+access lists removed, the pinned signer, an executable main binary, and the version and build the tag
+names. The install runs the same function on every download. The packager creates the checksum and
 manifest in scratch before moving `<tag>.zip`, `<tag>.zip.sha256` and `<tag>.manifest.json` into
 `dist/tester/`. The tag rule, the pin and the limits come from the
 installer itself (`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`,
@@ -183,12 +184,13 @@ drop needs a new commit. Tester drops never change `app-version.json` or `CHANGE
 
 The installer allows one run at a time per install directory: it holds the
 `.tester-install.lock` folder there while it runs, and a run that finds one refuses and names it
-(a hard-killed run leaves it; it is never removed automatically). HUP, INT and TERM end a run only
-after its current command has finished, and are ignored during the swap, so the lock is released
-only once nothing of the run is still moving files. A run deletes only what it created, and the
-copies it replaced once its own copy is verified in place; a copy it moved out of the way on a run
-that did not finish goes back, or stays in a `.tester-leftover.*` folder that the run names. Every
-run names the `.tester-install.*` and `.tester-leftover.*` folders it finds beside the app and never
+(a hard-killed run leaves it for manual removal). HUP, INT, QUIT, PIPE and TERM end a run only
+after its current command has finished, and are ignored during the swap and cleanup. The swap uses
+macOS exclusive rename so it requires an install volume that supports it. A successful update keeps
+the previous copy at `.tester-previous`. Cleanup removes the older backup after verifying the update
+and identifying both the latest backup and the superseded copy. A copy that cannot be restored goes in
+a named `.tester-leftover.*` folder. Every run names the `.tester-install.*` and `.tester-leftover.*`
+folders it finds beside the app and never
 removes them.
 
 Release checklist:

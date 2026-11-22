@@ -401,7 +401,14 @@ if a[:3] == ["-c", "-k", "--keepParent"]:
         if os.environ.get("STUB_DITTO_EXTRA"):
             z.writestr(os.environ["STUB_DITTO_EXTRA"], b"x")
 elif a[:2] == ["-x", "-k"]:
-    zipfile.ZipFile(a[2]).extractall(a[3])
+    if os.environ.get("STUB_DITTO_LOG"):
+        with open(os.environ["STUB_DITTO_LOG"], "a") as log:
+            log.write("extract\\n")
+    with zipfile.ZipFile(a[2]) as z:
+        z.extractall(a[3])
+        for info in z.infolist():
+            if info.create_system == 3 and (info.external_attr >> 16) & 0o170000 == 0o100000:
+                os.chmod(os.path.join(a[3], info.filename), (info.external_attr >> 16) & 0o7777)
     plant = os.environ.get("STUB_DITTO_PLANT", "")
     app = os.path.join(a[3], "Pipecat Service Toolbar.app")
     if plant == "symlink":
@@ -488,6 +495,7 @@ def _write_bundle(root: Path, version: str = VERSION, build: str = BUILD, name: 
     app = root / name
     (app / "Contents/MacOS").mkdir(parents=True)
     (app / "Contents/MacOS/toolbar").write_bytes(b"binary")
+    (app / "Contents/MacOS/toolbar").chmod(0o755)
     (app / "Contents/Info.plist").write_bytes(
         plistlib.dumps(
             {
@@ -901,6 +909,9 @@ echo "${STUB_UNAME:-arm64}"
 
 # STUB_OSA_RC set: answer exactly STUB_OSA_OUT on stdout and STUB_OSA_ERR on stderr, exit STUB_OSA_RC.
 _OSASCRIPT_STUB = """#!/bin/bash
+if [ "$1" = -l ]; then
+  exec "${STUB_RENAME_TOOL:-/usr/bin/osascript}" "$@"
+fi
 n=$(( $(cat "$STUB_OSA_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$STUB_OSA_COUNT"
 if [ -n "${STUB_OSA_RC:-}" ]; then
@@ -930,6 +941,7 @@ _CODESIGN_MARKER_STUB = """#!/bin/bash
 n=$(( $(cat "$STUB_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$STUB_COUNT"
 echo "$*" >> "$STUB_LOG"
+if [ "${STUB_CODESIGN_HOOK_AT:-}" = "$n" ]; then /bin/bash -c "$STUB_CODESIGN_HOOK"; fi
 [ "${STUB_FAIL_ON_CALL:-0}" != "$n" ] || exit 3
 app="${@: -1}"
 signer="$(cat "$app/Contents/SIGNER" 2>/dev/null)"
@@ -951,7 +963,11 @@ if [ "${STUB_MV_SLEEP_AT:-}" = "$n" ]; then touch "$STUB_MV_MARK"; sleep "$STUB_
 if [ "${STUB_MV_HOOK_AT:-}" = "$n" ] && [ -z "${STUB_MV_HOOK_AFTER:-}" ]; then
   /bin/bash -c "$STUB_MV_HOOK"
 fi
-/bin/mv "$@"; rc=$?
+if [ -x /usr/bin/osascript ]; then
+  /usr/bin/osascript "$@"; rc=$?
+else
+  python3 -c 'import os, sys; s, d = sys.argv[-2:]; sys.exit(1) if os.path.lexists(d) else os.rename(s, d)' "$@"; rc=$?
+fi
 if [ "${STUB_MV_HOOK_AT:-}" = "$n" ] && [ -n "${STUB_MV_HOOK_AFTER:-}" ]; then
   /bin/bash -c "$STUB_MV_HOOK"
 fi
@@ -991,7 +1007,7 @@ def _make_zip(path: Path, entries: list[tuple[str, bytes | None, str]]) -> None:
                 info.external_attr = 0o120777 << 16
                 z.writestr(info, data)
             else:
-                info.external_attr = 0o100644 << 16
+                info.external_attr = (0o100755 if kind == "executable" else 0o100644) << 16
                 z.writestr(info, data)
 
 
@@ -999,6 +1015,7 @@ def _bundle_entries(signer: str = "good", version: str = VERSION, build: str = B
     plist = plistlib.dumps(
         {
             "CFBundleIdentifier": BUNDLE_ID,
+            "CFBundleExecutable": "toolbar",
             "CFBundleShortVersionString": version,
             "CFBundleVersion": build,
         }
@@ -1008,6 +1025,8 @@ def _bundle_entries(signer: str = "good", version: str = VERSION, build: str = B
         (f"{NAME}/Contents/", None, "file"),
         (f"{NAME}/Contents/Info.plist", plist, "file"),
         (f"{NAME}/Contents/SIGNER", signer.encode(), "file"),
+        (f"{NAME}/Contents/MacOS/", None, "file"),
+        (f"{NAME}/Contents/MacOS/toolbar", b"binary", "executable"),
     ]
     return entries + list(extra)
 
@@ -1039,7 +1058,7 @@ class InstallEnv:
             path.write_text(text)
             path.chmod(0o755)
         self.target = self.dest / NAME
-        self.logs = {n: tmp_path / f"{n}.log" for n in ("curl", "codesign")}
+        self.logs = {n: tmp_path / f"{n}.log" for n in ("curl", "codesign", "ditto")}
 
     def publish(self, tag: str = TAG, entries=None, *, sum_text: str | None = None) -> Path:
         zip_path = self.release / f"{tag}.zip"
@@ -1063,9 +1082,12 @@ class InstallEnv:
             STUB_CURL_LOG=str(self.logs["curl"]),
             STUB_LOG=str(self.logs["codesign"]),
             STUB_COUNT=str(self.tmp / "codesign.count"),
+            STUB_DITTO_LOG=str(self.logs["ditto"]),
             STUB_OSA_COUNT=str(self.tmp / "osa.count"),
             STUB_MV_COUNT=str(self.tmp / "mv.count"),
         )
+        if (self.bin / "mv").exists():
+            env["STUB_RENAME_TOOL"] = str(self.bin / "mv")
         env.pop("APP_INSTALL_DIR", None)
         env.update(extra)
         return env
@@ -1116,10 +1138,14 @@ def test_default_install_directory_is_home_applications(inst):
     assert (inst.home / "Applications" / NAME).is_dir()
 
 
-def test_app_install_dir_is_honoured(inst, tmp_path):
+@pytest.mark.parametrize("relative", [False, True])
+def test_app_install_dir_is_honoured(inst, tmp_path, monkeypatch, relative):
     custom = tmp_path / "custom"
     inst.publish()
-    result = inst.run(APP_INSTALL_DIR=str(custom))
+    monkeypatch.chdir(tmp_path)
+    if sys.platform == "darwin":
+        (inst.bin / "defaults").unlink()
+    result = inst.run(APP_INSTALL_DIR="custom" if relative else str(custom))
     assert result.returncode == 0, result.stderr
     assert (custom / NAME).is_dir() and not inst.target.exists()
 
@@ -1131,7 +1157,7 @@ def test_update_replaces_the_app_and_reports_old_and_new(inst):
     assert result.returncode == 0, result.stderr
     assert f"installed {TAG}: version {VERSION}, build {BUILD}" in result.stdout
     assert "replaced version 0.0.1, build 1" in result.stdout
-    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert {p.name for p in inst.dest.iterdir()} == {NAME, ".tester-previous"}
     assert (inst.target / "Contents/SIGNER").read_text() == "good"
     new = plistlib.loads((inst.target / "Contents/Info.plist").read_bytes())
     assert new["CFBundleVersion"] == BUILD
@@ -1370,20 +1396,28 @@ def test_a_stale_previous_copy_is_cleared_when_the_app_is_present(inst):
     inst.publish()
     result = inst.run()
     assert result.returncode == 0, result.stderr
-    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert _bundles(inst) == {inst.target: BUILD, _prev(inst): "1"}
 
 
-def test_nothing_outside_the_app_bundle_changes_on_success(inst):
+def test_nothing_outside_the_app_and_backup_changes_on_success(inst):
     inst.install_old()
     (inst.home / "Library").mkdir()
     (inst.home / "Library/prefs.plist").write_text("keep")
     (inst.dest / "Other.app").mkdir()
+    (inst.dest / f"{NAME}.unrelated").write_text("keep")
     inst.publish()
     before = _snapshot(inst.home)
     assert inst.run().returncode == 0
     after = _snapshot(inst.home)
-    app_prefix = f"Applications/{NAME}"
-    outside = lambda snap: {k: v for k, v in snap.items() if not k.startswith(app_prefix)}  # noqa: E731
+
+    def outside(snap):
+        return {
+            k: v
+            for k, v in snap.items()
+            if Path(k).parts[:2]
+            not in {("Applications", NAME), ("Applications", ".tester-previous")}
+        }
+
     assert outside(after) == outside(before)
 
 
@@ -1487,7 +1521,10 @@ def test_start_up_state_space(inst, app, prev, lock, stray):
         assert not inst.logs["curl"].exists()
         return
     assert result.returncode == 0, result.stderr
-    assert [p.name for p in inst.dest.iterdir() if p != left] == [NAME]
+    expected = {NAME}
+    if app != "absent" or prev != "absent":
+        expected.add(".tester-previous")
+    assert {p.name for p in inst.dest.iterdir() if p != left} == expected
     assert _build_at(inst.target) == BUILD
     if app == "absent" and prev == "good":
         assert "restored the previous copy" in result.stdout
@@ -1511,7 +1548,7 @@ def _good_copy_left(env: InstallEnv) -> bool:
         ({"STUB_FAIL_ON_CALL": "3"}, False, "1", None),  # post-swap check fails; restored
         ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "3"}, False, BUILD, "1"),  # rejected stays
         ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "4"}, False, None, "1"),  # restore fails
-        ({"STUB_MV_FAIL": "3"}, True, BUILD, "1"),  # clearing the replaced copy fails
+        ({}, True, BUILD, "1"),  # a successful update retains the latest backup
     ],
     ids=[
         "aside",
@@ -1520,7 +1557,7 @@ def _good_copy_left(env: InstallEnv) -> bool:
         "verify",
         "verify+reject",
         "verify+restore",
-        "clear-replaced",
+        "keep-backup",
     ],
 )
 def test_every_swap_failure_and_its_retry_keep_a_good_copy(inst, inject, ok, app_build, prev_build):
@@ -1606,7 +1643,7 @@ def _foreign(env: InstallEnv, signer: str) -> Path:
         # The swap fails and every step is undone.
         (("good", "good"), {"STUB_MV_FAIL": "2"}, False, {"1", "2"}),
         (("good", "good"), {"STUB_FAIL_ON_CALL": "5"}, False, {"1", "2"}),
-        # Success: the replaced and superseded copies go, only now.
+        # Success retires the older backup and retains the most recent known copy.
         (("good", "good"), {}, True, set()),
         (("absent", "good"), {}, True, set()),
     ],
@@ -1658,7 +1695,7 @@ def test_no_run_deletes_a_copy_it_did_not_create(inst, start, inject, ok, surviv
     assert set(bundles) <= known, (bundles, result.stderr)
     if ok:
         assert f"installed {TAG}" in result.stdout
-        assert bundles == {inst.target: BUILD}
+        assert bundles == {inst.target: BUILD, _prev(inst): "1" if app != "absent" else "2"}
         return
     assert "installed tester-" not in result.stdout
     assert survive <= set(bundles.values()), (bundles, result.stderr)
@@ -1683,7 +1720,61 @@ def test_a_copy_kept_after_a_failed_run_is_named_and_left_for_the_person(inst):
     assert str(kept) in again.stderr and _build_at(kept / "superseded") == "2"
 
 
-@pytest.mark.parametrize(("sig", "rc"), [("SIGTERM", 143), ("SIGHUP", 129), ("SIGINT", 130)])
+def test_exclusive_move_preserves_an_occupied_target_and_its_empty_child(inst):
+    inst.install_old()
+    inst.publish()
+    before = inst.run(
+        STUB_MV_HOOK_AT="2",
+        STUB_MV_HOOK='mkdir -p "$TGT/${TGT##*/}"',
+        TGT=str(inst.target),
+    )
+    assert before.returncode == 1
+    assert list((inst.target / NAME).iterdir()) == []
+    assert _build_at(_prev(inst)) == "1"
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_a_replaced_backup_is_never_consumed(inst, verified):
+    inst.install_old()
+    _place(inst, _prev(inst), "good", "2")
+    inst.publish()
+    saved = inst.tmp / "saved-backup"
+    result = inst.run(
+        STUB_CODESIGN_HOOK_AT="5",
+        STUB_CODESIGN_HOOK='/bin/mv "$PREV" "$SAVED"; /bin/cp -R "$FOREIGN" "$PREV"',
+        STUB_FAIL_ON_CALL="0" if verified else "5",
+        PREV=str(_prev(inst)),
+        SAVED=str(saved),
+        FOREIGN=str(_foreign(inst, "good")),
+    )
+    assert (result.returncode == 0) is verified
+    assert _build_at(saved) == "1"
+    assert _build_at(_prev(inst)) == "7"
+    assert _build_at(inst.target) == (BUILD if verified else None)
+    assert "2" in _bundles(inst).values()
+
+
+def test_target_disappearing_during_success_cleanup_leaves_the_backups(inst):
+    inst.install_old()
+    _place(inst, _prev(inst), "good", "2")
+    inst.publish()
+    cleanup_rm = inst.bin / "rm"
+    cleanup_rm.write_text(
+        '#!/bin/bash\ncase "$2" in */probe.err) /bin/rm -rf "$TGT" ;; esac\nexec /bin/rm "$@"\n'
+    )
+    cleanup_rm.chmod(0o755)
+    result = inst.run(TGT=str(inst.target))
+    assert result.returncode != 0 and "changed" in result.stderr
+    assert "installed tester-" not in result.stdout
+    assert not inst.target.exists()
+    assert _build_at(_prev(inst)) == "1"
+    assert "2" in _bundles(inst).values()
+
+
+@pytest.mark.parametrize(
+    ("sig", "rc"),
+    [("SIGTERM", 143), ("SIGHUP", 129), ("SIGINT", 130), ("SIGPIPE", 141), ("SIGQUIT", 131)],
+)
 def test_a_signal_waits_for_the_running_command_before_releasing_the_lock(inst, sig, rc):
     """Bash 3.2 without a signal trap runs the EXIT trap at once and leaves the child running."""
     import signal
@@ -1693,13 +1784,18 @@ def test_a_signal_waits_for_the_running_command_before_releasing_the_lock(inst, 
     before = _snapshot(inst.home)
     done = inst.tmp / "curl.done"
     run = subprocess.Popen(
-        ["/bin/bash", str(inst.installer), TAG],
+        ["/bin/bash", "-s", "--", TAG],
+        stdin=subprocess.PIPE,
         env=inst.env(STUB_CURL_SLEEP="2", STUB_CURL_DONE=str(done)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
     try:
+        assert run.stdin is not None
+        run.stdin.write(inst.installer.read_text())
+        run.stdin.close()
+        run.stdin = None
         for _ in range(200):
             if inst.logs["curl"].exists():
                 break
@@ -1715,7 +1811,7 @@ def test_a_signal_waits_for_the_running_command_before_releasing_the_lock(inst, 
     assert _snapshot(inst.home) == before, err
 
 
-@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP", "SIGINT"])
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP", "SIGINT", "SIGPIPE", "SIGQUIT"])
 def test_a_signal_during_the_swap_is_ignored_and_the_swap_completes(inst, sig):
     """Sent to the whole process group, as Control-C or a closed Terminal window does."""
     import signal
@@ -1742,7 +1838,7 @@ def test_a_signal_during_the_swap_is_ignored_and_the_swap_completes(inst, sig):
         out, err = run.communicate(timeout=60)
     assert run.returncode == 0, err
     assert f"installed {TAG}" in out
-    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert _bundles(inst) == {inst.target: BUILD, _prev(inst): "1"}
     assert _build_at(inst.target) == BUILD
 
 
@@ -1790,7 +1886,7 @@ def test_a_second_installer_refuses_while_one_runs(inst):
     assert second.returncode != 0, second.stdout
     assert "another tester install" in second.stderr
     assert first.returncode == 0, err
-    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert _bundles(inst) == {inst.target: BUILD, _prev(inst): "1"}
     assert _build_at(inst.target) == BUILD
 
 
@@ -1837,6 +1933,7 @@ def test_an_archive_that_unpacks_too_large_is_refused_before_extraction(inst, si
     result = inst.run()
     assert result.returncode != 0 and "unpacks to" in result.stderr, result.stderr
     assert _snapshot(inst.home) == before
+    assert not inst.logs["ditto"].exists()
 
 
 # The documented limits (docs/development.md), asserted as values so a silent change fails.
@@ -1870,12 +1967,48 @@ def _republish(env: InstallEnv, zip_path: Path) -> None:
 def test_an_archive_at_the_size_limit_is_accepted(inst):
     zip_path = inst.publish(entries=_bundle_entries(extra=[(f"{NAME}/Contents/a", b"x", "file")]))
     assert _check_drop(inst, zip_path).returncode == 0
-    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": UNPACKED_LIMIT - 4096})
+    with zipfile.ZipFile(zip_path) as archive:
+        other_bytes = sum(info.file_size for info in archive.infolist()) - 1
+    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": UNPACKED_LIMIT - other_bytes})
     at_limit = _check_drop(inst, zip_path)
     assert at_limit.returncode == 0, at_limit.stderr
-    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": UNPACKED_LIMIT + 1})
+    inst.logs["ditto"].unlink()
+    _with_declared_sizes(zip_path, {f"{NAME}/Contents/a": UNPACKED_LIMIT - other_bytes + 1})
     over = _check_drop(inst, zip_path)
     assert over.returncode == 1 and "unpacks to" in over.stderr
+    assert not inst.logs["ditto"].exists()
+
+
+def test_the_per_entry_size_gate_refuses_a_wrapped_zipinfo_total(inst):
+    extra = [(f"{NAME}/Contents/{n}", b"x", "file") for n in ("large-a", "large-b")]
+    zip_path = inst.publish(entries=_bundle_entries(extra=extra))
+    unzip = shutil.which("unzip")
+    assert unzip is not None
+    listing = _sh(unzip, "-Zl", str(zip_path)).stdout
+    listing = re.sub(
+        r"(?m)^(\S+\s+\S+\s+\S+\s+)\d+(.*large-[ab])$",
+        rf"\g<1>{1 << 63}\2",
+        listing,
+    )
+    assert listing.count(str(1 << 63)) == 2
+    mocked = inst.bin / "unzip"
+    mocked.write_text(
+        '#!/bin/bash\ncase "$1" in\n'
+        '-Zt) printf "%s\\n" "$TOTALS" ;;\n'
+        '-Zl) printf "%s" "$LISTING" ;;\n'
+        '*) exec "$REAL_UNZIP" "$@" ;;\nesac\n'
+    )
+    mocked.chmod(0o755)
+    result = _check_drop(
+        inst,
+        zip_path,
+        LISTING=listing,
+        TOTALS=f"{len(extra) + len(_bundle_entries())} files, "
+        "0 bytes uncompressed, 0 bytes compressed: 0%",
+        REAL_UNZIP=unzip,
+    )
+    assert result.returncode == 1 and "unpacks to" in result.stderr
+    assert not inst.logs["ditto"].exists()
 
 
 def test_the_entry_count_is_bounded_before_extraction(inst):
@@ -1887,6 +2020,7 @@ def test_the_entry_count_is_bounded_before_extraction(inst):
     ok = _check_drop(inst, zip_path)
     assert ok.returncode == 0, ok.stderr
     zip_path = inst.publish(entries=base + filler(ENTRY_LIMIT - len(base) + 1))
+    inst.logs["ditto"].unlink()
     inst.logs["codesign"].unlink()
     inst.install_old()
     before = _snapshot(inst.home)
@@ -1895,6 +2029,7 @@ def test_the_entry_count_is_bounded_before_extraction(inst):
     assert f"more than the {ENTRY_LIMIT} allowed" in refused.stderr, refused.stderr
     assert _snapshot(inst.home) == before
     assert not inst.logs["codesign"].exists()
+    assert not inst.logs["ditto"].exists()
 
 
 def test_a_zip_over_the_download_cap_is_refused_offline(inst, tmp_path):
@@ -1921,6 +2056,13 @@ def test_check_drop_mode_is_the_whole_offline_acceptance(inst, tmp_path):
             _bundle_entries(extra=[(f"{NAME}/Contents/deep/er/file", b"x", "file")]),
             {},
             f"does not list the folder {NAME}/Contents/deep/",
+        ),
+        (
+            _bundle_entries(
+                extra=[(f"{NAME}/f^Joo/", None, "file"), (f"{NAME}/f\noo/item", b"x", "file")]
+            ),
+            {},
+            "ambiguous path",
         ),
     ]
     for n, (entries, extra, message) in enumerate(cases):
@@ -2097,9 +2239,13 @@ def test_real_install_end_to_end(throwaway_identity, pinned_installer, tmp_path)
         (env.bin / name).unlink()
     zip_path = env.release / f"{TAG}.zip"
 
-    def publish(signer: str | None, *extra: str) -> None:
-        app = _write_bundle(tmp_path / f"b-{signer}-{len(extra)}")
+    def publish(signer: str | None, *extra: str, executable: bool = True) -> None:
+        app = _write_bundle(tmp_path / f"b-{signer}-{len(extra)}-{executable}")
+        main = app / "Contents/MacOS/toolbar"
+        shutil.copyfile("/usr/bin/true", main)
         _sign(app, signer or "-", *extra, keychain=keychain if signer == sha1 else None)
+        if not executable:
+            main.chmod(0o644)
         zip_path.unlink(missing_ok=True)
         _sh("ditto", "-c", "-k", "--keepParent", str(app), str(zip_path))
         digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
@@ -2109,7 +2255,16 @@ def test_real_install_end_to_end(throwaway_identity, pinned_installer, tmp_path)
     ok = env.run()
     assert ok.returncode == 0, ok.stderr + ok.stdout
     assert f"installed {TAG}: version {VERSION}, build {BUILD}" in ok.stdout
-    assert _sh("codesign", "--verify", "--deep", "--strict", str(env.target)).returncode == 0
+    _sh("codesign", "--verify", "--deep", "--strict", str(env.target))
+    _sh(str(env.target / "Contents/MacOS/toolbar"))
+    publish(sha1, executable=False)
+    before = _snapshot(env.home)
+    refused = _check_drop(env, zip_path)
+    assert refused.returncode == 1 and "main executable" in refused.stderr
+    refused = env.run()
+    assert refused.returncode == 1 and "main executable" in refused.stderr
+    assert _snapshot(env.home) == before
+    _sh(str(env.target / "Contents/MacOS/toolbar"))
     for signer, extra in (
         (None, ()),  # ad hoc
         (None, ("-r", f'=designated => identifier "{BUNDLE_ID}" and certificate leaf = H"{sha1}"')),
