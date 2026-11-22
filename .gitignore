@@ -74,3 +74,6 @@ __pycache__/
 .gauntlet/
 
 .DS_Store
+
+# Tester drops (just app-tester-package)
+dist/

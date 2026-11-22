@@ -158,6 +158,31 @@ default models' commits live in `pipecat-local-stt-server`'s `PINNED_REVISIONS`,
 one means a new STT release, then bumping `ServiceCatalog.sttServerRequirement` and
 regenerating the constraints. Other STT models follow `main`.
 
+## Tester drops
+
+Interim self-signed builds for known testers, until the Apple-signed alpha exists. Plan:
+[20261121-feature-selfsigned-tester-channel.md](plans/20261121-feature-selfsigned-tester-channel.md).
+`just app-tester-package` needs the self-signed `Code Signing` identity, a clean tree and a HEAD pushed
+to `origin`. It builds with that identity, checks the bundle against the certificate pinned in
+`scripts/install_tester.sh` (`install_tester.sh --verify-only <app>`, a `codesign -R` verification),
+writes `dist/tester/<tag>.zip`, `<tag>.zip.sha256` and `<tag>.manifest.json`, and checks the bundle
+unpacked from the ZIP the same way. The tag is `tester-<version>-b<build>-<shortsha>`; the recipe
+refuses a tag that exists, so a second drop needs a new commit. Tester drops never change
+`app-version.json`. `TESTER_APP_BUNDLE=<app>` packages a prebuilt bundle and is for tests only.
+
+Release checklist:
+
+1. Pull `main`, then run `just app-tester-package`. A tester drop needs `on_main: true`; `false` is a
+   rehearsal for a guest only.
+2. Publish: `gh release create <tag> --prerelease --target <manifest commit> dist/tester/<tag>*`.
+   Never edit the assets afterwards; delete a bad drop and publish a new one from a new commit.
+3. Verify: `gh release view <tag> --json targetCommitish` names the manifest commit, and the downloaded
+   ZIP's SHA-256 equals the manifest's `zip_sha256`.
+4. Fill `<INSTALLER_COMMIT_SHA>` (the manifest commit) and `<TAG>` in the one-liner from
+   `docs/tester-install.md` and send it to testers directly. Never post it publicly.
+5. Validate on a clean guest before the first invitation (plan, Phase 5). Never replace your own
+   installed app or reset real state as a shortcut.
+
 ## Build settings
 
 Environment variables read by `scripts/`:

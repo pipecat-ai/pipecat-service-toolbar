@@ -55,6 +55,14 @@ app-install:
     codesign -dr - "$dest/$name" 2>&1 | tail -1
     open "$dest/$name"
 
+# Package a self-signed tester build into dist/tester/ (ZIP, .sha256, manifest) for a GitHub
+# prerelease. Needs the self-signed "Code Signing" identity, a clean tree and a pushed HEAD.
+# scripts/package_tester.sh resolves the identity (--require) before building and verifies the
+# bundle, and the bundle unpacked from the ZIP, against the pinned certificate. See
+# docs/development.md "Tester drops" for the release checklist.
+app-tester-package:
+    scripts/package_tester.sh
+
 # Run the app unbundled from the checkout (prepares the pinned server wheel; uses your uv).
 app-run *args:
     swift run --package-path . PipecatServiceToolbar {{args}}
