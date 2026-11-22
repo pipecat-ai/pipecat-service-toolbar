@@ -22,10 +22,16 @@
 # app copy it moved. Nothing else: no state, caches, models or preferences, and never sudo.
 #
 # What it deletes: only what the run itself created (its download, checksum, probe output and
-# unpacked copy), and the older rollback copy once its own copy and the new rollback copy are in
-# place. A successful install never deletes the build it replaced. A copy
-# it moved out of the way on a run that did not finish is put back where possible, otherwise
-# kept in a `.tester-leftover.*` directory and named; never deleted.
+# the unpacked copy it never moved), and the older rollback copy once its own copy is verified in
+# place and the new rollback copy has itself verified. A successful install never deletes the
+# build it replaced. A copy it moved out of the way on a run that did not finish is put back where
+# possible, otherwise kept in a `.tester-leftover.*` directory and named; never deleted.
+#
+# Contract (app copies): a copy is restored to, kept at, or left at the app path only after it
+# passes app_ok there (the pinned signer, a runnable main executable, and still the copy expected).
+# A copy that fails is never left at the app path and never deleted: it is moved into a named
+# `.tester-leftover.*` directory (or left where it is if it cannot be moved) and the message says
+# "do not open it". The same holds for the build an update saves as `.tester-previous`.
 set -euo pipefail
 
 # SHA-1 of the owner's self-signed "Code Signing" certificate (login keychain). Every tester
@@ -56,7 +62,8 @@ STALE_INODE=""      # inode at .tester-previous beside a verified target at star
 AT_MOVE_IN=""       # the swap reached step 3
 MOVED_SUPERSEDED="" # swap step 1 done: .tester-previous is in staging as superseded
 MOVED_ASIDE=""      # swap step 2 done: the installed app is at .tester-previous
-MOVED_IN=""         # swap step 3 done: this run's copy is at the target
+REJECTED=""         # step 3 put a copy at the target that failed app_ok, and it was moved out
+STUCK=""            # ... and it could not be moved out: it is still at the target
 INSTALLED=""        # this run's copy is verified in place
 ROLLBACK_NOTE=""
 DROP_VERSION=""
@@ -73,10 +80,10 @@ die() {
 }
 
 # Signal policy. Outside the swap and cleanup, these signals end the run through `exit`, which bash runs
-# only after the foreground child (curl, ditto, codesign, mv) has exited, so cleanup and the
-# lock release never race it. Without these traps Bash 3.2 runs the EXIT trap at once and leaves
-# the child running. During the swap the signals are ignored, by the shell and by the mv and
-# codesign children it starts, so the swap always completes or rolls back. They are ignored as
+# only after the foreground child (curl, ditto, codesign, the osascript rename) has exited, so
+# cleanup and the lock release never race it. Without these traps Bash 3.2 runs the EXIT trap at
+# once and leaves the child running. During the swap the signals are ignored, by the shell and by
+# the osascript and codesign children it starts, so the swap always completes or rolls back. They are ignored as
 # well during cleanup (so a second signal cannot cut it short with the lock held) and while the
 # lock, the staging folder or the scratch folder is created together with the variable that
 # names it (so cleanup always knows what this run created).
@@ -337,6 +344,44 @@ check_main_executable() {
     fi
 }
 
+# The one acceptance of an app copy at a place, used for every keep, restore and delete decision:
+# $1 is the copy expected there (inode $2), it is signed by the pinned certificate, its main
+# executable can run, and it is still that copy afterwards. With $3 = drop it must also carry the
+# version and build of this run's drop: inode numbers can be reused once a copy is deleted (Linux
+# does at once; APFS does not), so the inode alone cannot tell this run's copy from a replacement.
+app_ok() {
+    local app="$1" expected="$2" what="${3:-}" version build
+    [ -n "$expected" ] && [ "$(inode_of "$app")" = "$expected" ] || return 1
+    verify_signer "$app" >/dev/null 2>&1 || return 1
+    check_main_executable "$app" 2>/dev/null || return 1
+    if [ "$what" = drop ]; then
+        version="$(plist_value "$app" CFBundleShortVersionString)" || return 1
+        build="$(plist_value "$app" CFBundleVersion)" || return 1
+        [ "$version" = "$DROP_VERSION" ] && [ "$build" = "$DROP_BUILD" ] || return 1
+    fi
+    [ "$(inode_of "$app")" = "$expected" ]
+}
+
+# Every move to the app path. $1 (inode $2) moves there with the exclusive rename, and stays only if
+# app_ok (with $4) then passes on what the rename put there. Whatever fails, including a copy that
+# replaced $1 during the rename (safe_move 4), is moved out to $STAGE/$3, which cleanup keeps in a
+# named .tester-leftover.* folder. Returns 0 placed and verified; 1 nothing moved; 2 the app path
+# was occupied, nothing moved; 3 moved but failed, and nothing is left at the app path; 5 moved and
+# failed, and it could not be moved out: an unverified copy is at the app path.
+place_at_target() {
+    local src="$1" expected="$2" reject="$3" what="${4:-}" rc=0 actual
+    safe_move "$src" "$TARGET" "$expected" || rc=$?
+    case "$rc" in
+        0) ! app_ok "$TARGET" "$expected" "$what" || return 0 ;;
+        4) ;;
+        *) return "$rc" ;;
+    esac
+    actual="$(inode_of "$TARGET")" || return 3
+    safe_move "$TARGET" "$STAGE/$reject" "$actual" && return 3
+    exists "$TARGET" || return 3
+    return 5
+}
+
 # The one offline acceptance of a downloaded drop, used by the install and by --check-drop (and
 # so by the packager). $1 the ZIP, $2 the tag, $3 an empty scratch folder. Dies unless every check
 # passes: the tag, the download cap, the central directory (paths, no symlink, entry count,
@@ -438,29 +483,35 @@ acquire_lock() {
 # and the copy is the one this run moved. What cannot be undone stays where it is, and
 # ROLLBACK_NOTE (the end of the caller's error message) says where.
 rollback() {
+    local rc=0
     ROLLBACK_NOTE=""
-    if [ -z "$MOVED_SUPERSEDED$MOVED_ASIDE$MOVED_IN" ]; then
+    if [ -z "$MOVED_SUPERSEDED$MOVED_ASIDE$REJECTED$STUCK" ]; then
         ROLLBACK_NOTE="; nothing was changed"
         [ -z "$AT_MOVE_IN" ] || [ -n "$OLD_INODE" ] ||
             ROLLBACK_NOTE="$ROLLBACK_NOTE; there was no previous copy to restore"
         return 0
     fi
-    if [ -n "$MOVED_IN" ]; then
-        if [ "$(inode_of "$TARGET")" != "$OWN_INODE" ]; then
-            ROLLBACK_NOTE="; $TARGET is not the copy this install put there and was left as it is"
-        elif safe_move "$TARGET" "$STAGE/rejected" "$OWN_INODE"; then
-            MOVED_IN=""
-        else
-            ROLLBACK_NOTE="; the installed copy could not be moved aside: $TARGET is an unverified build, do not open it"
-        fi
-    fi
-    if [ -n "$MOVED_ASIDE" ]; then
-        if safe_move "$PREV" "$TARGET" "$OLD_INODE"; then
-            MOVED_ASIDE=""
-            ROLLBACK_NOTE="$ROLLBACK_NOTE; the previous copy was restored"
-        else
-            ROLLBACK_NOTE="$ROLLBACK_NOTE; could not restore the previous copy, check $PREV"
-        fi
+    if [ -n "$MOVED_ASIDE" ] && [ -n "$STUCK" ]; then
+        ROLLBACK_NOTE="; the previous copy is at $PREV"
+    elif [ -n "$MOVED_ASIDE" ]; then
+        # The previous copy goes back only if it verifies at the app path (it may have changed
+        # in place since start-up, or never have verified).
+        place_at_target "$PREV" "$OLD_INODE" unverified-previous || rc=$?
+        case "$rc" in
+            0)
+                MOVED_ASIDE=""
+                ROLLBACK_NOTE="; the previous copy was restored"
+                ;;
+            3)
+                MOVED_ASIDE=""
+                ROLLBACK_NOTE="; the previous copy did not pass verification, so it was not restored and is kept in a folder named below; do not open it"
+                ;;
+            5)
+                MOVED_ASIDE=""
+                ROLLBACK_NOTE="; the previous copy did not pass verification and could not be moved away again: $TARGET is an unverified build, do not open it"
+                ;;
+            *) ROLLBACK_NOTE="; could not restore the previous copy, check $PREV" ;;
+        esac
     elif [ -z "$OLD_INODE" ]; then
         ROLLBACK_NOTE="$ROLLBACK_NOTE; there was no previous copy to restore"
     fi
@@ -487,31 +538,39 @@ swap() {
     fi
     # 2. The installed app moves aside.
     if [ -n "$OLD_INODE" ]; then
-        safe_move "$TARGET" "$PREV" "$OLD_INODE" ||
-            swap_fail "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove the app by hand, then run this again"
-        MOVED_ASIDE=1
+        safe_move "$TARGET" "$PREV" "$OLD_INODE" || rc=$?
+        case "$rc" in
+            0) MOVED_ASIDE=1 ;;
+            4) swap_fail "another program changed $TARGET while it was being moved aside; check $PREV" ;;
+            *) swap_fail "could not move the installed app aside; if macOS asked about App Management, allow Terminal in System Settings > Privacy & Security > App Management, or remove the app by hand, then run this again" ;;
+        esac
     fi
-    # 3. This run's copy moves in, never into something another program put at the target.
+    # 3-4. This run's copy moves in, never into something another program put at the target, and
+    # stays only if it verifies there as this run's drop.
     AT_MOVE_IN=1
-    safe_move "$STAGE/extract/$BUNDLE_NAME" "$TARGET" "$OWN_INODE" || rc=$?
+    rc=0
+    place_at_target "$STAGE/extract/$BUNDLE_NAME" "$OWN_INODE" rejected drop || rc=$?
     case "$rc" in
-        0) MOVED_IN=1 ;;
-        2 | 4) swap_fail "another program changed $TARGET during the install" ;;
+        0) INSTALLED=1 ;;
+        2) swap_fail "another program changed $TARGET during the install" ;;
+        3)
+            REJECTED=1
+            swap_fail "the copy at $TARGET failed verification after the move and was not left there"
+            ;;
+        5)
+            STUCK=1
+            swap_fail "the copy at $TARGET failed verification after the move and could not be moved aside: $TARGET is an unverified build, do not open it"
+            ;;
         *) swap_fail "could not install" ;;
     esac
-    # 4. The installed copy verifies, and is still this run's own.
-    verify_signer "$TARGET" >/dev/null || swap_fail "the installed copy failed verification"
-    check_main_executable "$TARGET" || swap_fail "the installed copy is not executable"
-    [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] ||
-        swap_fail "another program replaced $TARGET during the install"
-    INSTALLED=1
     catch_signals
 }
 
-# Delete the older backup only when the verified install and latest backup are in place.
-# Keep any unrecognised or unrestored app in a named staging or leftover folder.
+# Delete the older backup only when the verified install is in place and the new backup at $PREV
+# has itself verified. A replaced build that does not verify is not kept as the rollback copy: it
+# moves into staging. Every copy still in staging is kept in a named .tester-leftover.* folder.
 clean_stage() {
-    local copy kept="" leftover
+    local copy kept="" leftover backup_ok=""
     if [ -n "$STAGE" ] && [ -n "$STAGE_INODE" ] &&
         [ "$(inode_of "$STAGE")" = "$STAGE_INODE" ]; then
         rm -f "$STAGE/probe.err" "$STAGE/drop.zip" "$STAGE/drop.zip.sha256"
@@ -519,18 +578,23 @@ clean_stage() {
             chmod -R u+rwX "$STAGE/extract" 2>/dev/null
             rm -rf "$STAGE/extract"
         fi
-        if [ -n "$OWN_INODE" ] && [ "$(inode_of "$STAGE/rejected")" = "$OWN_INODE" ]; then
-            chmod -R u+rwX "$STAGE/rejected" 2>/dev/null
-            rm -rf "$STAGE/rejected"
+        if [ -n "$INSTALLED" ] && [ -n "$MOVED_ASIDE" ]; then
+            if app_ok "$PREV" "$OLD_INODE"; then
+                backup_ok=1
+            elif [ "$(inode_of "$PREV")" = "$OLD_INODE" ]; then
+                safe_move "$PREV" "$STAGE/unverified-previous" "$OLD_INODE" ||
+                    echo "note: the build this install replaced, at $PREV, did not pass verification and could not be moved; do not open it" >&2
+            else
+                echo "note: $PREV is not the copy this install saved there; it was left as it is" >&2
+            fi
         fi
-        if [ -n "$INSTALLED" ] && [ -n "$MOVED_SUPERSEDED" ] &&
+        if [ -n "$backup_ok" ] && [ -n "$MOVED_SUPERSEDED" ] &&
             [ "$(inode_of "$TARGET")" = "$OWN_INODE" ] &&
-            [ "$(inode_of "$PREV")" = "$OLD_INODE" ] &&
             [ "$(inode_of "$STAGE/superseded")" = "$STALE_INODE" ]; then
             chmod -R u+rwX "$STAGE/superseded" 2>/dev/null
             rm -rf "$STAGE/superseded"
         fi
-        for copy in superseded rejected; do
+        for copy in superseded rejected unverified-previous; do
             ! exists "$STAGE/$copy" || kept=1
         done
         if [ -n "$kept" ]; then
@@ -539,7 +603,8 @@ clean_stage() {
             for copy in "$leftover"/* "$leftover"/.[!.]*; do
                 exists "$copy" || continue
                 case "${copy##*/}" in
-                    rejected) echo "note: a copy from the failed swap is kept at $copy; do not open it" >&2 ;;
+                    rejected) echo "note: a copy that failed verification at $TARGET is kept at $copy; do not open it" >&2 ;;
+                    unverified-previous) echo "note: a previous build that did not pass verification is kept at $copy, not as the rollback copy; do not open it" >&2 ;;
                     superseded) echo "note: an earlier copy of the app that this install moved is kept at $copy" >&2 ;;
                     *) echo "note: could not remove $copy" >&2 ;;
                 esac
@@ -565,10 +630,13 @@ cleanup() {
     fi
 }
 
-# Start-up: an earlier run that stopped mid-swap can leave the old copy at $PREV. With no app,
-# it is put back. With an app, the app decides: if it verifies against the pin, $PREV is stale and
-# the swap clears it (so a run that fails before the swap leaves it where it is); if it does not,
-# $PREV may be the last good copy, so nothing is touched.
+# Start-up, when $PREV exists. With an app that passes app_ok, $PREV is stale and the swap clears
+# it (so a run that fails before the swap leaves it where it is). Otherwise $PREV may be the last
+# good copy, and it counts only if it passes app_ok itself.
+# With no app: most often the person removed the app but not the hidden rollback copy, rarely a
+# run stopped mid-swap. A verified $PREV is put back, so the run starts from a verified app (and if
+# the run then fails, that older verified build is what stays installed); one that does not verify
+# is refused and named, and nothing moves. With an app that does not verify, nothing moves.
 recover_previous() {
     local rc=0 previous_inode
     if exists "$TARGET"; then
@@ -576,23 +644,26 @@ recover_previous() {
     fi
     exists "$PREV" || return 0
     previous_inode="$(inode_of "$PREV")" || die "cannot identify the previous copy at $PREV"
-    if [ -z "$OLD_INODE" ]; then
-        block_signals
-        safe_move "$PREV" "$TARGET" "$previous_inode" || rc=$?
-        catch_signals
-        case "$rc" in
-            0) OLD_INODE="$previous_inode"; echo "restored the previous copy" ;;
-            2) die "another program put something at $TARGET while the previous copy was being restored; check $PREV" ;;
-            4) die "could not restore the previous copy from $PREV" ;;
-            *) die "could not restore the previous copy from $PREV; nothing was changed" ;;
-        esac
-    elif verify_signer "$TARGET" >/dev/null 2>&1 &&
-        check_main_executable "$TARGET" 2>/dev/null &&
-        [ "$(inode_of "$TARGET")" = "$OLD_INODE" ]; then
+    if [ -n "$OLD_INODE" ] && app_ok "$TARGET" "$OLD_INODE"; then
         STALE_INODE="$previous_inode"
-    else
-        die "the installed app at $TARGET could not be verified, and $PREV holds the copy from before it; nothing was changed. To go back to that copy, move $TARGET to the Trash and rename $PREV to \"$BUNDLE_NAME\"; or tell the owner what this printed"
+        return 0
     fi
+    if ! app_ok "$PREV" "$previous_inode"; then
+        [ -z "$OLD_INODE" ] ||
+            die "neither the installed app at $TARGET nor the previous copy at $PREV passes verification; nothing was changed. Do not open either; tell the owner what this printed"
+        die "the previous copy at $PREV does not pass verification, so it was not restored; nothing was changed. Do not open it; move it to the Trash (or tell the owner what this printed), then run this again"
+    fi
+    [ -z "$OLD_INODE" ] ||
+        die "the installed app at $TARGET could not be verified, and $PREV holds the copy from before it; nothing was changed. To go back to that copy, move $TARGET to the Trash and rename $PREV to \"$BUNDLE_NAME\"; or tell the owner what this printed"
+    block_signals
+    place_at_target "$PREV" "$previous_inode" unverified-previous || rc=$?
+    catch_signals
+    case "$rc" in
+        0) OLD_INODE="$previous_inode"; echo "restored the previous copy" ;;
+        2) die "another program put something at $TARGET while the previous copy was being restored; check $PREV" ;;
+        3 | 5) die "the copy restored from $PREV changed and did not pass verification at $TARGET; do not open it" ;;
+        *) die "could not restore the previous copy from $PREV; nothing was changed" ;;
+    esac
 }
 
 install_drop() {

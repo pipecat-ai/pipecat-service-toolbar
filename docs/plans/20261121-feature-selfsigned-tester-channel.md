@@ -469,9 +469,39 @@ identity, and the `--require` call is at `justfile:35`.
   during cleanup and between creation and naming, pin the 250 MiB ZIP cap at and one byte over, and pin the
   byte-counted path limit under a UTF-8 locale.
 
+- Review gauntlet rounds 4 and 5 (2026-11-22). Owner rule, final: one contract for the swap and recovery
+  seam instead of point patches. An app copy is restored to, kept at or left at the app path only after it
+  passes `app_ok` there (pinned signer, runnable main executable, still the copy expected; the move-in also
+  checks the drop's version and build, because Linux reuses a deleted copy's inode at once and the inode
+  alone then cannot tell this run's copy from a replacement). The older backup is deleted only after the
+  newly saved `.tester-previous` has itself verified. A copy that fails is never left at the app path and
+  never deleted: it moves into a named `.tester-leftover.*` folder (or stays where it is if it cannot move)
+  and the message says "do not open it"; this now includes this run's own copy when it fails after the
+  move-in (it used to be deleted) and a replaced build that does not verify (it is no longer kept as the
+  rollback copy). Every move to the app path goes through `place_at_target`, which also handles a source
+  replaced during the exclusive rename. Start-up restores `.tester-previous` with no app only when it
+  verifies (that state is most often a person who removed the app but not the hidden rollback copy, not an
+  interrupted swap); otherwise it refuses, names it and moves nothing. The packager fetches with `--prune
+  --no-prune-tags` (a deleted remote branch no longer counts as pushed; local tags are never pruned),
+  writes its scratch folder inside `dist/tester/` so publishing is a same-volume rename, removes an earlier
+  drop of the same tag before publishing, publishes the manifest last and removes a partial publication on
+  failure. The guide covers the App Management refusal and, when moving to the Apple-signed release,
+  removal of `.tester-previous`, `.tester-install.*` and `.tester-leftover.*`. CI: the Ubuntu jobs failed
+  at d3a3658 on `target-replaced-before-verification` because the replacement reused the deleted copy's
+  inode and the run reported success with the other program's app in place; the drop version and build
+  check closes that on Linux, and the move-in no longer relies on the inode alone.
+- Amendments recorded by rounds 4 and 5 (the text above the review marker is not edited): the Requirements,
+  Review Focus and Acceptance Criteria statements that the installer writes nothing outside the app bundle
+  and its staging now also allow the `.tester-install.lock` folder, `.tester-leftover.*` folders and the
+  lasting `.tester-previous` rollback copy. Phase 6 retirement, and the Apple plan's channel-switch
+  pointer (`docs/plans/20261117-feature-app-distribution.md`, "Interim self-signed tester channel —
+  pointer", below that plan's review marker), must cover removing `~/Applications/.tester-previous`, any
+  `.tester-leftover.*` folders and a left `.tester-install.lock` (with any `.tester-install.*` staging
+  folders), not only the app.
+
 ## Final Results
 
 Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install
-path, tester guide and docs index), with review-gauntlet rounds 1 to 3 and the follow-up review applied (Issues &
+path, tester guide and docs index), with review-gauntlet rounds 1 to 5 and the follow-up review applied (Issues &
 Solutions). Phase 5 (owner validation and first drop, including the required macOS 15 run) and Phase 6 (retire the
 channel) are pending.

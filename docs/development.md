@@ -163,19 +163,20 @@ regenerating the constraints. Other STT models follow `main`.
 Interim self-signed builds for known testers, until the Apple-signed alpha exists. Plan:
 [20261121-feature-selfsigned-tester-channel.md](plans/20261121-feature-selfsigned-tester-channel.md).
 `just app-tester-package` needs the self-signed `Code Signing` identity, a clean tree and a HEAD pushed
-to `origin`. It refuses a tag that exists locally or on `origin`, and refuses as well when it cannot
+to a branch that still exists on `origin` (it fetches with `--prune`, never pruning local tags). It refuses a tag that exists locally or on `origin`, and refuses as well when it cannot
 ask `origin` (a `git ls-remote` failure other than "no such tag"). It builds with that identity,
 checks the bundle against the certificate pinned in `scripts/install_tester.sh`
-(`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a scratch
-folder and runs the installer's whole offline acceptance on it,
+(`install_tester.sh --verify-only <app>`, a `codesign -R` verification), writes the ZIP in a hidden
+scratch folder inside `dist/tester/` (removed on every exit) and runs the installer's whole offline acceptance on it,
 `install_tester.sh --check-drop <zip> <tag>`: a ZIP of at most 250 MiB, entries only inside the app,
 unambiguous ASCII paths of at most 1,024 bytes with explicit parent folders, no symbolic links, at most 10,000 entries and
 1 GiB unpacked, then extraction, a check of what was
 extracted (only folders and regular files, only the app at the top), group/other write, setuid and
 access lists removed, the pinned signer, an executable main binary, and the version and build the tag
 names. The install runs the same function on every download. The packager creates the checksum and
-manifest in scratch before moving `<tag>.zip`, `<tag>.zip.sha256` and `<tag>.manifest.json` into
-`dist/tester/`. The tag rule, the pin and the limits come from the
+manifest in scratch, removes any earlier drop of the same tag, then renames `<tag>.zip`,
+`<tag>.zip.sha256` and, last, `<tag>.manifest.json` into `dist/tester/`; the manifest marks a complete
+drop, and a run that fails while publishing removes what it had published. The tag rule, the pin and the limits come from the
 installer itself (`install_tester.sh --check-tag <tag>`, `install_tester.sh --print-pin`,
 `--check-drop`), never from a second copy.
 The tag is `tester-<version>-b<build>-<shortsha>`; the recipe refuses a tag that exists, so a second
@@ -189,9 +190,11 @@ after its current command has finished, and are ignored during the swap and clea
 macOS exclusive rename (`renamex_np` with `RENAME_EXCL`, called through `osascript -l JavaScript`) so it
 requires an install volume that supports it. A successful update keeps the build it replaced at
 `.tester-previous` as a rollback copy; it is never deleted by that update, and removing the tester app
-by hand includes removing it. Cleanup removes the older rollback copy after verifying the update
-and identifying both the new rollback copy and the superseded one. A copy that cannot be restored goes in
-a named `.tester-leftover.*` folder. Every run names the `.tester-install.*` and `.tester-leftover.*`
+by hand includes removing it. A copy is restored to, kept at or left at the app path only once it
+passes the pinned-signer check there, and cleanup removes the older rollback copy only once the update
+is verified in place and the new rollback copy has itself verified. A copy that fails the check is never
+left at the app path and never deleted, and neither is a copy that cannot be restored: each goes in a
+named `.tester-leftover.*` folder (an unverified one named with "do not open it"). Every run names the `.tester-install.*` and `.tester-leftover.*`
 folders it finds beside the app and never
 removes them.
 

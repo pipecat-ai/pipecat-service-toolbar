@@ -13,6 +13,7 @@ import os
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -611,7 +612,7 @@ def test_packager_checks_before_building_and_verifies_before_zipping():
     code = PACKAGER.read_text()
     order = [
         "git status --porcelain",
-        "git fetch --quiet origin",
+        "git fetch --quiet --prune --no-prune-tags origin",
         'die "tag $TAG already exists',
         'resolve_sign_identity.sh" --require',
         'build_app.sh"',
@@ -664,17 +665,39 @@ def test_unpushed_head_is_refused(repo):
     assert not repo.out.exists()
 
 
-@pytest.mark.parametrize("where", ["remote", "local"])
+@pytest.mark.parametrize("where", ["remote", "local", "local-with-prune-tags-config"])
 def test_existing_tag_is_refused(repo, where):
     tag = repo.tag
+    extra = {}
     if where == "remote":
         _git(repo.root, "tag", tag)
         _git(repo.root, "push", "-q", "origin", tag)
         _git(repo.root, "tag", "-d", tag)
     else:
         _git(repo.root, "tag", tag)
-    result = repo.run()
+    if where == "local-with-prune-tags-config":
+        # The packager's fetch prunes branches, never local tags, whatever fetch.pruneTags says.
+        extra = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "fetch.pruneTags",
+            "GIT_CONFIG_VALUE_0": "true",
+        }
+    result = repo.run(**extra)
     assert result.returncode != 0 and "already exists" in result.stderr
+    assert not repo.out.exists()
+    if where != "remote":
+        assert _git(repo.root, "tag", "--list", tag) == tag
+
+
+def test_a_commit_only_on_a_branch_deleted_from_origin_is_not_pushed(repo):
+    """A remote-tracking ref left by a deleted branch must not count as "pushed"."""
+    repo.commit_file(push=True, branch="feature/gone")
+    _git(repo.origin, "branch", "-D", "feature/gone")
+    stale = "refs/remotes/origin/feature/gone"
+    assert _git(repo.root, "for-each-ref", stale)  # the clone still holds the stale ref
+    result = repo.run()
+    assert result.returncode != 0 and "not pushed" in result.stderr, result.stderr
+    assert not _git(repo.root, "for-each-ref", stale)
     assert not repo.out.exists()
 
 
@@ -757,6 +780,47 @@ def test_checksum_failure_leaves_no_partial_drop_or_damages_an_existing_one(repo
         result = repo.run()
         assert result.returncode == 1 and "cannot compute the ZIP checksum" in result.stderr
         assert _snapshot(repo.out) == before
+
+
+# Logs each mv source to STUB_MV_LOG; fails a move whose source ends in STUB_MV_FAIL_SUFFIX.
+_PKG_MV_STUB = """#!/bin/bash
+printf '%s\\n' "$1" >> "$STUB_MV_LOG"
+if [ -n "${STUB_MV_FAIL_SUFFIX:-}" ]; then
+  case "$1" in *"$STUB_MV_FAIL_SUFFIX") echo "mv: injected failure" >&2; exit 1 ;; esac
+fi
+exec REAL_MV "$@"
+"""
+
+
+def test_a_failed_zip_move_never_leaves_a_mixed_or_partial_drop(repo):
+    """Re-packaging a tag over an earlier drop: a failed move of the new ZIP must not leave the new
+    checksum and manifest beside the old ZIP. Every publishing move is a same-volume rename out of
+    a hidden scratch folder inside dist/tester, and the scratch folder never survives the run."""
+    first = repo.run()
+    assert first.returncode == 0, first.stderr
+    log = repo.tmp / "mv.log"
+    repo.stub("mv", _PKG_MV_STUB.replace("REAL_MV", shutil.which("mv")))
+    failed = repo.run(STUB_MV_LOG=str(log), STUB_MV_FAIL_SUFFIX=".zip")
+    assert failed.returncode != 0 and "injected failure" in failed.stderr
+    assert sorted(p.name for p in repo.out.iterdir()) == [], failed.stderr
+    sources = [Path(line) for line in log.read_text().splitlines()]
+    assert sources and all(
+        src.parent.parent == repo.out and src.parent.name.startswith(".tester-package.")
+        for src in sources
+    ), sources
+    log.unlink()
+    again = repo.run(STUB_MV_LOG=str(log))
+    assert again.returncode == 0, again.stderr
+    _consistent(repo)
+    # The manifest, which marks a complete drop, is published last.
+    assert [src.name for src in (Path(line) for line in log.read_text().splitlines())] == [
+        f"{repo.tag}.zip",
+        f"{repo.tag}.zip.sha256",
+        f"{repo.tag}.manifest.json",
+    ]
+    assert sorted(p.name for p in repo.out.iterdir()) == sorted(
+        [f"{repo.tag}.zip", f"{repo.tag}.zip.sha256", f"{repo.tag}.manifest.json"]
+    )
 
 
 def test_a_pushed_branch_off_main_is_marked_rehearsal(repo):
@@ -842,8 +906,9 @@ def test_real_packaging_end_to_end(throwaway_identity, tmp_path):
     installer = tmp_path / "inst-installer.sh"
     installer.write_text(pinned)
     env = InstallEnv(tmp_path / "inst", installer=installer)
-    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign", "mv"):
+    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign"):
         (env.bin / name).unlink()
+    env.rename_tool.unlink()
     for suffix in (".zip", ".zip.sha256"):
         shutil.copy(repo.out / f"{repo.tag}{suffix}", env.release / f"{repo.tag}{suffix}")
     installed = env.run(repo.tag)
@@ -952,24 +1017,38 @@ esac
 exit 0
 """
 
-# STUB_MV_HOOK runs at call STUB_MV_HOOK_AT, before the real mv (or after it, with
-# STUB_MV_HOOK_AFTER set); STUB_MV_SLEEP_AT holds call n for STUB_MV_SLEEP seconds, touching
-# STUB_MV_MARK first.
-_MV_STUB = """#!/bin/bash
-n=$(( $(cat "$STUB_MV_COUNT" 2>/dev/null || echo 0) + 1 ))
-echo "$n" > "$STUB_MV_COUNT"
-case ",${STUB_MV_FAIL:-}," in *",$n,"*) echo "mv: injected failure $n" >&2; exit 1 ;; esac
-if [ "${STUB_MV_SLEEP_AT:-}" = "$n" ]; then touch "$STUB_MV_MARK"; sleep "$STUB_MV_SLEEP"; fi
-if [ "${STUB_MV_HOOK_AT:-}" = "$n" ] && [ -z "${STUB_MV_HOOK_AFTER:-}" ]; then
-  /bin/bash -c "$STUB_MV_HOOK"
+# The installer's exclusive rename (`osascript -l JavaScript` calling renamex_np), counted: the
+# osascript stub hands `-l` calls to this tool, which is not on PATH. STUB_RENAME_FAIL lists the
+# calls that fail. STUB_RENAME_HOOK runs at call STUB_RENAME_HOOK_AT, before the real rename (or
+# after it, with STUB_RENAME_HOOK_AFTER set), with the rename's arguments (source "${@: -2:1}",
+# destination "${@: -1}"); STUB_RENAME_SLEEP_AT holds call n for STUB_RENAME_SLEEP seconds,
+# touching STUB_RENAME_MARK first. Off macOS, renameat2(RENAME_NOREPLACE) stands in for
+# renamex_np(RENAME_EXCL): the kernel refuses an occupied destination on both.
+_RENAME_STUB = """#!/bin/bash
+n=$(( $(cat "$STUB_RENAME_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STUB_RENAME_COUNT"
+case ",${STUB_RENAME_FAIL:-}," in *",$n,"*) echo "rename: injected failure $n" >&2; exit 1 ;; esac
+if [ "${STUB_RENAME_SLEEP_AT:-}" = "$n" ]; then touch "$STUB_RENAME_MARK"; sleep "$STUB_RENAME_SLEEP"; fi
+if [ "${STUB_RENAME_HOOK_AT:-}" = "$n" ] && [ -z "${STUB_RENAME_HOOK_AFTER:-}" ]; then
+  /bin/bash -c "$STUB_RENAME_HOOK" hook "$@"
 fi
 if [ -x /usr/bin/osascript ]; then
   /usr/bin/osascript "$@"; rc=$?
 else
-  python3 -c 'import os, sys; s, d = sys.argv[-2:]; sys.exit(1) if os.path.lexists(d) else os.rename(s, d)' "$@"; rc=$?
+  python3 -c '
+import ctypes, errno, os, sys
+s, d = (os.fsencode(p) for p in sys.argv[-2:])
+libc = ctypes.CDLL(None, use_errno=True)
+if hasattr(libc, "renameat2"):
+    if libc.renameat2(-100, s, -100, d, 1) == 0:  # AT_FDCWD, RENAME_NOREPLACE
+        sys.exit(0)
+    if ctypes.get_errno() not in (errno.EINVAL, errno.ENOSYS):  # the file system lacks the flag
+        sys.exit(1)
+sys.exit(1) if os.path.lexists(d) else os.rename(s, d)
+' "$@"; rc=$?
 fi
-if [ "${STUB_MV_HOOK_AT:-}" = "$n" ] && [ -n "${STUB_MV_HOOK_AFTER:-}" ]; then
-  /bin/bash -c "$STUB_MV_HOOK"
+if [ "${STUB_RENAME_HOOK_AT:-}" = "$n" ] && [ -n "${STUB_RENAME_HOOK_AFTER:-}" ]; then
+  /bin/bash -c "$STUB_RENAME_HOOK" hook "$@"
 fi
 exit "$rc"
 """
@@ -981,16 +1060,19 @@ _DITTO_EXTRACT_FAIL = _DITTO_STUB.replace(
 
 
 def _snapshot(root: Path) -> dict[str, str]:
-    """Every path under ``root`` with a content digest, to prove nothing else changed."""
+    """Every path under ``root`` with its mode, file flags and content digest (or symlink
+    target), to prove nothing else changed."""
     snap: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
         rel = str(path.relative_to(root))
+        st = path.lstat()
+        meta = f"{st.st_mode:o}:{getattr(st, 'st_flags', 0):x}:"
         if path.is_symlink():
-            snap[rel] = "link:" + os.readlink(path)
+            snap[rel] = meta + "link:" + os.readlink(path)
         elif path.is_dir():
-            snap[rel] = "dir"
+            snap[rel] = meta + "dir"
         else:
-            snap[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+            snap[rel] = meta + hashlib.sha256(path.read_bytes()).hexdigest()
     return snap
 
 
@@ -1051,12 +1133,16 @@ class InstallEnv:
             "defaults": _DEFAULTS_STUB,
             "ditto": _DITTO_EXTRACT_FAIL,
             "codesign": _CODESIGN_MARKER_STUB,
-            "mv": _MV_STUB,
             **_host_stubs(),
         }.items():
             path = self.bin / name
             path.write_text(text)
             path.chmod(0o755)
+        # Not on PATH: only the osascript stub's `-l` (exclusive rename) calls reach it.
+        self.rename_tool = tmp_path / "stubs/rename"
+        self.rename_tool.parent.mkdir()
+        self.rename_tool.write_text(_RENAME_STUB)
+        self.rename_tool.chmod(0o755)
         self.target = self.dest / NAME
         self.logs = {n: tmp_path / f"{n}.log" for n in ("curl", "codesign", "ditto")}
 
@@ -1084,10 +1170,10 @@ class InstallEnv:
             STUB_COUNT=str(self.tmp / "codesign.count"),
             STUB_DITTO_LOG=str(self.logs["ditto"]),
             STUB_OSA_COUNT=str(self.tmp / "osa.count"),
-            STUB_MV_COUNT=str(self.tmp / "mv.count"),
+            STUB_RENAME_COUNT=str(self.tmp / "rename.count"),
         )
-        if (self.bin / "mv").exists():
-            env["STUB_RENAME_TOOL"] = str(self.bin / "mv")
+        if self.rename_tool.exists():
+            env["STUB_RENAME_TOOL"] = str(self.rename_tool)
         env.pop("APP_INSTALL_DIR", None)
         env.update(extra)
         return env
@@ -1339,7 +1425,7 @@ def test_failing_to_move_the_old_app_aside_leaves_it_and_names_app_management(in
     inst.install_old()
     inst.publish()
     before = _snapshot(inst.home)
-    result = inst.run(STUB_MV_FAIL="1")
+    result = inst.run(STUB_RENAME_FAIL="1")
     assert result.returncode != 0 and "App Management" in result.stderr
     assert _snapshot(inst.home) == before
 
@@ -1348,34 +1434,49 @@ def test_failing_to_move_the_new_app_in_restores_the_previous_copy(inst):
     inst.install_old()
     inst.publish()
     before = _snapshot(inst.home)
-    result = inst.run(STUB_MV_FAIL="2")
+    result = inst.run(STUB_RENAME_FAIL="2")
     assert result.returncode != 0 and "previous copy was restored" in result.stderr
     assert _snapshot(inst.home) == before
 
 
 def test_failing_to_move_the_new_app_in_on_a_first_install_claims_no_restore(inst):
     inst.publish()
-    result = inst.run(STUB_MV_FAIL="1")  # no old app, so the first mv is the move-in
+    result = inst.run(STUB_RENAME_FAIL="1")  # no old app, so the first rename is the move-in
     assert result.returncode != 0 and "could not install" in result.stderr
     assert "was restored" not in result.stderr and "no previous copy" in result.stderr
     assert [p.name for p in inst.dest.iterdir()] == []
 
 
+def _leftovers(env: InstallEnv) -> list[Path]:
+    return [p for p in env.dest.iterdir() if p.name.startswith(".tester-leftover.")]
+
+
+def _outside_leftovers(snap: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in snap.items() if ".tester-leftover." not in k}
+
+
 def test_a_failed_verification_after_the_swap_restores_the_previous_copy(inst):
+    """The copy that failed is never left at the app path and never deleted (owner rule)."""
     inst.install_old()
     inst.publish()
     before = _snapshot(inst.home)
     # codesign calls 1-2 verify the staged copy; call 3 is the post-swap check of the target.
     result = inst.run(STUB_FAIL_ON_CALL="3")
     assert result.returncode != 0 and "previous copy was restored" in result.stderr
-    assert _snapshot(inst.home) == before
+    assert _outside_leftovers(_snapshot(inst.home)) == before
+    (kept,) = _leftovers(inst)
+    assert _build_at(kept / "rejected") == BUILD
+    assert f"kept at {kept / 'rejected'}; do not open it" in result.stderr, result.stderr
 
 
-def test_a_failed_first_install_leaves_no_app_and_no_staging(inst):
+def test_a_failed_first_install_leaves_no_app_and_keeps_the_failed_copy_aside(inst):
     inst.publish()
     result = inst.run(STUB_FAIL_ON_CALL="3")
-    assert result.returncode != 0
-    assert [p.name for p in inst.dest.iterdir()] == []
+    assert result.returncode != 0 and "no previous copy" in result.stderr
+    (kept,) = _leftovers(inst)
+    assert [p.name for p in inst.dest.iterdir()] == [kept.name]
+    assert _bundles(inst) == {kept / "rejected": BUILD}
+    assert "do not open it" in result.stderr
 
 
 def test_an_interrupted_swap_is_recovered_on_the_next_run(inst):
@@ -1421,6 +1522,22 @@ def test_nothing_outside_the_app_and_backup_changes_on_success(inst):
     assert outside(after) == outside(before)
 
 
+def test_the_home_snapshot_notices_a_mode_or_flag_change(inst):
+    """The isolation checks compare modes too: a run that only removed write permission from an
+    unrelated file must not pass as "nothing changed"."""
+    (inst.home / "Library").mkdir()
+    prefs = inst.home / "Library/prefs.plist"
+    prefs.write_text("keep")
+    before = _snapshot(inst.home)
+    prefs.chmod(0o444)
+    assert _snapshot(inst.home) != before
+    prefs.chmod(0o644)
+    assert _snapshot(inst.home) == before
+    if hasattr(os, "chflags"):
+        os.chflags(prefs, stat.UF_HIDDEN)
+        assert _snapshot(inst.home) != before
+
+
 def test_installer_fetches_only_the_fixed_release_host_with_hardening_flags(inst):
     inst.publish()
     assert inst.run().returncode == 0
@@ -1453,8 +1570,10 @@ def test_installer_fetches_only_the_fixed_release_host_with_hardening_flags(inst
 #
 # Contract: the last verified-good app copy (the app once it verifies, otherwise .tester-previous)
 # is never deleted while the installed copy is unverified, and only one installer runs per
-# install directory. Start-up state space: app absent/good/bad x previous absent/good x lock
-# free/held; then every failure point of the swap, followed by a retry.
+# install directory. A copy is restored to, kept at or left at the app path only once it verifies
+# there, and the rollback copy is always one that verified. Start-up state space: app
+# absent/good/bad x previous absent/good/bad x lock free/held; then every failure point of the
+# swap, followed by a retry.
 
 LOCK_NAME = ".tester-install.lock"
 
@@ -1487,7 +1606,7 @@ def _stray(env: InstallEnv, kind: str) -> Path | None:
 
 @pytest.mark.parametrize("stray", ["none", "staging", "leftover"])
 @pytest.mark.parametrize("lock", ["free", "held"])
-@pytest.mark.parametrize("prev", ["absent", "good"])
+@pytest.mark.parametrize("prev", ["absent", "good", "bad"])
 @pytest.mark.parametrize("app", ["absent", "good", "bad"])
 def test_start_up_state_space(inst, app, prev, lock, stray):
     if app != "absent":
@@ -1513,19 +1632,36 @@ def test_start_up_state_space(inst, app, prev, lock, stray):
         assert not inst.logs["curl"].exists()
         return
     assert not (inst.dest / LOCK_NAME).exists()
-    if app == "bad" and prev == "good":
-        # The previous copy may be the last good one: nothing is touched, and it is named.
+    if app != "good" and prev != "absent" and (app, prev) != ("absent", "good"):
+        # No verified app: a previous copy counts only if it verifies itself. Nothing moves, and
+        # the previous copy is named; an unverified one is never offered as a way back.
         assert result.returncode != 0
         assert str(_prev(inst)) in result.stderr and "nothing was changed" in result.stderr
         assert _snapshot(inst.home) == before
         assert not inst.logs["curl"].exists()
+        if prev == "bad":
+            assert "do not open" in result.stderr.lower() and "rename" not in result.stderr
         return
     assert result.returncode == 0, result.stderr
     expected = {NAME}
-    if app != "absent" or prev != "absent":
+    if app == "good" or prev == "good":
         expected.add(".tester-previous")
-    assert {p.name for p in inst.dest.iterdir() if p != left} == expected
+    others = [p for p in inst.dest.iterdir() if p != left]
+    kept = [p for p in others if p.name.startswith(".tester-leftover.")]
+    assert {p.name for p in others if p not in kept} == expected
     assert _build_at(inst.target) == BUILD
+    if ".tester-previous" in expected:
+        # The rollback copy is always one that verified when it was saved.
+        assert (_prev(inst) / "Contents/SIGNER").read_text() == "good"
+        assert _build_at(_prev(inst)) == ("1" if app == "good" else "2")
+    if app == "bad":
+        # The replaced build did not verify: kept aside and named, not as the rollback copy.
+        (folder,) = kept
+        assert _bundles(inst).get(folder / "unverified-previous") == "1"
+        assert f"kept at {folder / 'unverified-previous'}" in result.stderr, result.stderr
+        assert "do not open it" in result.stderr
+    else:
+        assert kept == []
     if app == "absent" and prev == "good":
         assert "restored the previous copy" in result.stdout
 
@@ -1542,12 +1678,12 @@ def _good_copy_left(env: InstallEnv) -> bool:
 @pytest.mark.parametrize(
     ("inject", "ok", "app_build", "prev_build"),
     [
-        ({"STUB_MV_FAIL": "1"}, False, "1", None),  # moving the old app aside
-        ({"STUB_MV_FAIL": "2"}, False, "1", None),  # moving the new app in; restored
-        ({"STUB_MV_FAIL": "2,3"}, False, None, "1"),  # ... and the restore fails
+        ({"STUB_RENAME_FAIL": "1"}, False, "1", None),  # moving the old app aside
+        ({"STUB_RENAME_FAIL": "2"}, False, "1", None),  # moving the new app in; restored
+        ({"STUB_RENAME_FAIL": "2,3"}, False, None, "1"),  # ... and the restore fails
         ({"STUB_FAIL_ON_CALL": "3"}, False, "1", None),  # post-swap check fails; restored
-        ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "3"}, False, BUILD, "1"),  # rejected stays
-        ({"STUB_FAIL_ON_CALL": "3", "STUB_MV_FAIL": "4"}, False, None, "1"),  # restore fails
+        ({"STUB_FAIL_ON_CALL": "3", "STUB_RENAME_FAIL": "3"}, False, BUILD, "1"),  # rejected stays
+        ({"STUB_FAIL_ON_CALL": "3", "STUB_RENAME_FAIL": "4"}, False, None, "1"),  # restore fails
         ({}, True, BUILD, "1"),  # a successful update retains the latest backup
     ],
     ids=[
@@ -1583,10 +1719,27 @@ def test_every_swap_failure_and_its_retry_keep_a_good_copy(inst, inject, ok, app
 
 def test_a_first_install_that_cannot_reject_its_copy_says_so(inst):
     inst.publish()
-    result = inst.run(STUB_FAIL_ON_CALL="3", STUB_MV_FAIL="2")  # mv 1 moves it in, mv 2 rejects
+    result = inst.run(
+        STUB_FAIL_ON_CALL="3", STUB_RENAME_FAIL="2"
+    )  # rename 1 moves it in, rename 2 rejects
     assert result.returncode != 0
     assert "could not be moved aside" in result.stderr and "do not open it" in result.stderr
     assert str(inst.target) in result.stderr and "no previous copy" in result.stderr
+
+
+def test_a_failed_swap_never_restores_an_unverified_previous_copy(inst):
+    """The installed app did not verify at start-up (no backup, so the run went ahead) and the new
+    copy fails after the move-in. Neither may stay at, or go back to, the app path: both are kept
+    aside, named, with "do not open it"."""
+    _place(inst, inst.target, "bad", "1")
+    inst.publish()
+    result = inst.run(STUB_FAIL_ON_CALL="3")  # accept_drop 1-2; call 3 checks the moved-in copy
+    assert result.returncode != 0
+    assert "was restored" not in result.stderr and "do not open it" in result.stderr
+    assert not inst.target.exists() and not _prev(inst).exists(), result.stderr
+    (kept,) = _leftovers(inst)
+    assert _bundles(inst) == {kept / "rejected": BUILD, kept / "unverified-previous": "1"}
+    assert f"kept at {kept / 'unverified-previous'}" in result.stderr
 
 
 def test_a_failed_download_leaves_the_previous_copy_when_the_app_disappears(inst):
@@ -1608,11 +1761,11 @@ def test_a_staged_previous_copy_survives_a_swap_failure_with_no_app_left(inst, r
     inst.install_old()
     _place(inst, _prev(inst), "good", "2")
     inst.publish()
-    inject = {"STUB_MV_FAIL": "2"} if restore == "fails" else {}  # mv 2 is the restore
+    inject = {"STUB_RENAME_FAIL": "2"} if restore == "fails" else {}  # rename 2 is the restore
     result = inst.run(
-        STUB_MV_HOOK_AT="1",  # right after step 1 moved .tester-previous to staging
-        STUB_MV_HOOK_AFTER="1",
-        STUB_MV_HOOK='rm -rf "$TGT"',
+        STUB_RENAME_HOOK_AT="1",  # right after step 1 moved .tester-previous to staging
+        STUB_RENAME_HOOK_AFTER="1",
+        STUB_RENAME_HOOK='rm -rf "$TGT"',
         TGT=str(inst.target),
         **inject,
     )
@@ -1635,13 +1788,30 @@ def test_a_staged_previous_copy_survives_a_swap_failure_with_no_app_left(inst, r
     assert _bundles(inst) == {staged_copy: "2"}, result.stderr
 
 
-# Contract (swap and cleanup ownership): a run deletes only what it created, and the copies it
-# replaced once its own copy is verified in place and still its own. Every other copy it moved
-# is put back or kept in a named .tester-leftover.* folder; no move nests one app in another.
-# Copies are told apart by build: old app 1, stale .tester-previous 2, another program's app 7,
-# this run's drop BUILD.
+# Contract (swap and cleanup ownership): a run deletes only what it created, and the older backup
+# only once its own copy is verified in place and the new backup has itself verified. Every other
+# copy it moved is put back or kept in a named .tester-leftover.* folder; no move nests one app in
+# another. Whatever the run's exclusive rename puts at the app path stays only if it verifies there
+# (a copy that replaced the source during the rename included); a copy that fails is never left at
+# the app path and never deleted. Copies are told apart by build: old app 1, stale
+# .tester-previous 2, another program's app 7, this run's drop BUILD.
 
+# Hooks, by action: "good"/"bad" replace the app path with another program's app of that signer;
+# "source" replaces the rename's source with another program's (good) app, moving the original
+# out of the install directory first so that the replacement gets a new inode on any file system;
+# "corrupt-app"/"corrupt-prev" break the signature of the app or .tester-previous in place (the
+# bundle folder keeps its inode); "contents" swaps the app's contents for another program's
+# (good) app while the bundle folder keeps its inode, as Linux's inode reuse does after a
+# delete and copy.
 _FOREIGN_HOOK = 'rm -rf "$TGT"; cp -R "$FOREIGN" "$TGT"'
+_HOOKS = {
+    "good": _FOREIGN_HOOK,
+    "bad": _FOREIGN_HOOK,
+    "source": 'src="${@: -2:1}"; /bin/mv "$src" "$AWAY"; cp -R "$FOREIGN" "$src"',
+    "corrupt-app": 'echo broken > "$TGT/Contents/SIGNER"',
+    "contents": 'rm -rf "$TGT/Contents"; cp -R "$FOREIGN/Contents" "$TGT/Contents"',
+    "corrupt-prev": 'echo broken > "$PREV/Contents/SIGNER"',
+}
 
 
 def _bundles(env: InstallEnv) -> dict[Path, str]:
@@ -1658,6 +1828,28 @@ def _foreign(env: InstallEnv, signer: str) -> Path:
     return app
 
 
+def _hook_env(env: InstallEnv, where: str, action: str) -> dict[str, str]:
+    signer = "bad" if action == "bad" else "good"
+    extra = {
+        "FOREIGN": str(_foreign(env, signer)),
+        "TGT": str(env.target),
+        "PREV": str(_prev(env)),
+        "AWAY": str(env.tmp / "moved-away"),
+    }
+    if where == "curl":
+        extra["STUB_CURL_HOOK"] = _HOOKS[action]
+    else:
+        _, when, n = where.split("-")
+        extra.update(STUB_RENAME_HOOK=_HOOKS[action], STUB_RENAME_HOOK_AT=n)
+        if when == "after":
+            extra["STUB_RENAME_HOOK_AFTER"] = "1"
+    return extra
+
+
+def _signer(app: Path) -> str:
+    return (app / "Contents/SIGNER").read_text().strip()
+
+
 @pytest.mark.parametrize(
     ("start", "inject", "ok", "survive"),
     [
@@ -1666,35 +1858,52 @@ def _foreign(env: InstallEnv, signer: str) -> Path:
         # The download fails while a stale .tester-previous waits beside a verified app.
         (("good", "good"), {"STUB_CURL_FAIL": "all"}, False, {"1", "2"}),
         # Another program recreates the target right after the old app moved aside.
-        (("good", "absent"), {"hook": ("mv-after-1", "good")}, False, {"1", "7"}),
-        (("good", "absent"), {"hook": ("mv-after-1", "bad")}, False, {"1", "7"}),
-        # ... or between the installer's check and its mv: mv would nest the new app inside.
-        (("good", "absent"), {"hook": ("mv-before-2", "good")}, False, {"1", "7"}),
-        (("absent", "absent"), {"hook": ("mv-before-1", "good")}, False, {"7"}),
+        (("good", "absent"), {"hook": ("rename-after-1", "good")}, False, {"1", "7"}),
+        (("good", "absent"), {"hook": ("rename-after-1", "bad")}, False, {"1", "7"}),
+        # ... or between the installer's check and its rename (a plain mv would nest the new app inside).
+        (("good", "absent"), {"hook": ("rename-before-2", "good")}, False, {"1", "7"}),
+        (("absent", "absent"), {"hook": ("rename-before-1", "good")}, False, {"7"}),
         # ... or after the new copy moved in, before it was verified.
-        (("good", "absent"), {"hook": ("mv-after-2", "good")}, False, {"1", "7"}),
+        (("good", "absent"), {"hook": ("rename-after-2", "good")}, False, {"1", "7"}),
+        # ... with the same inode: only the drop's version and build tell it from this run's copy.
+        (("good", "absent"), {"hook": ("rename-after-2", "contents")}, False, {"1", "7"}),
+        # The rename's source is replaced after its check: what lands at the app path is moved out.
+        (("good", "absent"), {"hook": ("rename-before-2", "source")}, False, {"1", "7"}),
+        (("absent", "good"), {"hook": ("rename-before-1", "source")}, False, {"7"}),
         # A stale .tester-previous was moved to staging; the swap fails and it cannot go back.
-        (("good", "good"), {"STUB_MV_FAIL": "2,3"}, False, {"1", "2"}),
+        (("good", "good"), {"STUB_RENAME_FAIL": "2,3"}, False, {"1", "2"}),
         # The swap fails and every step is undone.
-        (("good", "good"), {"STUB_MV_FAIL": "2"}, False, {"1", "2"}),
+        (("good", "good"), {"STUB_RENAME_FAIL": "2"}, False, {"1", "2"}),
         (("good", "good"), {"STUB_FAIL_ON_CALL": "5"}, False, {"1", "2"}),
         # Success retires the older backup and retains the most recent known copy.
         (("good", "good"), {}, True, set()),
         (("absent", "good"), {}, True, set()),
+        # The app breaks in place during the download, or the new backup right after the move
+        # aside: the install succeeds, the broken build is not kept as the rollback copy, and the
+        # older backup is kept (in a leftover), not deleted.
+        (("good", "good"), {"hook": ("curl", "corrupt-app")}, True, {"1", "2"}),
+        (("good", "absent"), {"hook": ("curl", "corrupt-app")}, True, {"1"}),
+        (("good", "good"), {"hook": ("rename-after-2", "corrupt-prev")}, True, {"1", "2"}),
     ],
     ids=[
         "unverified-target-during-failed-download",
         "failed-download-with-stale-previous",
         "target-recreated-after-move-aside-good",
         "target-recreated-after-move-aside-bad",
-        "target-created-between-check-and-mv",
-        "first-install-target-created-between-check-and-mv",
+        "target-created-between-check-and-rename",
+        "first-install-target-created-between-check-and-rename",
         "target-replaced-before-verification",
+        "target-replaced-in-place-before-verification",
+        "source-replaced-during-move-in",
+        "source-replaced-during-start-up-restore",
         "superseded-copy-cannot-go-back",
         "aside-fails-with-stale-previous",
         "verify-fails-with-stale-previous",
         "success-with-stale-previous",
         "success-after-restoring-previous",
+        "app-corrupted-in-place-during-download",
+        "app-corrupted-in-place-during-download-no-previous",
+        "new-backup-corrupted-in-place",
     ],
 )
 def test_no_run_deletes_a_copy_it_did_not_create(inst, start, inject, ok, survive):
@@ -1706,15 +1915,7 @@ def test_no_run_deletes_a_copy_it_did_not_create(inst, start, inject, ok, surviv
     inject = dict(inject)
     hook = inject.pop("hook", None)
     if hook:
-        where, signer = hook
-        inject.update(FOREIGN=str(_foreign(inst, signer)), TGT=str(inst.target))
-        if where == "curl":
-            inject["STUB_CURL_HOOK"] = _FOREIGN_HOOK
-        else:
-            _, when, n = where.split("-")
-            inject.update(STUB_MV_HOOK=_FOREIGN_HOOK, STUB_MV_HOOK_AT=n)
-            if when == "after":
-                inject["STUB_MV_HOOK_AFTER"] = "1"
+        inject.update(_hook_env(inst, *hook))
     good_before = _good_copy_left(inst)
     inst.publish()
     result = inst.run(**inject)
@@ -1722,30 +1923,43 @@ def test_no_run_deletes_a_copy_it_did_not_create(inst, start, inject, ok, surviv
     assert not (inst.dest / LOCK_NAME).exists()
     assert _staging_left(inst) == [], result.stderr
     bundles = _bundles(inst)
-    leftovers = [p for p in inst.dest.iterdir() if p.name.startswith(".tester-leftover.")]
+    leftovers = _leftovers(inst)
     for folder in leftovers:
         assert str(folder) in result.stderr, result.stderr
     # No app is nested inside another: every copy sits at a known place.
     known = {inst.target, _prev(inst)} | {c for f in leftovers for c in f.iterdir()}
     assert set(bundles) <= known, (bundles, result.stderr)
+    assert survive <= set(bundles.values()), (bundles, result.stderr)
+    # A copy that failed verification and was kept aside is named with "do not open it".
+    for copy in bundles:
+        if copy.parent in leftovers and copy.name in {"rejected", "unverified-previous"}:
+            assert f"kept at {copy}" in result.stderr and "do not open it" in result.stderr
     if ok:
         assert f"installed {TAG}" in result.stdout
-        assert bundles == {inst.target: BUILD, _prev(inst): "1" if app != "absent" else "2"}
+        assert bundles[inst.target] == BUILD and _signer(inst.target) == "good"
+        if not survive:
+            assert bundles == {inst.target: BUILD, _prev(inst): "1" if app != "absent" else "2"}
+        # The rollback copy is always one that verified.
+        assert not _prev(inst).exists() or _signer(_prev(inst)) == "good", result.stderr
         return
     assert "installed tester-" not in result.stdout
-    assert survive <= set(bundles.values()), (bundles, result.stderr)
-    if good_before or (hook and hook[1] == "good"):
-        signers = [(b / "Contents/SIGNER").read_text() for b in bundles]
-        assert "good" in signers, result.stderr
+    if good_before or (hook and hook[1] in {"good", "source", "contents"}):
+        assert "good" in [_signer(b) for b in bundles], result.stderr
     if inst.target.exists() and _build_at(inst.target) == BUILD:
         assert "do not open it" in result.stderr
+    if hook and hook[1] in {"source", "contents"}:
+        # What the rename put at the app path did not verify as the expected copy: moved out.
+        assert not inst.target.exists() or bundles[inst.target] == "1", result.stderr
+        assert "do not open it" in result.stderr and "nothing was changed" not in result.stderr
 
 
 def test_a_copy_kept_after_a_failed_run_is_named_and_left_for_the_person(inst):
     inst.install_old()
     _place(inst, _prev(inst), "good", "2")
     inst.publish()
-    failed = inst.run(STUB_MV_FAIL="2,3")  # superseded copy moved, aside fails, it cannot go back
+    failed = inst.run(
+        STUB_RENAME_FAIL="2,3"
+    )  # superseded copy moved, aside fails, it cannot go back
     assert failed.returncode != 0
     (kept,) = [p for p in inst.dest.iterdir() if p.name.startswith(".tester-leftover.")]
     assert f"kept at {kept / 'superseded'}" in failed.stderr
@@ -1759,8 +1973,8 @@ def test_exclusive_move_preserves_an_occupied_target_and_its_empty_child(inst):
     inst.install_old()
     inst.publish()
     before = inst.run(
-        STUB_MV_HOOK_AT="2",
-        STUB_MV_HOOK='mkdir -p "$TGT/${TGT##*/}"',
+        STUB_RENAME_HOOK_AT="2",
+        STUB_RENAME_HOOK='mkdir -p "$TGT/${TGT##*/}"',
         TGT=str(inst.target),
     )
     assert before.returncode == 1
@@ -1853,10 +2067,10 @@ def test_a_signal_during_the_swap_is_ignored_and_the_swap_completes(inst, sig):
 
     inst.install_old()
     inst.publish()
-    mark = inst.tmp / "mv.mark"
+    mark = inst.tmp / "rename.mark"
     run = subprocess.Popen(
         ["/bin/bash", str(inst.installer), TAG],
-        env=inst.env(STUB_MV_SLEEP_AT="1", STUB_MV_SLEEP="1", STUB_MV_MARK=str(mark)),
+        env=inst.env(STUB_RENAME_SLEEP_AT="1", STUB_RENAME_SLEEP="1", STUB_RENAME_MARK=str(mark)),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -2444,8 +2658,9 @@ def test_real_install_end_to_end(throwaway_identity, pinned_installer, tmp_path)
     """Real codesign, ditto, defaults, unzip, sysctl and sw_vers; only curl and osascript are stubbed."""
     sha1, keychain = throwaway_identity
     env = InstallEnv(tmp_path, installer=pinned_installer)
-    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign", "mv"):
+    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign"):
         (env.bin / name).unlink()
+    env.rename_tool.unlink()
     zip_path = env.release / f"{TAG}.zip"
 
     def publish(signer: str | None, *extra: str, executable: bool = True) -> None:
@@ -2541,6 +2756,16 @@ def test_guide_covers_the_installers_refusals_and_what_it_leaves():
         ("the download is corrupt (SHA-256 mismatch)", ("once more", "tell the owner")),
         # The running-app probe failed: quit by hand, then retry.
         ("could not tell whether the app is running", ("quit", "by hand", "run the command again")),
+        # macOS App Management stopped the move aside: allow Terminal or remove the app, then retry.
+        (
+            "could not move the installed app aside",
+            (
+                "System Settings > Privacy & Security > App Management",
+                "allow Terminal",
+                "remove the app by hand",
+                "run the command again",
+            ),
+        ),
     ],
 )
 def test_guide_says_what_to_do_for_each_refusal_the_installer_prints(message, steps):
@@ -2628,6 +2853,23 @@ def test_guide_explains_the_permission_reset_and_manual_removal_when_switching()
     assert "different signing identity" in text
     assert "again once" in text and "permission" in text
     assert "no install receipt" in text and "remove the app by hand" in text
+    # Everything a tester install leaves beside the app goes too, not only the app.
+    section = GUIDE.read_text().split("## Moving to the Apple-signed release", 1)[1]
+    section = " ".join(section.split("\n## ", 1)[0].split())
+    for path in (
+        "~/Applications/Pipecat Service Toolbar.app",
+        "~/Applications/.tester-previous",
+        "~/Applications/.tester-install.*",
+        "~/Applications/.tester-leftover.*",
+    ):
+        assert path in section, path
+
+
+def test_guide_says_an_unverified_copy_is_never_kept_as_the_app_or_rollback_copy():
+    text = _guide()
+    assert "only if it passes the certificate check" in text
+    assert "once the new rollback copy has passed the certificate check" in text
+    assert '"do not open it"' in text
 
 
 def test_guide_is_linked_from_docs_readme_but_not_the_root_readme():

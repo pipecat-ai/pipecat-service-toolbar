@@ -52,10 +52,14 @@ The installer:
   replaces to `~/Applications/.tester-previous` (hidden). That copy stays after a successful update as a
   rollback copy. If the swap fails, the installer tries to restore it. If the app in place fails
   verification and a backup exists, the installer prints how to restore it by hand;
+- puts back or keeps a copy of the app only if it passes the certificate check. A copy that does not
+  (including a replaced build that no longer passes) is never left as the app or the rollback copy: the
+  installer keeps it in a `~/Applications/.tester-leftover.*` folder, prints the path and says
+  "do not open it";
 - keeps one rollback copy: a later successful update replaces `.tester-previous` with the build it
-  replaced and removes the older one. If it cannot put a copy back, the installer keeps it in a
-  `~/Applications/.tester-leftover.*` folder and prints the path. It also lists any staging or leftover
-  folders from earlier runs;
+  replaced and removes the older one once the new rollback copy has passed the certificate check. If it
+  cannot put a copy back, the installer keeps it in a `~/Applications/.tester-leftover.*` folder and
+  prints the path. It also lists any staging or leftover folders from earlier runs;
 - finishes the swap even if you press Control-C or close the window during it, and at any other point stops
   cleanly, cleaning up only once the step it was on has ended;
 - touches nothing else: not your app data, caches, models or preferences, and it never uses `sudo`.
@@ -110,6 +114,10 @@ one more step:
   command again. The message also lists any staging or kept-copy folders beside the app.
 - `another program changed ... during the install`: another program created, moved or replaced the app
   during the swap. Check the paths in the message for the installed app and its backup.
+- `could not move the installed app aside; if macOS asked about App Management, ...`: macOS stopped
+  Terminal from moving the app. If macOS asked about App Management, allow Terminal in System Settings >
+  Privacy & Security > App Management, or remove the app by hand (quit it, then move
+  `~/Applications/Pipecat Service Toolbar.app` to the Trash); then run the command again.
 - A `note:` naming a `.tester-install.*` or `.tester-leftover.*` folder: an earlier install left it. Once the
   app works, you can remove it as in [Uninstall](#uninstall), step 3; tell the owner if one says a copy failed
   the certificate check.
@@ -118,7 +126,10 @@ one more step:
 
 The Apple-signed build uses a different signing identity, so macOS asks for Microphone and Speech permission
 again once. The Apple installer cannot remove a tester copy, which has no install receipt, so first remove the
-app by hand: turn off **Open at Login**, quit the app, remove `~/Applications/Pipecat Service Toolbar.app`, then
-follow the install steps in the [README](../README.md) when they are published. Your data stays.
+app by hand: turn off **Open at Login**, quit the app, remove `~/Applications/Pipecat Service Toolbar.app`, and
+remove the hidden tester folders beside it as in [Uninstall](#uninstall), step 3: the rollback copy
+`~/Applications/.tester-previous`, any `~/Applications/.tester-install.*` folders and any
+`~/Applications/.tester-leftover.*` folders. Then follow the install steps in the [README](../README.md) when
+they are published. Your data stays.
 
 Plan: [self-signed tester channel](plans/20261121-feature-selfsigned-tester-channel.md).

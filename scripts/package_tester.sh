@@ -9,7 +9,8 @@
 # Refuses, before building, a missing self-signed identity, a dirty tree, a HEAD that is not
 # pushed, a tag the installer would refuse, and a tag that already exists locally or on origin (a
 # remote lookup that fails for any other reason than "no such tag" refuses too). After building it
-# runs install_tester.sh --verify-only on the bundle, writes the ZIP in a scratch folder and runs
+# runs install_tester.sh --verify-only on the bundle, writes the ZIP in a hidden scratch folder
+# inside dist/tester (removed on every exit) and runs
 # install_tester.sh --check-drop <zip> <tag> on it: the installer's own acceptance of a download,
 # every step except the network and the swap (download cap, central-directory paths, symlinks,
 # entry count and unpacked size, extraction, the extracted tree, mode and ACL normalisation, the
@@ -33,7 +34,10 @@ cd "$ROOT"
 step "Checking the working tree"
 TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
 [ -z "$TREE_STATUS" ] || die "working tree is not clean; commit or stash first"
-git fetch --quiet origin || die "cannot fetch origin; the pushed and on-main checks need current refs"
+# --prune drops remote-tracking refs of branches deleted on origin, which would otherwise still
+# count a commit as pushed. --no-prune-tags: never delete local tags (fetch.pruneTags config).
+git fetch --quiet --prune --no-prune-tags origin ||
+    die "cannot fetch origin; the pushed and on-main checks need current refs"
 COMMIT="$(git rev-parse HEAD)"
 if [ -z "$(git for-each-ref --contains "$COMMIT" refs/remotes/origin)" ]; then
     die "HEAD $COMMIT is not pushed to origin; push it first so the installer source and the drop name a fetchable commit"
@@ -94,10 +98,24 @@ step "Verifying the built bundle against the pin"
 
 step "Writing the ZIP"
 ZIP="$TAG.zip"
-# The ZIP is written and verified in a scratch directory and moved into dist/ only once it
-# passes, so a failed run leaves no unverified ZIP there for `gh release create dist/tester/<tag>*`.
-CHECK="$(mktemp -d "${TMPDIR:-/tmp}/tester-package.XXXXXX")"
-trap 'rm -rf "$CHECK"' EXIT
+# The ZIP, checksum and manifest are written and verified in a scratch directory and published
+# into dist/ only once they pass, so a failed run leaves no unverified ZIP there for
+# `gh release create dist/tester/<tag>*`. The scratch directory is a hidden folder inside dist/tester,
+# so every publishing move is a rename on one volume (never a copy that an interrupted run leaves
+# half written). Cleanup, on every exit, removes it and, if publishing had started but not
+# finished, the drop's files in dist/tester, so no run leaves a partial or mixed drop there.
+CHECK=""
+PUBLISHING=""
+cleanup() {
+    [ -z "$CHECK" ] || rm -rf "$CHECK"
+    [ -z "$PUBLISHING" ] || rm -f "$OUT/$TAG.manifest.json" "$OUT/$ZIP.sha256" "$OUT/$ZIP"
+}
+trap cleanup EXIT
+mkdir -p "$OUT"
+# Signals are ignored while the folder and the variable that names it come into being together.
+trap '' HUP INT TERM
+CHECK="$(mktemp -d "$OUT/.tester-package.XXXXXX")"
+trap - HUP INT TERM
 ditto -c -k --keepParent "$BUNDLE" "$CHECK/$ZIP"
 
 step "Checking the ZIP as the installer will"
@@ -119,9 +137,14 @@ printf '%s  %s\n' "$ZIP_SHA256" "$ZIP" > "$CHECK/$ZIP.sha256"
 printf '{\n  "tag": "%s",\n  "version": "%s",\n  "build": %s,\n  "commit": "%s",\n  "on_main": %s,\n  "cert_sha1": "%s",\n  "zip": "%s",\n  "zip_sha256": "%s",\n  "created_utc": "%s"\n}\n' \
     "$TAG" "$VERSION" "$BUILD" "$COMMIT" "$ON_MAIN" "$CERT_SHA1" "$ZIP" "$ZIP_SHA256" \
     "$CREATED_UTC" > "$CHECK/$TAG.manifest.json"
-mkdir -p "$OUT"
-mv "$CHECK/$ZIP.sha256" "$CHECK/$TAG.manifest.json" "$OUT/"
+# Publication: an earlier drop of this tag goes first, manifest first, so it is never mixed with
+# the new files; then the ZIP, the checksum and, last, the manifest, which marks a complete drop.
+PUBLISHING=1
+rm -f "$OUT/$TAG.manifest.json" "$OUT/$ZIP.sha256" "$OUT/$ZIP"
 mv "$CHECK/$ZIP" "$OUT/$ZIP"
+mv "$CHECK/$ZIP.sha256" "$OUT/$ZIP.sha256"
+mv "$CHECK/$TAG.manifest.json" "$OUT/$TAG.manifest.json"
+PUBLISHING=""
 
 echo
 echo "tag:     $TAG"
