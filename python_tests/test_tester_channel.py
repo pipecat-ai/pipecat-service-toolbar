@@ -1229,3 +1229,67 @@ def test_real_install_end_to_end(throwaway_identity, pinned_installer, tmp_path)
         assert refused.returncode != 0, refused.stdout
         assert "pinned tester certificate" in refused.stderr
         assert _snapshot(env.home) == before
+
+
+# -- tester guide ------------------------------------------------------------------------------
+
+GUIDE = REPO_ROOT / "docs/tester-install.md"
+DOCS_README = REPO_ROOT / "docs/README.md"
+ROOT_README = REPO_ROOT / "README.md"
+
+
+def _guide() -> str:
+    return " ".join(GUIDE.read_text().split())
+
+
+def test_guide_has_the_one_liner_with_placeholders_not_a_real_commit():
+    text = GUIDE.read_text()
+    one_liner = re.search(r"^curl .*$", text, re.M)
+    assert one_liner, "no curl one-liner"
+    assert one_liner.group(0) == (
+        "curl -fsSL https://raw.githubusercontent.com/pipecat-ai/pipecat-service-toolbar/"
+        "<INSTALLER_COMMIT_SHA>/scripts/install_tester.sh | bash -s -- <TAG>"
+    )
+    assert not re.search(r"\b[0-9a-f]{40}\b", text), (
+        "a real commit SHA must not be committed in the guide"
+    )
+    assert "scripts/install_tester.sh" in text
+
+
+def test_guide_states_the_gatekeeper_bypass_and_the_audience_limit():
+    text = _guide().lower()
+    assert "not notarized" in text and "self-signed" in text
+    assert "gatekeeper" in text and "deliberate bypass of gatekeeper" in text
+    assert "known testers" in text
+    assert "directly from the owner" in text
+    assert "apple silicon" in text and "macos 15" in text
+
+
+def test_guide_covers_update_uninstall_feedback_and_the_launch_at_login_step():
+    text = _guide()
+    for heading in ("## Update", "## Uninstall", "## Feedback"):
+        assert heading in GUIDE.read_text()
+    assert "Open at Login" in text and "Application Support/Pipecat Service Toolbar" in text
+    assert "tag the installer printed" in text
+
+
+def test_guide_names_open_anyway_only_as_unsupported():
+    text = GUIDE.read_text()
+    assert "Open Anyway" in text
+    for match in re.finditer(r"Open Anyway", text):
+        context = " ".join(text[max(0, match.start() - 200) : match.end() + 250].split()).lower()
+        assert "not supported" in context or "skips the certificate check" in context, context
+
+
+def test_guide_explains_the_permission_reset_and_manual_removal_when_switching():
+    text = _guide().lower()
+    assert "different signing identity" in text
+    assert "again once" in text and "permission" in text
+    assert "no install receipt" in text and "remove the app by hand" in text
+
+
+def test_guide_is_linked_from_docs_readme_but_not_the_root_readme():
+    assert "(tester-install.md)" in DOCS_README.read_text()
+    assert "tester-install" not in ROOT_README.read_text()
+    for link in re.findall(r"\]\((?!https?:)([^)#]+)", GUIDE.read_text()):
+        assert (GUIDE.parent / link).exists(), link

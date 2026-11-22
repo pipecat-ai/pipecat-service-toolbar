@@ -389,7 +389,7 @@ sequenceDiagram
 - [x] Phase 1: Signer pin and verifier
 - [x] Phase 2: Package a tester build
 - [x] Phase 3: Install path
-- [ ] Phase 4: Tester guide and docs index
+- [x] Phase 4: Tester guide and docs index
 - [ ] Phase 5: Owner validation and first drop
 - [ ] Phase 6: Retire the channel
 
