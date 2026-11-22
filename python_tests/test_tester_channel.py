@@ -226,7 +226,19 @@ def throwaway_identity(tmp_path_factory):
         "pw",
         str(keychain),
     )
+    # On a CI runner `codesign` does not find an identity in a keychain outside the search
+    # list, so add it for the module's duration. Not done on a developer machine, where the
+    # `--keychain` option is enough and the user's search list stays untouched.
+    saved: list[str] = []
+    if os.environ.get("CI"):
+        listing = _sh("security", "list-keychains", "-d", "user").stdout
+        saved = [line.strip().strip('"') for line in listing.splitlines() if line.strip()]
+        _sh("security", "list-keychains", "-d", "user", "-s", str(keychain), *saved)
     yield sha1, keychain
+    if saved:
+        subprocess.run(
+            ["security", "list-keychains", "-d", "user", "-s", *saved], capture_output=True
+        )
     subprocess.run(["security", "delete-keychain", str(keychain)], capture_output=True)
 
 
