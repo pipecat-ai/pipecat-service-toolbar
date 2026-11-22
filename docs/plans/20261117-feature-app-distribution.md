@@ -1761,6 +1761,21 @@ tools is no longer optional: Phase 5 now requires one install and upgrade on a g
 Tools, recorded in the acceptance record and the release evidence. The macOS 15 and 26 lock-probe repeats remain
 CI and existing-guest checks.
 
+### Interim self-signed tester channel — pointer, 2026-11-21
+
+`docs/plans/20261121-feature-selfsigned-tester-channel.md` ships owner-built, self-signed builds to known testers
+before this plan's Developer ID certificate exists. This contract is not edited; implementation must account for it:
+
+- Phase 1 inventory: releases tagged `tester-*` appear in the GitHub release list. Record them as legacy self-signed
+  builds, counted for the maximum known build, excluded from the signing ledger. They are never `v*` tags.
+- Phases 5 and 8 channel switch: a tester install has no receipt, so verified removal cannot remove it. The tester
+  guide has the tester remove the app by hand first. Add a test that the Apple installer refuses a tester-signed
+  receipt-less copy with removal instructions, and installs after manual removal.
+- Phase 5 `build_app.sh` guard: `scripts/package_tester.sh` is a second caller of `build_app.sh`. Keep
+  `just app-tester-package` and `python_tests/test_tester_channel.py` working when the running-build guard lands.
+- Signer change: tester builds are signed by the self-signed identity, so moving to Developer ID resets Microphone
+  and Speech grants once, as in this plan's signer-change test.
+
 ### Review Waivers
 
 - 2026-11-21 review-plan finding 'marker names nonexistent commit 3aee5bd': waived; the marker is a content hash of
