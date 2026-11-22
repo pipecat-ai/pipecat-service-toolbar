@@ -252,7 +252,20 @@ def _sign(app: Path, identity: str, *extra: str, keychain: Path | None = None) -
     cmd = ["codesign", "--force", "--deep", "--sign", identity, *extra]
     if keychain:
         cmd += ["--keychain", str(keychain)]
-    _sh(*cmd, str(app))
+    try:
+        _sh(*cmd, str(app))
+    except AssertionError as error:
+        if keychain:
+            diag = subprocess.run(
+                ["security", "find-identity", "-p", "codesigning", str(keychain)],
+                capture_output=True,
+                text=True,
+            )
+            lists = subprocess.run(["security", "list-keychains"], capture_output=True, text=True)
+            raise AssertionError(
+                f"{error}\nfind-identity: {diag.stdout}{diag.stderr}\nsearch list: {lists.stdout}"
+            ) from None
+        raise
 
 
 @pytest.fixture
