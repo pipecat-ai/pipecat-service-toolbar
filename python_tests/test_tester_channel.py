@@ -676,3 +676,556 @@ def _consistent_real(repo: PackagerRepo, sha1: str) -> dict:
     assert manifest["zip_sha256"] == hashlib.sha256(zip_path.read_bytes()).hexdigest()
     assert manifest["commit"] == _git(repo.root, "rev-parse", "HEAD")
     return manifest
+
+
+# -- installer: install path -------------------------------------------------------------------
+
+TAG = f"tester-{VERSION}-b{BUILD}-abc1234"
+BASE_URL = "https://github.com/pipecat-ai/pipecat-service-toolbar/releases/download"
+
+_CURL_STUB = """#!/bin/bash
+echo "$*" >> "$STUB_CURL_LOG"
+out=""; url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in -o) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac
+done
+file="$(basename "$url")"
+case ",${STUB_CURL_FAIL:-}," in *",$file,"*|*,all,*) exit 22 ;; esac
+[ -f "$STUB_RELEASE/$file" ] || exit 22
+cp "$STUB_RELEASE/$file" "$out"
+"""
+
+_SYSCTL_STUB = """#!/bin/bash
+if [ "${STUB_ARM:-1}" = none ]; then echo "sysctl: unknown oid 'hw.optional.arm64'" >&2; exit 1; fi
+echo "${STUB_ARM:-1}"
+"""
+
+_SW_VERS_STUB = """#!/bin/bash
+echo "${STUB_MACOS-26.0}"
+"""
+
+_UNAME_STUB = """#!/bin/bash
+echo "${STUB_UNAME:-arm64}"
+"""
+
+_OSASCRIPT_STUB = """#!/bin/bash
+n=$(( $(cat "$STUB_OSA_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STUB_OSA_COUNT"
+[ -z "${STUB_OSA_FAIL:-}" ] || exit 1
+if [ "$n" -gt 1 ] && [ -n "${STUB_RUNNING_LATER:-}" ]; then echo "$STUB_RUNNING_LATER"; exit 0; fi
+echo "${STUB_RUNNING:-false}"
+"""
+
+_DEFAULTS_STUB = """#!/usr/bin/env python3
+import plistlib, sys
+assert sys.argv[1] == "read", sys.argv
+try:
+    with open(sys.argv[2] + ".plist", "rb") as f:
+        print(plistlib.load(f)[sys.argv[3]])
+except Exception:
+    sys.exit(1)
+"""
+
+# `Contents/SIGNER` stands in for a signature: good, bad (another signer) or broken.
+_CODESIGN_MARKER_STUB = """#!/bin/bash
+n=$(( $(cat "$STUB_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STUB_COUNT"
+echo "$*" >> "$STUB_LOG"
+[ "${STUB_FAIL_ON_CALL:-0}" != "$n" ] || exit 3
+app="${@: -1}"
+signer="$(cat "$app/Contents/SIGNER" 2>/dev/null)"
+case " $* " in
+  *" -R "*) [ "$signer" = good ] || exit 3 ;;
+  *) [ "$signer" != broken ] || exit 1 ;;
+esac
+exit 0
+"""
+
+_MV_STUB = """#!/bin/bash
+n=$(( $(cat "$STUB_MV_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$STUB_MV_COUNT"
+[ "${STUB_MV_FAIL:-0}" != "$n" ] || { echo "mv: injected failure $n" >&2; exit 1; }
+exec /bin/mv "$@"
+"""
+
+_DITTO_EXTRACT_FAIL = _DITTO_STUB.replace(
+    "a = sys.argv[1:]",
+    'a = sys.argv[1:]\nif os.environ.get("STUB_DITTO_FAIL"): sys.exit(1)',
+)
+
+
+def _snapshot(root: Path) -> dict[str, str]:
+    """Every path under ``root`` with a content digest, to prove nothing else changed."""
+    snap: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        rel = str(path.relative_to(root))
+        if path.is_symlink():
+            snap[rel] = "link:" + os.readlink(path)
+        elif path.is_dir():
+            snap[rel] = "dir"
+        else:
+            snap[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return snap
+
+
+def _make_zip(path: Path, entries: list[tuple[str, bytes | None, str]]) -> None:
+    """entries: (arcname, data, kind) where kind is file or symlink; data None means a directory."""
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data, kind in entries:
+            info = zipfile.ZipInfo(name)
+            info.create_system = 3
+            if data is None:
+                info.external_attr = (0o40755 << 16) | 0x10
+                z.writestr(info, b"")
+            elif kind == "symlink":
+                info.external_attr = 0o120777 << 16
+                z.writestr(info, data)
+            else:
+                info.external_attr = 0o100644 << 16
+                z.writestr(info, data)
+
+
+def _bundle_entries(signer: str = "good", version: str = VERSION, build: str = BUILD, extra=()):
+    plist = plistlib.dumps(
+        {
+            "CFBundleIdentifier": BUNDLE_ID,
+            "CFBundleShortVersionString": version,
+            "CFBundleVersion": build,
+        }
+    )
+    entries = [
+        (f"{NAME}/", None, "file"),
+        (f"{NAME}/Contents/", None, "file"),
+        (f"{NAME}/Contents/Info.plist", plist, "file"),
+        (f"{NAME}/Contents/SIGNER", signer.encode(), "file"),
+    ]
+    return entries + list(extra)
+
+
+class InstallEnv:
+    def __init__(self, tmp_path: Path, *, installer: Path = INSTALLER):
+        self.tmp = tmp_path
+        self.installer = installer
+        self.home = tmp_path / "home"
+        self.dest = self.home / "Applications"
+        self.dest.mkdir(parents=True)
+        self.release = tmp_path / "release"
+        self.release.mkdir()
+        self.bin = tmp_path / "bin"
+        self.bin.mkdir()
+        for name, text in {
+            "curl": _CURL_STUB,
+            "sysctl": _SYSCTL_STUB,
+            "sw_vers": _SW_VERS_STUB,
+            "uname": _UNAME_STUB,
+            "osascript": _OSASCRIPT_STUB,
+            "defaults": _DEFAULTS_STUB,
+            "ditto": _DITTO_EXTRACT_FAIL,
+            "codesign": _CODESIGN_MARKER_STUB,
+            "mv": _MV_STUB,
+        }.items():
+            path = self.bin / name
+            path.write_text(text)
+            path.chmod(0o755)
+        self.target = self.dest / NAME
+        self.logs = {n: tmp_path / f"{n}.log" for n in ("curl", "codesign")}
+
+    def publish(self, tag: str = TAG, entries=None, *, sum_text: str | None = None) -> Path:
+        zip_path = self.release / f"{tag}.zip"
+        _make_zip(zip_path, entries if entries is not None else _bundle_entries())
+        digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+        (self.release / f"{tag}.zip.sha256").write_text(
+            sum_text if sum_text is not None else f"{digest}  {tag}.zip\n"
+        )
+        return zip_path
+
+    def install_old(self, version: str = "0.0.1", build: str = "1") -> None:
+        _write_bundle(self.dest, version=version, build=build)
+        (self.target / "Contents/SIGNER").write_text("good")
+
+    def env(self, **extra: str) -> dict[str, str]:
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{self.bin}:{env['PATH']}",
+            HOME=str(self.home),
+            STUB_RELEASE=str(self.release),
+            STUB_CURL_LOG=str(self.logs["curl"]),
+            STUB_LOG=str(self.logs["codesign"]),
+            STUB_COUNT=str(self.tmp / "codesign.count"),
+            STUB_OSA_COUNT=str(self.tmp / "osa.count"),
+            STUB_MV_COUNT=str(self.tmp / "mv.count"),
+        )
+        env.pop("APP_INSTALL_DIR", None)
+        env.update(extra)
+        return env
+
+    def run(self, tag: str = TAG, *, stdin: bool = False, **extra: str):
+        env = self.env(**extra)
+        if stdin:
+            return subprocess.run(
+                f'cat "{self.installer}" | /bin/bash -s -- {tag}',
+                shell=True,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        return _run(self.installer, tag, env=env)
+
+
+@pytest.fixture
+def inst(tmp_path):
+    assert shutil.which("unzip"), "unzip is required by the installer and its tests"
+    return InstallEnv(tmp_path)
+
+
+def _staging_left(env: InstallEnv) -> list[str]:
+    return [p.name for p in env.dest.iterdir() if p.name.startswith(".tester-install")]
+
+
+def test_fresh_install_succeeds_and_leaves_one_app_and_no_staging(inst):
+    inst.publish()
+    result = inst.run()
+    assert result.returncode == 0, result.stderr
+    assert f"installed {TAG}: version {VERSION}, build {BUILD}" in result.stdout
+    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert "replaced" not in result.stdout
+
+
+def test_install_reads_the_script_from_stdin_as_curl_pipe_bash_does(inst):
+    inst.publish()
+    result = inst.run(stdin=True)
+    assert result.returncode == 0, result.stderr
+    assert inst.target.is_dir()
+
+
+def test_default_install_directory_is_home_applications(inst):
+    inst.publish()
+    assert inst.run().returncode == 0
+    assert (inst.home / "Applications" / NAME).is_dir()
+
+
+def test_app_install_dir_is_honoured(inst, tmp_path):
+    custom = tmp_path / "custom"
+    inst.publish()
+    result = inst.run(APP_INSTALL_DIR=str(custom))
+    assert result.returncode == 0, result.stderr
+    assert (custom / NAME).is_dir() and not inst.target.exists()
+
+
+def test_update_replaces_the_app_and_reports_old_and_new(inst):
+    inst.install_old()
+    inst.publish()
+    result = inst.run()
+    assert result.returncode == 0, result.stderr
+    assert f"installed {TAG}: version {VERSION}, build {BUILD}" in result.stdout
+    assert "replaced version 0.0.1, build 1" in result.stdout
+    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+    assert (inst.target / "Contents/SIGNER").read_text() == "good"
+    new = plistlib.loads((inst.target / "Contents/Info.plist").read_bytes())
+    assert new["CFBundleVersion"] == BUILD
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        "tester-1.0-b1-abc1234",
+        "tester-1.0.0-b1-ABCDEF1",
+        "tester-1.0.0-b1-abc",
+        "tester-1.0.0-b1-abc1234/../x",
+        "tester-1.0.0-bX-abc1234",
+        "tester-1.0.0-b1-abc1234 extra",
+    ],
+)
+def test_bad_tags_are_refused_before_anything_happens(inst, tag):
+    before = _snapshot(inst.home)
+    result = inst.run(tag)
+    assert result.returncode != 0 and "not a tester tag" in result.stderr
+    assert _snapshot(inst.home) == before
+    assert not inst.logs["curl"].exists()
+
+
+@pytest.mark.parametrize("args", [[], ["v1.0.0"], ["--verify-only"], [TAG, "extra"]])
+def test_other_argument_shapes_are_usage_errors(inst, args):
+    result = _run(inst.installer, *args, env=inst.env())
+    assert result.returncode == 2 and "usage" in result.stderr
+
+
+@pytest.mark.parametrize("arm", ["0", "none"])
+def test_intel_is_refused(inst, arm):
+    inst.publish()
+    result = inst.run(STUB_ARM=arm)
+    assert result.returncode != 0 and "Apple silicon" in result.stderr
+    assert not inst.logs["curl"].exists()
+
+
+def test_apple_silicon_under_rosetta_is_not_refused(inst):
+    inst.publish()
+    result = inst.run(STUB_UNAME="x86_64")  # `uname -m` lies under Rosetta; sysctl does not
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("version", "ok"), [("14.7.1", False), ("15.0", True), ("26.6.2", True), ("", False)]
+)
+def test_macos_version_gate(inst, version, ok):
+    inst.publish()
+    result = inst.run(STUB_MACOS=version)
+    assert (result.returncode == 0) is ok, result.stderr
+    if not ok:
+        assert not inst.logs["curl"].exists()
+
+
+@pytest.mark.parametrize("fail", ["all", f"{TAG}.zip", f"{TAG}.zip.sha256"])
+def test_interrupted_download_changes_nothing(inst, fail):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(STUB_CURL_FAIL=fail)
+    assert result.returncode != 0 and "could not download" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_checksum_mismatch_is_refused(inst):
+    inst.install_old()
+    inst.publish(sum_text=f"{'0' * 64}  {TAG}.zip\n")
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "corrupt" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+@pytest.mark.parametrize("sum_text", ["", "not-a-hash  x.zip\n", "ABC  x.zip\n"])
+def test_malformed_checksum_file_is_refused(inst, sum_text):
+    inst.publish(sum_text=sum_text)
+    result = inst.run()
+    assert result.returncode != 0 and "malformed" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ([("Other.app/Contents/x", b"x", "file")], "outside"),
+        ([("../escape", b"x", "file")], "outside"),
+        ([(f"{NAME}/../../escape", b"x", "file")], "unsafe"),
+        ([("/abs/path", b"x", "file")], "outside"),
+        ([(f"{NAME}/Contents/link", b"/Users", "symlink")], "symbolic link"),
+    ],
+)
+def test_archive_shape_is_checked_before_extraction(inst, extra, message):
+    inst.install_old()
+    inst.publish(entries=_bundle_entries(extra=extra))
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and message in result.stderr, result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_wrong_signer_is_refused_and_the_installed_app_is_untouched(inst):
+    inst.install_old()
+    inst.publish(entries=_bundle_entries(signer="bad"))
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "pinned tester certificate" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_broken_signature_is_refused(inst):
+    inst.publish(entries=_bundle_entries(signer="broken"))
+    result = inst.run()
+    assert result.returncode != 0
+    assert not inst.target.exists() and _staging_left(inst) == []
+
+
+def test_an_app_that_does_not_match_its_tag_is_refused(inst):
+    inst.install_old()
+    inst.publish(entries=_bundle_entries(version="1.2.3"))
+    before = _snapshot(inst.home)
+    result = inst.run()
+    assert result.returncode != 0 and "the tag names" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"STUB_RUNNING": "true"},
+        {"STUB_OSA_FAIL": "1"},
+        {"STUB_RUNNING": "maybe"},
+        {"STUB_RUNNING_LATER": "true"},
+    ],
+    ids=["running", "probe-fails", "probe-garbage", "started-during-download"],
+)
+def test_a_running_or_unknowable_app_is_never_replaced(inst, extra):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(**extra)
+    assert result.returncode != 0
+    assert ("quit" in result.stderr) or ("could not tell" in result.stderr)
+    assert _snapshot(inst.home) == before
+
+
+def test_a_failed_staging_copy_leaves_the_installed_app(inst):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(STUB_DITTO_FAIL="1")
+    assert result.returncode != 0
+    assert _snapshot(inst.home) == before
+
+
+def test_failing_to_move_the_old_app_aside_leaves_it_and_names_app_management(inst):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(STUB_MV_FAIL="1")
+    assert result.returncode != 0 and "App Management" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_failing_to_move_the_new_app_in_restores_the_previous_copy(inst):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    result = inst.run(STUB_MV_FAIL="2")
+    assert result.returncode != 0 and "previous copy was restored" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_a_failed_verification_after_the_swap_restores_the_previous_copy(inst):
+    inst.install_old()
+    inst.publish()
+    before = _snapshot(inst.home)
+    # codesign calls 1-2 verify the staged copy; call 3 is the post-swap check of the target.
+    result = inst.run(STUB_FAIL_ON_CALL="3")
+    assert result.returncode != 0 and "previous copy was restored" in result.stderr
+    assert _snapshot(inst.home) == before
+
+
+def test_a_failed_first_install_leaves_no_app_and_no_staging(inst):
+    inst.publish()
+    result = inst.run(STUB_FAIL_ON_CALL="3")
+    assert result.returncode != 0
+    assert [p.name for p in inst.dest.iterdir()] == []
+
+
+def test_an_interrupted_swap_is_recovered_on_the_next_run(inst):
+    inst.install_old()
+    (inst.target).rename(inst.dest / ".tester-previous")  # killed after moving the old app aside
+    inst.publish()
+    result = inst.run(STUB_CURL_FAIL="all")  # recovery happens before any download
+    assert result.returncode != 0
+    assert (inst.target / "Contents/Info.plist").is_file()
+    assert not (inst.dest / ".tester-previous").exists()
+    assert _staging_left(inst) == []
+
+
+def test_a_stale_previous_copy_is_cleared_when_the_app_is_present(inst):
+    inst.install_old()
+    stale = _write_bundle(inst.tmp / "stale", version="0.0.0", build="0")
+    shutil.copytree(stale, inst.dest / ".tester-previous")
+    inst.publish()
+    result = inst.run()
+    assert result.returncode == 0, result.stderr
+    assert [p.name for p in inst.dest.iterdir()] == [NAME]
+
+
+def test_nothing_outside_the_app_bundle_changes_on_success(inst):
+    inst.install_old()
+    (inst.home / "Library").mkdir()
+    (inst.home / "Library/prefs.plist").write_text("keep")
+    (inst.dest / "Other.app").mkdir()
+    inst.publish()
+    before = _snapshot(inst.home)
+    assert inst.run().returncode == 0
+    after = _snapshot(inst.home)
+    app_prefix = f"Applications/{NAME}"
+    outside = lambda snap: {k: v for k, v in snap.items() if not k.startswith(app_prefix)}  # noqa: E731
+    assert outside(after) == outside(before)
+
+
+def test_installer_fetches_only_the_fixed_release_host_with_hardening_flags(inst):
+    inst.publish()
+    assert inst.run().returncode == 0
+    lines = inst.logs["curl"].read_text().splitlines()
+    assert len(lines) == 2
+    for line, suffix in zip(lines, (".zip", ".zip.sha256")):
+        assert f"{BASE_URL}/{TAG}/{TAG}{suffix}" in line
+        for flag in (
+            "-q",
+            "--fail",
+            "--proto =https",
+            "--proto-redir =https",
+            "--max-redirs 5",
+            "--max-filesize",
+            "--max-time",
+        ):
+            assert flag in line, (flag, line)
+    code = "\n".join(_code_lines())
+    assert (
+        code.count("https://") == 1
+        and "https://github.com/pipecat-ai/pipecat-service-toolbar" in code
+    )
+    assert not re.search(r"\buname\b", code)
+    assert "sysctl -n hw.optional.arm64" in code
+    assert 'main "$@" </dev/null' in code
+    assert "http://" not in code
+
+
+# -- fidelity: the stubs match the real tools (darwin only) -------------------------------------
+
+
+@real_codesign
+def test_stubbed_tool_output_matches_the_real_tools(tmp_path):
+    real_arm = _sh("sysctl", "-n", "hw.optional.arm64").stdout
+    stub_arm = _sh("/bin/bash", "-c", _SYSCTL_STUB).stdout
+    assert real_arm.strip() in ("0", "1") and re.fullmatch(r"[01]\n", stub_arm)
+    assert re.fullmatch(r"\d+(\.\d+){1,2}\n", _sh("sw_vers", "-productVersion").stdout)
+    assert re.fullmatch(r"\d+(\.\d+){1,2}\n", _sh("/bin/bash", "-c", _SW_VERS_STUB).stdout)
+    app = _write_bundle(tmp_path)
+    real = _sh("defaults", "read", f"{app}/Contents/Info", "CFBundleShortVersionString").stdout
+    stub_path = tmp_path / "defaults"
+    stub_path.write_text(_DEFAULTS_STUB)
+    stub_path.chmod(0o755)
+    stub = _sh(str(stub_path), "read", f"{app}/Contents/Info", "CFBundleShortVersionString").stdout
+    assert real == stub == f"{VERSION}\n"
+    # `unzip -Z` marks a symlink entry with a leading `l`, which the installer relies on.
+    z = tmp_path / "s.zip"
+    _make_zip(z, [("a", b"x", "file"), ("b", b"a", "symlink")])
+    listing = _sh("unzip", "-Z", str(z)).stdout.splitlines()
+    assert [ln[0] for ln in listing if ln[:1] in "-l"] == ["-", "l"]
+
+
+@real_codesign
+def test_real_install_end_to_end(throwaway_identity, pinned_installer, tmp_path):
+    """Real codesign, ditto, defaults, unzip, sysctl and sw_vers; only curl and osascript are stubbed."""
+    sha1, keychain = throwaway_identity
+    env = InstallEnv(tmp_path, installer=pinned_installer)
+    for name in ("sysctl", "sw_vers", "uname", "defaults", "ditto", "codesign", "mv"):
+        (env.bin / name).unlink()
+    zip_path = env.release / f"{TAG}.zip"
+
+    def publish(signer: str | None, *extra: str) -> None:
+        app = _write_bundle(tmp_path / f"b-{signer}-{len(extra)}")
+        _sign(app, signer or "-", *extra, keychain=keychain if signer == sha1 else None)
+        zip_path.unlink(missing_ok=True)
+        _sh("ditto", "-c", "-k", "--keepParent", str(app), str(zip_path))
+        digest = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+        (env.release / f"{TAG}.zip.sha256").write_text(f"{digest}  {TAG}.zip\n")
+
+    publish(sha1)
+    ok = env.run()
+    assert ok.returncode == 0, ok.stderr + ok.stdout
+    assert f"installed {TAG}: version {VERSION}, build {BUILD}" in ok.stdout
+    assert _sh("codesign", "--verify", "--deep", "--strict", str(env.target)).returncode == 0
+    for signer, extra in (
+        (None, ()),  # ad hoc
+        (None, ("-r", f'=designated => identifier "{BUNDLE_ID}" and certificate leaf = H"{sha1}"')),
+    ):
+        publish(signer, *extra)
+        before = _snapshot(env.home)
+        refused = env.run()
+        assert refused.returncode != 0, refused.stdout
+        assert "pinned tester certificate" in refused.stderr
+        assert _snapshot(env.home) == before
