@@ -386,6 +386,9 @@ sequenceDiagram
 
 ## Progress
 
+Status (2026-11-22): Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (PR #4 open, CI green at
+`02403c8`); Phases 5-6 are pending and owner-run. The `**Status**` header above the marker is not edited.
+
 - [x] Phase 1: Signer pin and verifier
 - [x] Phase 2: Package a tester build
 - [x] Phase 3: Install path
