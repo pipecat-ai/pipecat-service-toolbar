@@ -297,6 +297,14 @@ record. Recipients follow [Install the app](install.md).
   `issues` name each file and problem. The usual ones: no secure timestamp (not a `SIGN_MODE=release`
   build), an unsigned nested binary, a `get-task-allow` entitlement (a debug build), a non-Developer-ID
   certificate.
+- **Imported identity is listed but not valid** (`security find-identity -v -p codesigning` finds none, and
+  `codesign` warns "unable to build chain to self-signed root"): Apple's Developer ID G2 intermediate
+  certificate is missing. Install it from <https://www.apple.com/certificateauthority/> (Developer ID - G2),
+  then check again.
+- **`codesign` fails with `errSecInternalComponent`**: the private key is locked or needs access approval.
+  Run the signing from a normal terminal (not a background or remote shell), unlock the login keychain
+  (`security unlock-keychain ~/Library/Keychains/login.keychain-db`) and click **Always Allow** when macOS
+  asks.
 - **Waits a long time**: the run waits up to 30 minutes per submission. Look a submission up later with
   `xcrun notarytool info <id> --keychain-profile pipecat-notary`.
 - **Inspect by hand**: `codesign -dvvv --entitlements - <app>` (Authority, TeamIdentifier, Timestamp),

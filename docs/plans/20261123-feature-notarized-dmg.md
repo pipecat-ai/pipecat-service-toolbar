@@ -1,10 +1,10 @@
 # Task: Build a notarized DMG that can be shared
 
-**Status**: Planned
+**Status**: In Progress (Phases 1-3 implemented; Phase 4 validation open)
 **Component**: distribution
 **Assigned to**: Filipi Fuchter
 **Priority**: Medium
-**Branch**: `docs/notarized-dmg-plan` (planning); implementation on `feature/notarized-dmg` cut from `main` after the planning PR merges
+**Branch**: `feature/notarized-dmg` (PR #5); planned on `docs/notarized-dmg-plan`
 **Created**: 2026-11-23
 **Review Gates**: full
 
@@ -208,6 +208,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - [x] `docs/README.md`: index rows for `install.md` and this plan. `AGENTS.md`: one line pointing at
       `just app-dmg` and the development.md section, stating that a DMG never touches `app-version.json` or
       `CHANGELOG.md`.
+- [x] `.claude/skills/notarize-setup/SKILL.md`: an interactive skill that walks a new maintainer through the
+      per-Mac setup (identity, `.env`, notary profile, cleanup, doctor, optional real run) and keeps
+      team-specific values out of tracked files.
 - [x] `test_docs.py` keeps every new local link valid.
 
 ### Phase 4: Validation (before the first share)
@@ -240,7 +243,8 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 | `scripts/resolve_release_identity.sh`, `scripts/verify_release_signature.sh` | New: identity resolver, signature check |
 | `scripts/package_dmg.sh` | New: packager |
 | `justfile` | `app-dmg` recipe |
-| `python_tests/test_release_signing.py` | New: release signing and packager tests (CI macOS Bash 3.2 step) |
+| `python_tests/test_release_signing.py`, `python_tests/test_package_dmg.py` | New: release signing and packager tests (CI macOS Bash 3.2 step) |
+| `.claude/skills/notarize-setup/SKILL.md` | New: guided per-Mac setup for maintainers |
 | `docs/install.md` | New: user install guide |
 | `docs/development.md`, `docs/architecture.md`, `docs/migration.md`, `docs/README.md`, `README.md`, `AGENTS.md` | As listed in Phase 3 |
 
@@ -270,8 +274,21 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   notarized: `Accepted`, "Ready for distribution", no issues.
 - 2026-11-23: Phases 2 and 3 implemented: `scripts/package_dmg.sh` (`just app-dmg`, `just app-dmg-doctor`),
   `python_tests/test_package_dmg.py`, `docs/install.md`, development/migration/README/AGENTS updates.
+- 2026-11-23: `notarize-setup` skill added. Used it to set up one Mac (identity, `.env`, notary profile),
+  then ran `scripts/package_dmg.sh` for real (app 0.4.1, build 474). Both submissions (app and DMG) were
+  accepted and stapled; a quarantined copy of the DMG passed `spctl` as `Notarized Developer ID`.
 
 ## Findings
+
+- First-time setup on a Mac that had never held the identity hit two problems, now in the development.md
+  Troubleshooting list and the skill: the imported identity showed as not valid until Apple's Developer ID G2
+  intermediate certificate was installed, and `codesign` failed with `errSecInternalComponent` from a
+  non-interactive shell until the key was approved from a normal terminal.
+- `just app-dmg-doctor` does not check the certificate chain, so it can report the identity missing for the
+  G2 reason above without saying why. Candidate follow-up: have the doctor say so.
+- The DMG's own `spctl` check (`-t open --context context:primary-signature`, on a copy marked as downloaded)
+  reported `source=Notarized Developer ID`. `stapler validate` passed on the DMG's app. The
+  `codesign -dvvv` output and the clean-guest checks in Phase 4 are still to do.
 
 ## Issues & Solutions
 
