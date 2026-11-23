@@ -31,33 +31,54 @@ if [[ "$want" =~ ^[0-9A-Fa-f]{40}$ ]]; then
     want_hash="$(printf '%s' "$want" | tr 'a-f' 'A-F')"
 fi
 
-re='^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-Fa-f]{40})[[:space:]]+"(Developer ID Application: .* \(([A-Z0-9]{10})\))"[[:space:]]*$'
+# The valid listing has exactly `N) <hash> "<name>"`; the full listing may add a trailing status.
+re_valid='^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-Fa-f]{40})[[:space:]]+"(Developer ID Application: .* \(([A-Z0-9]{10})\))"[[:space:]]*$'
+re_any='^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-Fa-f]{40})[[:space:]]+"(Developer ID Application: .* \(([A-Z0-9]{10})\))"([[:space:]].*)?$'
 found=""
 names=""
 count=0
-while IFS= read -r line; do
-    [[ "$line" =~ $re ]] || continue
-    hash="$(printf '%s' "${BASH_REMATCH[1]}" | tr 'a-f' 'A-F')"
-    name="${BASH_REMATCH[2]}"
-    [[ "${BASH_REMATCH[3]}" == "$team" ]] || continue
-    if [[ -n "$want" ]]; then
-        if [[ -n "$want_hash" ]]; then
-            [[ "$hash" == "$want_hash" ]] || continue
-        else
-            [[ "$name" == "$want" ]] || continue
+
+# scan <regex> <listing>: collect this team's Developer ID identities that match SIGN_IDENTITY.
+scan() {
+    local re="$1" line hash name
+    while IFS= read -r line; do
+        [[ "$line" =~ $re ]] || continue
+        hash="$(printf '%s' "${BASH_REMATCH[1]}" | tr 'a-f' 'A-F')"
+        name="${BASH_REMATCH[2]}"
+        [[ "${BASH_REMATCH[3]}" == "$team" ]] || continue
+        if [[ -n "$want" ]]; then
+            if [[ -n "$want_hash" ]]; then
+                [[ "$hash" == "$want_hash" ]] || continue
+            else
+                [[ "$name" == "$want" ]] || continue
+            fi
         fi
-    fi
-    case " $found " in *" $hash "*) continue ;; esac
-    found="${found:+$found }$hash"
-    names="$names    $hash \"$name\""$'\n'
-    count=$((count + 1))
-done <<< "$listing"
+        case " $found " in *" $hash "*) continue ;; esac
+        found="${found:+$found }$hash"
+        names="$names    $hash \"$name\""$'\n'
+        count=$((count + 1))
+    done <<< "$2"
+}
+
+scan "$re_valid" "$listing"
 
 if ((count == 1)); then
     printf '%s\n' "$found"
     exit 0
 fi
 if ((count == 0)); then
+    # Imported but not valid? Ask again without -v: an identity listed there but not above is
+    # untrusted, usually because Apple's Developer ID G2 intermediate certificate is missing.
+    found=""
+    names=""
+    scan "$re_any" "$(security find-identity -p codesigning 2>/dev/null || true)"
+    if ((count > 0)); then
+        echo "error: a Developer ID Application identity of team $team is in the keychain but is not valid" >&2
+        echo "       most often Apple's Developer ID G2 intermediate certificate is missing: install it from" >&2
+        echo "       https://www.apple.com/certificateauthority/ (Developer ID - G2), or the certificate has" >&2
+        echo "       expired (docs/development.md, \"Notarized DMG\", Troubleshooting)" >&2
+        exit 1
+    fi
     if [[ -n "$want" ]]; then
         echo "error: SIGN_IDENTITY matches no valid Developer ID Application identity of team $team" >&2
     else

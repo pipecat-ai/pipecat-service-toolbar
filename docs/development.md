@@ -300,7 +300,8 @@ record. Recipients follow [Install the app](install.md).
 - **Imported identity is listed but not valid** (`security find-identity -v -p codesigning` finds none, and
   `codesign` warns "unable to build chain to self-signed root"): Apple's Developer ID G2 intermediate
   certificate is missing. Install it from <https://www.apple.com/certificateauthority/> (Developer ID - G2),
-  then check again.
+  then check again. `just app-dmg-doctor` and the release build detect this case and say so (an expired
+  certificate gives the same message).
 - **`codesign` fails with `errSecInternalComponent`**: the private key is locked or needs access approval.
   Run the signing from a normal terminal (not a background or remote shell), unlock the login keychain
   (`security unlock-keychain ~/Library/Keychains/login.keychain-db`) and click **Always Allow** when macOS

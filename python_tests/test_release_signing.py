@@ -93,7 +93,7 @@ def _load(tmp_path: Path, content: str | None, **env: str) -> subprocess.Complet
 
 
 def _vars(result: subprocess.CompletedProcess) -> dict[str, str]:
-    return dict(re.findall(r"^(\w+)=\[(.*)\]$", result.stdout, re.M))
+    return dict(re.findall(r"^(\w+)=\[(.*)\]$", result.stdout, re.MULTILINE))
 
 
 def test_env_loader_parses_plain_quoted_exported_and_crlf_lines(tmp_path):
@@ -147,8 +147,12 @@ def test_env_loader_accepts_a_missing_file(tmp_path):
 
 def test_env_example_lists_exactly_the_loaded_keys_and_holds_no_values():
     example = (REPO_ROOT / ".env.example").read_text()
-    pairs = dict(re.findall(r"^([A-Z_]+)=(.*)$", example, re.M))
-    keys = re.search(r'^RELEASE_ENV_KEYS="([^"]*)"', RELEASE_ENV.read_text(), re.M).group(1).split()
+    pairs = dict(re.findall(r"^([A-Z_]+)=(.*)$", example, re.MULTILINE))
+    keys = (
+        re.search(r'^RELEASE_ENV_KEYS="([^"]*)"', RELEASE_ENV.read_text(), re.MULTILINE)
+        .group(1)
+        .split()
+    )
     assert sorted(pairs) == sorted(keys)
     assert {k: v for k, v in pairs.items() if v} == {"NOTARY_PROFILE": "pipecat-notary"}
 
@@ -221,6 +225,49 @@ def test_resolve_asks_only_for_valid_identities(bindir, tmp_path):
         "-p",
         "codesigning",
     ]
+
+
+def _stub_security_with_untrusted(bindir: Path) -> None:
+    """`security` reports no valid identity with -v, but lists $UNTRUSTED_NAME without it."""
+    _stub(
+        bindir,
+        "security",
+        'if [[ " $* " == *" -v "* ]]; then printf "     0 valid identities found\\n"; exit 0; fi\n'
+        'printf \'  1) %s "%s"\\n     1 identities found\\n\' "$UNTRUSTED_HASH" "$UNTRUSTED_NAME"\n',
+    )
+
+
+def test_resolve_hints_at_the_missing_intermediate(bindir, tmp_path):
+    # Imported but untrusted: not in the -v listing, present without -v.
+    _stub_security_with_untrusted(bindir)
+    r = _resolve(bindir, tmp_path, None, UNTRUSTED_HASH=HASH_A, UNTRUSTED_NAME=NAME_A)
+    assert r.returncode == 1 and r.stdout == ""
+    assert "not valid" in r.stderr and "intermediate" in r.stderr
+    assert "import the Developer ID .p12" not in r.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "sign_identity"),
+    [
+        pytest.param(NAME_OTHER, None, id="other-team"),
+        pytest.param("Code Signing", None, id="self-signed"),
+        pytest.param(NAME_A, "Code Signing", id="not-the-requested-identity"),
+    ],
+)
+def test_resolve_gives_no_intermediate_hint_when_nothing_matches(
+    bindir, tmp_path, name, sign_identity
+):
+    _stub_security_with_untrusted(bindir)
+    extra = {} if sign_identity is None else {"SIGN_IDENTITY": sign_identity}
+    r = _resolve(bindir, tmp_path, None, UNTRUSTED_HASH=HASH_C, UNTRUSTED_NAME=name, **extra)
+    assert r.returncode == 1
+    assert "intermediate" not in r.stderr
+
+
+def test_resolve_still_says_to_import_when_no_identity_exists(bindir, tmp_path):
+    r = _resolve(bindir, tmp_path, _listing())
+    assert r.returncode == 1
+    assert "import the Developer ID .p12" in r.stderr and "intermediate" not in r.stderr
 
 
 def test_resolve_ignores_an_invalid_identity_line(bindir, tmp_path):

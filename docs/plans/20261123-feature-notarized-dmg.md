@@ -284,8 +284,10 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   Troubleshooting list and the skill: the imported identity showed as not valid until Apple's Developer ID G2
   intermediate certificate was installed, and `codesign` failed with `errSecInternalComponent` from a
   non-interactive shell until the key was approved from a normal terminal.
-- `just app-dmg-doctor` does not check the certificate chain, so it can report the identity missing for the
-  G2 reason above without saying why. Candidate follow-up: have the doctor say so.
+- `just app-dmg-doctor` first reported only "no valid Developer ID Application identity... import the .p12"
+  for the G2 case above, which was misleading after the import. `resolve_release_identity.sh` now asks
+  `security find-identity` again without `-v` and, when this team's identity is listed there but not valid,
+  says the G2 intermediate is missing (or the certificate expired). The doctor and the release build both use it.
 - The DMG's own `spctl` check (`-t open --context context:primary-signature`, on a copy marked as downloaded)
   reported `source=Notarized Developer ID`. `stapler validate` passed on the DMG's app. The
   `codesign -dvvv` output and the clean-guest checks in Phase 4 are still to do.
