@@ -8,6 +8,7 @@ Start with the [project README](../README.md) to build the app and connect Pipec
 | [Services and models](services.md) | Choose a model and find its port, licence and runtime requirements |
 | [Development](development.md) | Build and sign the app, run tests, update constraints and verify fixtures |
 | [Architecture](architecture.md) | Understand lifecycle state, supervision, protocols and packaging |
+| [Tester install (interim)](tester-install.md) | Install a self-signed build, for known testers who were sent a command by the owner |
 | [Migration and compatibility](migration.md) | Preserve an existing installation or move a server pin |
 | [Loopback authentication](loopback-auth.md) | Understand local access and the decision not to require tokens |
 

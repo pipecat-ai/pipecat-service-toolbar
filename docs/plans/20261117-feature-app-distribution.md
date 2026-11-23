@@ -1775,6 +1775,9 @@ before this plan's Developer ID certificate exists. This contract is not edited;
   `just app-tester-package` and `python_tests/test_tester_channel.py` working when the running-build guard lands.
 - Signer change: tester builds are signed by the self-signed identity, so moving to Developer ID resets Microphone
   and Speech grants once, as in this plan's signer-change test.
+- Manual removal before the Apple install covers everything a tester install leaves in `~/Applications`, not
+  only the app: the rollback copy `.tester-previous`, any `.tester-leftover.*` folders (kept app copies) and a left
+  `.tester-install.lock` or `.tester-install.*` staging folder (tester plan, Issues & Solutions, rounds 4 and 5).
 
 ### Review Waivers
 

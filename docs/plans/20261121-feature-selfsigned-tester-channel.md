@@ -386,12 +386,19 @@ sequenceDiagram
 
 ## Progress
 
-- [ ] Phase 1: Signer pin and verifier
-- [ ] Phase 2: Package a tester build
-- [ ] Phase 3: Install path
-- [ ] Phase 4: Tester guide and docs index
+Status (2026-11-22): Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (PR #4 open, CI green at
+`02403c8`); Phases 5-6 are pending and owner-run. The `**Status**` header above the marker is not edited.
+
+- [x] Phase 1: Signer pin and verifier
+- [x] Phase 2: Package a tester build
+- [x] Phase 3: Install path
+- [x] Phase 4: Tester guide and docs index
 - [ ] Phase 5: Owner validation and first drop
 - [ ] Phase 6: Retire the channel
+
+Still pending before the first drop (2026-11-22): the macOS 15 clean-guest run (now a required row in the
+`docs/development.md` release checklist; the exclusive rename is unproven there) and the full Phase 5 release
+smoke test on a clean guest.
 
 ## Findings
 
@@ -411,6 +418,117 @@ identity, and the `--require` call is at `justfile:35`.
 
 ## Issues & Solutions
 
+- Review gauntlet round 1 (2026-11-21), installer recovery and archive trust. This amends the Architecture
+  Decisions line "no journal, lock or receipt": the installer now takes a lock, `.tester-install.lock` (an
+  atomic `mkdir` beside the app, removed on exit, never removed automatically when stale), because two
+  overlapping runs shared `.tester-previous` and could delete the previous app. Still no journal or receipt.
+  Start-up recovery with both the app and `.tester-previous` present now verifies the app against the pin and
+  clears `.tester-previous` only if it passes; otherwise it changes nothing and names the kept copy. A rejected
+  copy that cannot be moved aside is a loud failure. After `ditto` the installer checks the extracted tree (no
+  symlink, device, FIFO or socket; only the app at the top), because `unzip` and `ditto` read different ZIP
+  fields, and it refuses a ZIP whose listed unpacked size exceeds 1 GiB. New modes `--check-archive`,
+  `--check-tag` and `--print-pin`; the packager calls them instead of reading the installer's source.
+- Review gauntlet round 2 (2026-11-22), three mechanisms redesigned rather than patched. (1) Swap and cleanup
+  ownership: a run deletes only what it created, and the copies it replaced only once its own copy is verified in
+  place and is still its own (checked by inode); every app move goes through one primitive that refuses an
+  occupied destination and detects and undoes `mv` nesting a copy inside a directory another program created; a
+  failed swap is undone in reverse order, and a copy that cannot go back is kept in a named `.tester-leftover.*`
+  folder, never deleted; a stale `.tester-previous` is cleared inside the swap, not before the download. HUP, INT
+  and TERM end a run only after the running command exits (Bash 3.2 otherwise ran the EXIT trap, and released
+  the lock, while `mv` still ran) and are ignored during the swap. Every run names the `.tester-install.*` and
+  `.tester-leftover.*` folders it finds and never removes them. (2) One acceptance gate: `--check-drop <zip>
+  <tag>` replaces `--check-archive` and runs the installer's whole offline acceptance (250 MiB download cap,
+  central directory incl. a 10,000-entry cap and listed parent folders, 1 GiB unpacked, extraction, extracted
+  tree, removal of group/other write, setuid and ACLs that the ZIP can carry and codesign does not seal, pinned
+  signer, version and build against the tag); the install and the packager call the same function. (3) The
+  packager refuses when `git ls-remote` fails for any reason other than "no such tag" (exit 2).
+
+- Follow-up review (2026-11-22) supersedes the round 2 swap and archive details. The installer checks that
+  the pinned bundle's main executable can run, uses Darwin exclusive rename, and records both app identities
+  before swapping. A successful update retains the latest backup at `.tester-previous`. Cleanup removes a
+  superseded backup only when it recognises the verified target and both backup identities. QUIT and PIPE
+  use the same signal policy as HUP, INT and TERM. The installer counts individual ZIP sizes against the
+  remaining budget, refuses ambiguous path renderings, and resolves staging paths before reading plists.
+  The packager computes the checksum and writes the manifest before moving the release files out of scratch.
+
+- Review gauntlet round 3 (2026-11-22). Owner decisions, final: (1) a successful install keeps the build it
+  replaced at `.tester-previous` as a rollback copy; the guide's Update and Uninstall sections and
+  `docs/development.md` say so, and uninstall removes it. This supersedes the Requirements line above the review
+  marker that says the installer "removes the previous one" and the Phase 3 test line that says a `.tester-previous`
+  beside an app "is removed". (2) The swap's no-overwrite move is `renamex_np` with `RENAME_EXCL`, called through
+  `osascript -l JavaScript` (`safe_move`); a macOS 15 clean-guest run is a required row in the release checklist,
+  superseding Phase 5's "plus macOS 15 if a guest or Mac is available". Deferred by the owner: binding the tag's
+  commit to the bundle, the bundled uv execute bit, splitting the test module, and the install lock design.
+  Codex edits retained from the follow-up review: the retained backup, the exclusive rename, the per-entry
+  unpacked-size check against the remaining budget, the refusal of ambiguous path renderings, and the main
+  executable check. Round 3 fixes: cleanup ignores signals, so a second signal cannot end it with the lock
+  held; the lock, the staging folder and `--check-drop`'s scratch folder are created together with the variable
+  that names them with signals ignored, so no trap runs between the two (a signal there left the lock behind
+  with `LOCK` empty); the path-length check counts bytes in the C locale (stock unzip already fails on names of
+  1,024 bytes or more, so this is the backstop); the comment on the `unzip -Z` symlink check no longer claims
+  it stops a symlink redirect (a FAT or NTFS host entry lists with no `l`; ditto's ordering and the
+  post-extraction tree check are what protect); the guide covers the pin, checksum and running-probe refusals;
+  the release checklist names the commit to package instead of "Pull main". Regression tests send real signals
+  during cleanup and between creation and naming, pin the 250 MiB ZIP cap at and one byte over, and pin the
+  byte-counted path limit under a UTF-8 locale.
+
+- Review gauntlet rounds 4 and 5 (2026-11-22). Owner rule, final: one contract for the swap and recovery
+  seam instead of point patches. An app copy is restored to, kept at or left at the app path only after it
+  passes `app_ok` there (pinned signer, runnable main executable, still the copy expected; the move-in also
+  checks the drop's version and build, because Linux reuses a deleted copy's inode at once and the inode
+  alone then cannot tell this run's copy from a replacement). The older backup is deleted only after the
+  newly saved `.tester-previous` has itself verified. A copy that fails is never left at the app path and
+  never deleted: it moves into a named `.tester-leftover.*` folder (or stays where it is if it cannot move)
+  and the message says "do not open it"; this now includes this run's own copy when it fails after the
+  move-in (it used to be deleted) and a replaced build that does not verify (it is no longer kept as the
+  rollback copy). Every move to the app path goes through `place_at_target`, which also handles a source
+  replaced during the exclusive rename. Start-up restores `.tester-previous` with no app only when it
+  verifies (that state is most often a person who removed the app but not the hidden rollback copy, not an
+  interrupted swap); otherwise it refuses, names it and moves nothing. The packager fetches with `--prune
+  --no-prune-tags` (a deleted remote branch no longer counts as pushed; local tags are never pruned),
+  writes its scratch folder inside `dist/tester/` so publishing is a same-volume rename, removes an earlier
+  drop of the same tag before publishing, publishes the manifest last and removes a partial publication on
+  failure. The guide covers the App Management refusal and, when moving to the Apple-signed release,
+  removal of `.tester-previous`, `.tester-install.*` and `.tester-leftover.*`. CI: the Ubuntu jobs failed
+  at d3a3658 on `target-replaced-before-verification` because the replacement reused the deleted copy's
+  inode and the run reported success with the other program's app in place; the drop version and build
+  check closes that on Linux, and the move-in no longer relies on the inode alone.
+- Amendments recorded by rounds 4 and 5 (the text above the review marker is not edited): the Requirements,
+  Review Focus and Acceptance Criteria statements that the installer writes nothing outside the app bundle
+  and its staging now also allow the `.tester-install.lock` folder, `.tester-leftover.*` folders and the
+  lasting `.tester-previous` rollback copy. Phase 6 retirement, and the Apple plan's channel-switch
+  pointer (`docs/plans/20261117-feature-app-distribution.md`, "Interim self-signed tester channel —
+  pointer", below that plan's review marker), must cover removing `~/Applications/.tester-previous`, any
+  `.tester-leftover.*` folders and a left `.tester-install.lock` (with any `.tester-install.*` staging
+  folders), not only the app.
+
+- Review gauntlet round 6 (2026-11-22), the last fixer round. Stop rule, owner decision: the gauntlet stops
+  after round 6; later findings are recorded as known risks, and CI plus the UTM clean-guest run decide. The
+  round closes narrow gaps in the round 4-5 contract without redesigning it. CI: the `macos-app` job at
+  c188ced failed because `test_real_install_end_to_end` ran the installed fixture app and it was killed
+  (SIGKILL, -9) on the arm64 `macos-15` runner; the fixture's main executable was a copy of `/usr/bin/true`
+  (an Apple arm64e binary) re-signed with the throwaway identity, and macOS 15 kills a third-party-signed
+  arm64e process (inferred: it ran on a macOS 27 Apple silicon Mac). The fixtures now use a `#!/bin/sh`
+  script, which codesign signs as a generic bundle executable. Installer: `place_at_target` treats a copy
+  whose inode cannot be read as unverified and stuck at the app path (never reported as moved out); a copy
+  another program landed at the app path during one of the run's renames stays only if it passes `app_ok`
+  itself (new result 6, reported as "passes verification and was left there"), otherwise it is moved out
+  as before; swap steps 1 and 2 record a rename that moved another program's copy (`safe_move` 4), so
+  rollback no longer says "nothing was changed"; cleanup re-verifies `.tester-previous` as the saved copy
+  immediately before deleting the older backup; a kept stale `.tester-previous` (never verified at
+  start-up) is verified before it is named, and named with "do not open it" if it fails. The App
+  Management refusal and the guide now say to remove both the app and `.tester-previous` (removing only the
+  app makes the next run restore the rollback copy and stop at the same move). Packager: the fetch uses an
+  explicit branch-only refspec (a configured `+refs/tags/*:refs/tags/*` mapping made `--prune` delete local
+  tags before the local tag check); publication holds `dist/tester/.tester-publish.lock` (serialised rather
+  than tracking files by inode, which cannot stop two runs mixing files) and ignores HUP, INT and TERM
+  until it is done. Known risk, not changed: when another program puts a copy at the app path while the
+  run's rename is refused (`safe_move` 2), the run neither verifies nor names that copy, and a previous copy
+  that never verified can then stay at `.tester-previous` because the app path is occupied.
+
 ## Final Results
 
-Not implemented.
+Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (signer pin and verifier, packager, install
+path, tester guide and docs index), with review-gauntlet rounds 1 to 6 and the follow-up review applied (Issues &
+Solutions). Phase 5 (owner validation and first drop, including the required macOS 15 run) and Phase 6 (retire the
+channel) are pending.

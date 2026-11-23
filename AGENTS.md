@@ -8,6 +8,8 @@ extraction provenance and compatibility: docs/migration.md.
 - `uv sync --locked` creates the lean Python environment. Never add model extras to CI's base environment.
 - Run `uv run ruff format .`, `uv run ruff check .`, `uv run pytest`, `swift test`, and `just app-build` before a PR.
 - Python tests are in `python_tests/`; Swift tests are in `Tests/`. Do not merge these directories.
+- Tester drops (self-signed interim channel): `just app-tester-package`; guide `docs/tester-install.md`,
+  checklist in `docs/development.md` "Tester drops". A tester drop never touches app-version.json or CHANGELOG.md.
 - Keep bundle identifier `ai.pipecat.ServiceToolbar`, signing identity continuity,
   preference keys, AppPaths layout, cache precedence, and environment fingerprints compatible.
 - App version/build: app-version.json (only there; notes in CHANGELOG.md, which is the app's, not the
