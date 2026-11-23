@@ -215,15 +215,15 @@ Release checklist:
 3. Verify: `gh release view <tag> --json targetCommitish` names the manifest commit, and the downloaded
    ZIP's SHA-256 equals the manifest's `zip_sha256`.
 4. Fill `<INSTALLER_COMMIT_SHA>` (the manifest commit) and `<TAG>` in the one-liner from
-   `docs/tester-install.md` and send it to testers directly. Never post it publicly.
-5. Validate on a clean guest before the first invitation (plan, Phase 5), running every Phase 5 check
-   on each guest below. A missing or failed row blocks the drop. Never replace your own installed app or
-   reset real state as a shortcut.
+   `docs/tester-install.md`. Run every Phase 5 check with that release on each clean guest below.
+   A missing or failed row blocks invitations. Use disposable app state and preferences.
 
    | Clean guest | Required | Why |
    |---|---|---|
    | macOS 26 | yes | The plan's Phase 5 guest (26.6.2). |
-   | macOS 15 | yes | The oldest version the guide supports; the swap's exclusive rename (`renamex_np` through `osascript -l JavaScript`) is unproven there. |
+   | macOS 15 | yes | The oldest version the guide supports. CI covers signed fixtures. The guest run checks the actual release, Finder launch, and permission prompts. |
+
+5. Once both guests pass, share the one-liner only in direct messages to known testers.
 
 ## Build settings
 
