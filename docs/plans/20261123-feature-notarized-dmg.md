@@ -10,7 +10,7 @@
 
 ## Objective
 
-Produce `Pipecat Service Toolbar-<version>.dmg`: a signed, notarized and stapled disk image holding a signed,
+Produce `Pipecat-Service-Toolbar-<version>-b<build>.dmg`: a signed, notarized and stapled disk image holding a signed,
 notarized and stapled app, laid out for drag-to-Applications. A recipient downloads it with any browser, opens
 it, drags the app to Applications and launches it with no Gatekeeper prompt beyond the normal
 "downloaded from the internet" confirmation. Nobody needs Xcode, uv, Python, just or a terminal.
@@ -63,7 +63,7 @@ Verified against `main` at `1cfe741` on 2026-11-23:
   offline after the user copies it out of the DMG; a stapled DMG passes offline when opened.
 - **Version is read, never written.** `app-version.json` and `CHANGELOG.md` are untouched by `app-dmg`, as for
   tester drops. A DMG for a real release is built from the commit that bumped the version. File name:
-  `Pipecat Service Toolbar-<version>-b<build>.dmg`; a build from a commit other than the version-bump commit
+  `Pipecat-Service-Toolbar-<version>-b<build>.dmg` (no spaces, so links and shells need no quoting); a build from a commit other than the version-bump commit
   appends `-<shortsha>`.
 - **Clean tree required.** `app-dmg` refuses a dirty tree, so every DMG maps to one commit, recorded in
   `<dmg>.manifest.json` with the SHA-256, version, build, Team ID and notarization submission IDs.
@@ -157,7 +157,7 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 
 ### Phase 2: DMG packager
 
-- [ ] Add `scripts/package_dmg.sh`, invoked by `just app-dmg`. Steps, each failing closed:
+- [x] Add `scripts/package_dmg.sh`, invoked by `just app-dmg`. Steps, each failing closed:
   1. Refuse a dirty tree; read version/build from `app-version.json`; resolve the Developer ID identity
      (through `resolve_release_identity.sh` with `APPLE_TEAM_ID` from `.env`; refuse zero or several, naming
      the setup step); check the notary profile
@@ -176,19 +176,19 @@ replace the password-manager item. Never revoke a certificate that signed shippe
      re-run the app check on the mounted copy.
   8. Write `<name>.dmg.sha256` and `<name>.dmg.manifest.json`, then move all three from scratch into `dist/dmg/`
      (manifest last). Scratch is removed on every exit.
-- [ ] `NOTARYTOOL`, `STAPLER`, `HDIUTIL`, `SPCTL` overrides exist for tests only; a test-mode marker in the manifest
+- [x] Tests stub the Apple tools on `PATH` (no override variables); `DMG_APP_BUNDLE` packages a prebuilt bundle, a test-mode marker in the manifest
       shows a DMG built with fakes, and the docs say never to share one.
-- [ ] `DMG_SKIP_NOTARIZE=1` builds a signed but un-notarized rehearsal DMG named `…-UNNOTARIZED.dmg`, for checking
+- [x] `DMG_SKIP_NOTARIZE=1` builds a signed but un-notarized rehearsal DMG named `…-UNNOTARIZED.dmg`, for checking
       the layout without spending a notarization round trip. Never shared.
-- [ ] Add `just app-dmg-doctor`: read-only setup check (identity present and valid, Team ID, days to expiry, notary
+- [x] Add `just app-dmg-doctor`: read-only setup check (identity present and valid, Team ID, days to expiry, notary
       profile works). Each failure names the setup step that fixes it.
-- [ ] Tests with fake tools: happy path; notarization `Invalid` (log saved, no DMG published); `In Progress`
+- [x] Tests with fake tools: happy path; notarization `Invalid` (log saved, no DMG published); `In Progress`
       timeout; stapler failure; dirty tree; missing, duplicate or wrong-team identity; missing notary profile;
       doctor output; output names and manifest fields.
 
 ### Phase 3: Documentation
 
-- [ ] `docs/development.md`: new section **"Notarized DMG"**: the per-Mac credential setup (Requirements above:
+- [x] `docs/development.md`: new section **"Notarized DMG"**: the per-Mac credential setup (Requirements above:
       download the `.p12` from the password manager, import, verify, `notarytool store-credentials`, delete the
       downloads), with placeholders only and a pointer to the private maintainer note for names and IDs,
       the Account Holder renewal note, `just app-dmg`, outputs, the verification
@@ -196,19 +196,19 @@ replace the password-manager item. Never revoke a certificate that signed shippe
       (reading `notarytool log`, the common rejections: missing timestamp, unsigned nested binary, `get-task-allow`)
       and the release checklist (Phase 4). Add `SIGN_MODE`, `NOTARY_PROFILE` and `DMG_SKIP_NOTARIZE` to
       **Build settings**.
-- [ ] `docs/install.md` (new, user-facing): requirements (Apple silicon, macOS 15+, Apple Speech macOS 26+),
+- [x] `docs/install.md` (new, user-facing): requirements (Apple silicon, macOS 15+, Apple Speech macOS 26+),
       download, open the DMG, drag to Applications, first launch, quitting a running copy before replacing it,
       the one-time permission prompt after switching from a tester or developer build, and how to check the
       download's SHA-256.
-- [ ] `README.md` Quickstart: lead with "Download the DMG" linking `docs/install.md`; keep build-from-source below,
+- [x] `README.md` Quickstart: lead with "Download the DMG" linking `docs/install.md`; keep build-from-source below,
       and add one line under it: "Maintainers building a shareable DMG: follow
       [Notarized DMG](docs/development.md#notarized-dmg); the credentials are in the team's password manager".
-- [ ] `docs/architecture.md` **Packaging**: release signing mode and the DMG step.
-- [ ] `docs/migration.md`: the signer change and its effect on permissions and the tester installer.
-- [ ] `docs/README.md`: index rows for `install.md` and this plan. `AGENTS.md`: one line pointing at
+- [x] `docs/architecture.md` **Packaging**: release signing mode and the DMG step.
+- [x] `docs/migration.md`: the signer change and its effect on permissions and the tester installer.
+- [x] `docs/README.md`: index rows for `install.md` and this plan. `AGENTS.md`: one line pointing at
       `just app-dmg` and the development.md section, stating that a DMG never touches `app-version.json` or
       `CHANGELOG.md`.
-- [ ] `test_docs.py` keeps every new local link valid.
+- [x] `test_docs.py` keeps every new local link valid.
 
 ### Phase 4: Validation (before the first share)
 
@@ -266,6 +266,10 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   `source=Notarized Developer ID`. IDs are in the private maintainer note.
 - 2026-11-23: team-specific details moved out of this public plan into the git-ignored `.private/signing-setup.md`.
 - 2026-11-23: Phase 1 implemented on `feature/notarized-dmg`; Team ID moved from a committed constant to `.env`.
+- 2026-11-23: a real `SIGN_MODE=release` build of the app (bundle with nested `uv`, audio-input entitlement) was
+  notarized: `Accepted`, "Ready for distribution", no issues.
+- 2026-11-23: Phases 2 and 3 implemented: `scripts/package_dmg.sh` (`just app-dmg`, `just app-dmg-doctor`),
+  `python_tests/test_package_dmg.py`, `docs/install.md`, development/migration/README/AGENTS updates.
 
 ## Findings
 

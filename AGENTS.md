@@ -10,6 +10,9 @@ extraction provenance and compatibility: docs/migration.md.
 - Python tests are in `python_tests/`; Swift tests are in `Tests/`. Do not merge these directories.
 - Tester drops (self-signed interim channel): `just app-tester-package`; guide `docs/tester-install.md`,
   checklist in `docs/development.md` "Tester drops". A tester drop never touches app-version.json or CHANGELOG.md.
+- Notarized DMG: `just app-dmg` (setup check `just app-dmg-doctor`); guide `docs/development.md` "Notarized DMG".
+  It never touches app-version.json or CHANGELOG.md. This repo is public: team IDs, key IDs and vault names
+  live only in the git-ignored `.env` and `.private/`; commit placeholders (`.env.example`) only.
 - Keep bundle identifier `ai.pipecat.ServiceToolbar`, signing identity continuity,
   preference keys, AppPaths layout, cache precedence, and environment fingerprints compatible.
 - App version/build: app-version.json (only there; notes in CHANGELOG.md, which is the app's, not the

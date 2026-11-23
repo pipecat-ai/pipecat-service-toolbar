@@ -4,6 +4,7 @@ Start with the [project README](../README.md) to build the app and connect Pipec
 
 | Guide | Use it to… |
 |---|---|
+| [Install the app](install.md) | Install or update from a notarized DMG |
 | [Using the toolbar](usage.md) | Manage models, test speech, work with external servers, find caches and logs |
 | [Services and models](services.md) | Choose a model and find its port, licence and runtime requirements |
 | [Development](development.md) | Build and sign the app, run tests, update constraints and verify fixtures |
@@ -21,4 +22,5 @@ Start with the [project README](../README.md) to build the app and connect Pipec
   their original paths and release numbers, with repository-migration notes.
 - [App distribution plan](plans/20261117-feature-app-distribution.md): standalone installation and manual updates first as a GitHub alpha; Homebrew follows later using a stable release's notarized archive.
 - [Self-signed tester channel plan](plans/20261121-feature-selfsigned-tester-channel.md): interim owner-built, self-signed builds for known testers until the Apple-signed alpha is available; Homebrew stays with the Apple-signed plan.
+- [Notarized DMG plan](plans/20261123-feature-notarized-dmg.md): a Developer ID signed, notarized DMG that any maintainer builds locally with `just app-dmg`.
 - [App Store decision](plans/20261117-design-app-store-distribution.md): retained decision record explaining why this route is not planned.

@@ -25,6 +25,18 @@ as a Nemotron environment installed under STT 0.5.0, retains the existing packag
 behaviour: it refreshes when next started. That is the app's refresh working as designed, not a
 server fault. The app continues to use cached models during such normal upgrades.
 
+### Moving to the Developer ID build
+
+The notarized DMG ([development guide](development.md#notarized-dmg)) is signed with the team's
+Developer ID certificate, not the self-signed `Code Signing` identity or an ad-hoc signature. The bundle
+identifier, paths, preferences, caches and environment fingerprints are unchanged, so installed models
+and settings carry over. The designated requirement changes with the certificate, so:
+
+- macOS asks once more for Microphone and Speech Recognition access after the first Developer ID build
+  replaces a self-signed or ad-hoc one, and again if a self-signed build later replaces it.
+- `scripts/install_tester.sh` pins the self-signed certificate, so it refuses to update over a
+  Developer ID install. Move the Developer ID app to the Bin first to go back to a tester drop.
+
 ## Versions
 
 The app's version and build live only in `app-version.json`, and its release notes in

@@ -63,6 +63,16 @@ app-install:
 app-tester-package:
     scripts/package_tester.sh
 
+# Build a Developer ID signed, notarized and stapled DMG into dist/dmg/ (.dmg, .sha256, manifest)
+# to share. Needs a clean tree, the team's Developer ID identity in the keychain, APPLE_TEAM_ID in
+# .env and the notary keychain profile; see docs/development.md "Notarized DMG".
+app-dmg:
+    scripts/package_dmg.sh
+
+# Check the notarized DMG setup (identity, certificate expiry, notary profile) without building.
+app-dmg-doctor:
+    scripts/package_dmg.sh --doctor
+
 # Run the app unbundled from the checkout (prepares the pinned server wheel; uses your uv).
 app-run *args:
     swift run --package-path . PipecatServiceToolbar {{args}}

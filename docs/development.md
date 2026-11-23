@@ -242,8 +242,69 @@ in a git-ignored `.env`, and the maintainers' private signing note says where to
    `scripts/verify_release_signature.sh` checks the bundle and the nested `uv`: Developer ID chain,
    Team ID, hardened runtime, secure timestamp, no `get-task-allow`.
 
-Notarizing and packaging the DMG are planned in
-[the notarized DMG plan](plans/20261123-feature-notarized-dmg.md).
+## Notarized DMG
+
+`just app-dmg` builds the DMG people can download and open with no Gatekeeper warning: a Developer ID
+signed, notarized and stapled disk image holding a notarized, stapled app and an Applications link.
+Any maintainer can build it on their own Mac; there is no CI for it.
+Plan: [notarized DMG](plans/20261123-feature-notarized-dmg.md).
+
+### One-time setup on each Mac
+
+Two shared secrets live in the team's password manager, readable only by maintainers who ship builds:
+the Developer ID `.p12` (certificate and private key, with its password) and the App Store Connect API
+key for notarization (`AuthKey_<KEYID>.p8`, its Key ID and the team's Issuer ID). Exact item names and
+the team's values are in the maintainers' private signing note, never in this repository.
+
+1. Do [Release signing](#release-signing) steps 1 and 2: import the `.p12`, then create `.env`.
+2. Download the `.p8` into the git-ignored `.local_certificates/` and store it in the keychain once:
+
+   ```bash
+   xcrun notarytool store-credentials pipecat-notary \
+     --key .local_certificates/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>
+   ```
+
+   It checks the key with Apple before saving ("Credentials validated"). For another profile name,
+   set `NOTARY_PROFILE` in `.env`.
+3. Delete the downloaded `.p12` and `.p8`: the keychain now holds both.
+4. `just app-dmg-doctor` checks the Team ID, the identity, the certificate's remaining days and the
+   notary profile, without building anything.
+
+### Build and share
+
+Run `just app-dmg` from a clean tree, normally `main` at a release commit. Before compiling it checks the
+tree, the identity and the notary profile. Then it:
+
+1. builds with `SIGN_MODE=release`;
+2. notarizes the app (as a ZIP), staples it and checks that Gatekeeper sees it as notarized;
+3. creates the disk image (`hdiutil`, APFS, ULFO), signs it, notarizes it, staples it and assesses it;
+4. mounts the image read-only and checks the app inside again;
+5. writes `<name>.dmg`, `<name>.dmg.sha256` and `<name>.manifest.json` to `dist/dmg/`.
+
+Each notarization usually takes a few minutes. `<name>` is `Pipecat-Service-Toolbar-<version>-b<build>`
+when HEAD is the commit that last changed `app-version.json`, otherwise with `-<shortsha>` appended.
+`app-dmg` never changes `app-version.json` or `CHANGELOG.md`.
+
+Share the `.dmg` and its `.sha256`. The manifest (commit, checksum, notary submission IDs) is your
+record. Recipients follow [Install the app](install.md).
+
+`DMG_SKIP_NOTARIZE=1 just app-dmg` is a rehearsal: it signs but skips Apple, and the name ends in
+`-UNNOTARIZED`. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only.
+
+### Troubleshooting
+
+- **Rejected notarization**: Apple's log is saved as `dist/dmg/<name>.<app|dmg>.notary-log.json`; its
+  `issues` name each file and problem. The usual ones: no secure timestamp (not a `SIGN_MODE=release`
+  build), an unsigned nested binary, a `get-task-allow` entitlement (a debug build), a non-Developer-ID
+  certificate.
+- **Waits a long time**: the run waits up to 30 minutes per submission. Look a submission up later with
+  `xcrun notarytool info <id> --keychain-profile pipecat-notary`.
+- **Inspect by hand**: `codesign -dvvv --entitlements - <app>` (Authority, TeamIdentifier, Timestamp),
+  `spctl -a -vvv -t exec <app>` (expects `source=Notarized Developer ID`), `xcrun stapler validate <app or dmg>`.
+- **Certificate renewal**: only the Apple Developer Account Holder can create a Developer ID Application
+  certificate (from a CSR made in Keychain Access). Export the certificate and key together as a new
+  `.p12` and replace the password-manager item. Never revoke a certificate that signed shipped builds:
+  they would stop opening.
 
 ## Build settings
 
@@ -253,7 +314,10 @@ Environment variables read by `scripts/`:
 |---|---|---|
 | `SIGN_IDENTITY` | `build_app.sh`, `resolve_sign_identity.sh` | Code-signing identity (default `-`, ad hoc). Unset, `just app-open` and `just app-install` take the self-signed `Code Signing` identity from `resolve_sign_identity.sh` (which asks the keychain through `has_sign_identity.sh`): `app-open` falls back to ad hoc when it is missing, `app-install` fails before the build. An explicit value (a name, or the certificate's full SHA-1 hash) always wins. The keychain check is advisory, as codesign reads the value: a full SHA-1 in any case, or a case-insensitive substring of a name; two identities sharing a name are left to codesign at signing. Sign for distribution with `SIGN_IDENTITY="Developer ID Application: …" just app-build`. |
 | `SIGN_MODE` | `build_app.sh` | `dev` (default): sign with `SIGN_IDENTITY` and no timestamp, offline. `release`: the only mode notarization accepts. Before building it loads `.env`, requires `APPLE_TEAM_ID`, resolves the team's valid Developer ID Application identity (`resolve_release_identity.sh`; `SIGN_IDENTITY`, a full SHA-1 or exact name, only narrows the choice) and refuses `CONFIG=debug` and `BUNDLE_ID`. It signs with a secure timestamp (needs the network) and checks the result with `verify_release_signature.sh`. See [Release signing](#release-signing). |
-| `APPLE_TEAM_ID` | `build_app.sh` (release) | The Developer ID certificate's 10-character Team ID. Read from the environment or `.env`. |
+| `APPLE_TEAM_ID` | `build_app.sh` (release), `package_dmg.sh` | The Developer ID certificate's 10-character Team ID. Read from the environment or `.env`. |
+| `NOTARY_PROFILE` | `package_dmg.sh` | The `notarytool store-credentials` keychain profile (default `pipecat-notary`). Environment or `.env`. |
+| `DMG_SKIP_NOTARIZE` | `package_dmg.sh` | `1`: rehearsal DMG, signed but not notarized, named `-UNNOTARIZED`. Never shared. |
+| `DMG_APP_BUNDLE` | `package_dmg.sh` | Test only: package this prebuilt bundle instead of building one. Never for a shared DMG. |
 | `CONFIG` | `build_app.sh` | Swift build configuration, `release` (default) or `debug`. |
 | `APP_INSTALL_DIR` | `just app-install`, `install_tester.sh` | Install destination (default `~/Applications`), for both the developer install and a tester drop. For the identity `just app-install` signs with, see `SIGN_IDENTITY`. |
 | `TESTER_APP_BUNDLE` | `package_tester.sh` | Test only: package this prebuilt bundle instead of building one with the self-signed identity. Never for a real drop. |
