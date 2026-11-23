@@ -246,7 +246,8 @@ in a git-ignored `.env`, and the maintainers' private signing note says where to
 
 `just app-dmg` builds the DMG people can download and open with no Gatekeeper warning: a Developer ID
 signed, notarized and stapled disk image holding a notarized, stapled app and an Applications link.
-Any maintainer can build it on their own Mac; there is no CI for it.
+Any maintainer can build it on their own Mac; there is no CI for it. With Claude Code, the
+`/notarize-setup` skill (`.claude/skills/notarize-setup/`) walks through the setup below and checks each step.
 
 ### One-time setup on each Mac
 
