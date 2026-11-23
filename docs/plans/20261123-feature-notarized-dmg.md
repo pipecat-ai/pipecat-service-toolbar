@@ -78,7 +78,7 @@ fingerprints, submission IDs and any other team-specific instructions live in a 
 `.private/signing-setup.md` (`.private/` and `.local_certificates/` are in `.gitignore`), shared with
 maintainers out of band. Committed docs and scripts use placeholders (`<TEAMID>`, `<KEYID>`, `<ISSUER_ID>`)
 and refer to that note. The values the scripts need (`APPLE_TEAM_ID`, optional `SIGN_IDENTITY`,
-`NOTARY_PROFILE`, and `NOTARY_KEY_ID`/`NOTARY_ISSUER_ID` for the one-time notary setup) go in a git-ignored
+and `NOTARY_PROFILE`; the notary Key ID and Issuer ID were dropped from `.env` because no script reads them) go in a git-ignored
 `.env` copied from the committed `.env.example`. `scripts/lib/release_env.sh` parses it without executing it,
 takes only those keys, and lets the environment win. Only release builds read it.
 

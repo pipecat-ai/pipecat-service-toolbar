@@ -59,8 +59,8 @@ Done when `.env` exists, is git-ignored, and has a valid `APPLE_TEAM_ID`.
 
 1. If `.env` is missing: `cp .env.example .env && chmod 600 .env`.
 2. Fill `APPLE_TEAM_ID` (10 characters, A-Z 0-9) from the private note or the identity's name
-   (the value in parentheses). Fill `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` if known. Leave
-   `SIGN_IDENTITY` empty unless the keychain holds several Developer ID identities for the team.
+   (the value in parentheses). The notary Key ID and Issuer ID are not kept in `.env`; step 3 takes
+   them once. Leave `SIGN_IDENTITY` empty unless the keychain holds several Developer ID identities for the team.
 3. Confirm with `git check-ignore -q .env`. When reporting, say which keys are set, not their values.
 
 ## 3. Notarization credentials

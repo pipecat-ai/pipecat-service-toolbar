@@ -5,6 +5,7 @@ ditto), in a throwaway git repository. No certificate, network or macOS needed; 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -33,6 +34,7 @@ _STUBS = {
 echo "security $*" >> "$STUB_LOG"
 case "$1" in
   find-identity) printf '  1) %s "%s"\n     1 valid identities found\n' "$STUB_HASH" "$STUB_NAME" ;;
+  find-certificate) if [ -n "${STUB_CERTS:-}" ]; then cat "$STUB_CERTS"; fi ;;
   *) exit 0 ;;
 esac
 """,
@@ -74,10 +76,17 @@ case "$1" in
   attach)
     mnt=""; prev=""; for a in "$@"; do [ "$prev" = "-mountpoint" ] && mnt="$a"; prev="$a"; done
     src="$(cat "$STUB_DIR/src")"; cp -R "$src/." "$mnt/" ;;
-  detach) echo detached >> "$STUB_DIR/detached" ;;
+  detach)
+    # STUB_DETACH_BUSY=<n>: the first n plain detaches fail like a busy volume; -force never does.
+    if [ "${STUB_DETACH_BUSY:-0}" -gt 0 ] && [[ " $* " != *" -force "* ]]; then
+      n=$(( $(cat "$STUB_DIR/busy" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/busy"
+      [ "$n" -le "$STUB_DETACH_BUSY" ] && exit 1
+    fi
+    echo detached >> "$STUB_DIR/detached" ;;
   *) exit 64 ;;
 esac
 """,
+    "sleep": "exit 0\n",
     "ditto": r"""
 echo "ditto $*" >> "$STUB_LOG"
 if [ "$1" = "-c" ]; then echo zip > "${@: -1}"; else cp -R "$1" "$2"; fi
@@ -164,7 +173,7 @@ def env(tmp_path: Path) -> Env:
     return Env(tmp_path)
 
 
-DMG = "Pipecat-Service-Toolbar-1.2.3-b42.dmg"
+DMG = "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.dmg"
 
 
 def test_happy_path_publishes_dmg_checksum_and_manifest(env):
@@ -173,9 +182,11 @@ def test_happy_path_publishes_dmg_checksum_and_manifest(env):
     assert env.published() == [
         DMG,
         f"{DMG}.sha256",
-        "Pipecat-Service-Toolbar-1.2.3-b42.manifest.json",
+        "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.manifest.json",
     ]
-    manifest = json.loads((env.out / "Pipecat-Service-Toolbar-1.2.3-b42.manifest.json").read_text())
+    manifest = json.loads(
+        (env.out / "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.manifest.json").read_text()
+    )
     assert manifest["dmg"] == DMG
     assert manifest["version"] == "1.2.3" and manifest["build"] == 42
     assert manifest["commit"] == _git(env.root, "rev-parse", "HEAD")
@@ -187,6 +198,23 @@ def test_happy_path_publishes_dmg_checksum_and_manifest(env):
     # No scratch folder is left behind, and the mount was detached.
     assert not [p for p in env.out.iterdir() if p.name.startswith(".")]
     assert (env.stub_dir / "detached").exists()
+
+
+@pytest.mark.parametrize(
+    ("busy", "forced"),
+    [
+        pytest.param("2", False, id="busy-twice-then-free"),
+        pytest.param("9", True, id="always-busy"),
+    ],
+)
+def test_a_busy_volume_is_retried_then_forced_never_fatal(env, busy, forced):
+    # The volume was just assessed and may still be busy; the finished notarizations must not be
+    # thrown away over it.
+    r = env.run(STUB_DETACH_BUSY=busy)
+    assert r.returncode == 0, r.stderr
+    assert DMG in env.published()
+    detaches = [c for c in env.calls() if c.startswith("hdiutil detach")]
+    assert any("-force" in c for c in detaches) is forced
 
 
 def test_order_notarize_app_staple_then_dmg_sign_notarize_staple(env):
@@ -220,21 +248,47 @@ def test_name_gets_the_short_sha_off_the_version_commit(env):
     _git(env.root, "commit", "-q", "-m", "later")
     short = _git(env.root, "rev-parse", "--short=7", "HEAD")
     assert env.run().returncode == 0
-    assert f"Pipecat-Service-Toolbar-1.2.3-b42-{short}.dmg" in env.published()
+    assert f"Pipecat-Service-Toolbar-1.2.3-b42-{short}-TESTBUNDLE.dmg" in env.published()
 
 
 def test_rehearsal_skips_apple_and_says_so(env):
     r = env.run(DMG_SKIP_NOTARIZE="1")
     assert r.returncode == 0, r.stderr
-    assert "Pipecat-Service-Toolbar-1.2.3-b42-UNNOTARIZED.dmg" in env.published()
+    assert "Pipecat-Service-Toolbar-1.2.3-b42-UNNOTARIZED-TESTBUNDLE.dmg" in env.published()
     assert not [
         c for c in env.calls() if c.startswith(("xcrun notarytool", "xcrun stapler", "spctl"))
     ]
     manifest = json.loads(
-        (env.out / "Pipecat-Service-Toolbar-1.2.3-b42-UNNOTARIZED.manifest.json").read_text()
+        (
+            env.out / "Pipecat-Service-Toolbar-1.2.3-b42-UNNOTARIZED-TESTBUNDLE.manifest.json"
+        ).read_text()
     )
     assert manifest["notarized"] is False
     assert "Do not share" in r.stdout
+
+
+def test_a_rebuild_never_overwrites_a_published_dmg(env):
+    # The first DMG may already be shared; a rebuild would change its bytes under the same name.
+    assert env.run().returncode == 0
+    before = {p.name: p.read_bytes() for p in env.out.iterdir()}
+    env.log.write_text("")
+    r = env.run()
+    assert r.returncode != 0
+    assert "already exists" in r.stderr
+    assert {p.name: p.read_bytes() for p in env.out.iterdir()} == before
+    # Refused before any build or Apple call.
+    assert not [c for c in env.calls() if c.startswith(("xcrun notarytool submit", "hdiutil"))]
+
+
+def test_a_rehearsal_may_overwrite_its_own_earlier_rehearsal(env):
+    assert env.run(DMG_SKIP_NOTARIZE="1").returncode == 0
+    assert env.run(DMG_SKIP_NOTARIZE="1").returncode == 0
+
+
+def test_a_prebuilt_bundle_is_named_as_a_test_artifact(env):
+    # A leftover DMG_APP_BUNDLE must not produce a normally named DMG.
+    assert env.run().returncode == 0
+    assert all("-TESTBUNDLE" in n for n in env.published())
 
 
 @pytest.mark.parametrize(
@@ -248,7 +302,9 @@ def test_rejected_notarization_saves_the_log_and_publishes_nothing(env, extra, l
     r = env.run(**extra)
     assert r.returncode == 1
     assert submission in r.stderr and "Invalid" in r.stderr
-    assert env.published() == [f"Pipecat-Service-Toolbar-1.2.3-b42.{label}.notary-log.json"]
+    assert env.published() == [
+        f"Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.{label}.notary-log.json"
+    ]
 
 
 def test_timeout_without_a_result_publishes_nothing(env):
@@ -309,6 +365,28 @@ def test_doctor_reports_ready_and_builds_nothing(env):
     assert not [
         c for c in env.calls() if c.startswith(("hdiutil", "ditto", "xcrun notarytool submit"))
     ]
+
+
+def test_doctor_warns_of_a_certificate_expiring_soon(env, tmp_path):
+    # The listing is larger than a pipe buffer and the identity's certificate comes first: an
+    # early-exiting reader would SIGPIPE `security` and, under pipefail, skip the check silently.
+    if shutil.which("openssl") is None:
+        pytest.skip("openssl is not available")
+    cert = tmp_path / "cert.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "10"]
+        + ["-subj", "/CN=stub", "-keyout", str(tmp_path / "key.pem"), "-out", str(cert)],
+        check=True,
+        capture_output=True,
+    )
+    other = f"SHA-256 hash: {'0' * 64}\nSHA-1 hash: {'B' * 40}\n"
+    other += "-----BEGIN CERTIFICATE-----\n" + "A" * 64 + "\n-----END CERTIFICATE-----\n"
+    (tmp_path / "certs").write_text(
+        f"SHA-256 hash: {'0' * 64}\nSHA-1 hash: {HASH}\n{cert.read_text()}{other * 2000}"
+    )
+    r = env.run("--doctor", STUB_CERTS=str(tmp_path / "certs"))
+    assert r.returncode == 0, r.stderr
+    assert re.search(r"expires in (9|10) days", r.stdout), r.stdout
 
 
 def test_doctor_names_the_missing_profile(env):

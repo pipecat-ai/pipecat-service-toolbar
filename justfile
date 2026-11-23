@@ -1,5 +1,6 @@
 # Build build/Pipecat Service Toolbar.app (wheel + pinned uv + uv.lock pins, ad-hoc signed).
-# Set SIGN_IDENTITY="Developer ID Application: …" to sign for distribution.
+# SIGN_IDENTITY alone signs without a secure timestamp, which notarization rejects: for a Developer
+# ID build use SIGN_MODE=release (docs/development.md, "Release signing").
 app-build:
     scripts/build_app.sh
 

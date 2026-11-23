@@ -73,7 +73,7 @@ resolve_identity() {
 
 check_notary_profile() {
     xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
-        || die "notary profile '$NOTARY_PROFILE' is missing or rejected by Apple: run
+        || die "notary profile '$NOTARY_PROFILE' is missing, rejected by Apple, or Apple is unreachable (check the network); to create it, run
        xcrun notarytool store-credentials $NOTARY_PROFILE --key <AuthKey.p8> --key-id <KEYID> --issuer <ISSUER_ID>
        (docs/development.md, \"Notarized DMG\")"
 }
@@ -81,13 +81,18 @@ check_notary_profile() {
 # Days until the identity's certificate expires, or empty when it cannot be read.
 days_to_expiry() {
     local hash="$1" pem end end_epoch now
+    # awk reads to the end (no early exit): under pipefail an early exit would SIGPIPE `security`
+    # on a keychain larger than the pipe buffer and silently skip this check. openssl reads the
+    # first certificate when the same one is in two keychains.
     pem="$(security find-certificate -a -Z -p 2>/dev/null | awk -v h="$hash" '
         /^SHA-1 hash:/ { take = (toupper($3) == h) ; next }
-        take { print } /-----END CERTIFICATE-----/ { if (take) exit }')" || return 0
+        take { print }
+        /-----END CERTIFICATE-----/ { take = 0 }')" || return 0
     [[ -n "$pem" ]] || return 0
     end="$(printf '%s\n' "$pem" | openssl x509 -noout -enddate 2>/dev/null | sed 's/^notAfter=//')" || return 0
     [[ -n "$end" ]] || return 0
-    end_epoch="$(date -j -f '%b %e %T %Y %Z' "$end" +%s 2>/dev/null || date -d "$end" +%s 2>/dev/null)" || return 0
+    # openssl prints English month names whatever the locale: parse them in the C locale.
+    end_epoch="$(LC_ALL=C date -j -f '%b %e %T %Y %Z' "$end" +%s 2>/dev/null || LC_ALL=C date -d "$end" +%s 2>/dev/null)" || return 0
     now="$(date +%s)"
     echo $(( (end_epoch - now) / 86400 ))
 }
@@ -134,8 +139,15 @@ SHORT="$(git rev-parse --short=7 HEAD)"
 NAME="Pipecat-Service-Toolbar-$VERSION-b$BUILD"
 [[ "$(git log -1 --format=%H -- app-version.json)" == "$COMMIT" ]] || NAME="$NAME-$SHORT"
 [[ -z "$SKIP_NOTARIZE" ]] || NAME="$NAME-UNNOTARIZED"
+# A leftover DMG_APP_BUNDLE must never yield a normally named, shareable DMG.
+[[ -z "${DMG_APP_BUNDLE:-}" ]] || NAME="$NAME-TESTBUNDLE"
 DMG="$NAME.dmg"
 echo "    $DMG"
+# A notarized DMG may already have been shared: a rebuild would change its bytes and checksum under
+# the same name, so refuse before spending two notarizations. Rehearsals are never shared.
+if [[ -z "$SKIP_NOTARIZE" && ( -e "$OUT/$DMG" || -e "$OUT/$DMG.sha256" || -e "$OUT/$NAME.manifest.json" ) ]]; then
+    die "dist/dmg/$DMG already exists (this commit was built before; it may have been shared). Move it, its .sha256 and its manifest out of dist/dmg to rebuild, or commit a change and bump the build in app-version.json."
+fi
 
 # --- 2. build -----------------------------------------------------------------------------
 
@@ -251,8 +263,17 @@ if [[ -z "$SKIP_NOTARIZE" ]]; then
     xcrun stapler validate "$MOUNT/$APP_NAME"
     assess exec "$MOUNT/$APP_NAME"
 fi
-hdiutil detach -quiet "$MOUNT"
-MOUNT=""
+# A just-assessed volume is often still busy (Spotlight, Gatekeeper): retry, then force. The image
+# is read-only and already checked, so forcing loses nothing, and failing here would throw away
+# two finished notarizations.
+for _ in 1 2 3; do
+    if hdiutil detach -quiet "$MOUNT" 2>/dev/null; then MOUNT=""; break; fi
+    sleep 2
+done
+if [[ -n "$MOUNT" ]]; then
+    hdiutil detach -force -quiet "$MOUNT"
+    MOUNT=""
+fi
 
 # --- 6. checksum, manifest, publish -------------------------------------------------------
 

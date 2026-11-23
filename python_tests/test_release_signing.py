@@ -100,19 +100,29 @@ def test_env_loader_parses_plain_quoted_exported_and_crlf_lines(tmp_path):
     r = _load(
         tmp_path,
         "# comment\n\n"
-        f"APPLE_TEAM_ID={TEAM}\r\n"
+        f"  APPLE_TEAM_ID={TEAM}\r\n"
         "export NOTARY_PROFILE='my profile'\n"
-        'SIGN_IDENTITY="Developer ID Application: X (Y)"   \n'
-        "  NOTARY_KEY_ID=KEY123\n"
-        "NOTARY_ISSUER_ID=",  # no trailing newline
+        'SIGN_IDENTITY="Developer ID Application: X (Y)"   \n',
     )
     assert r.returncode == 0, r.stderr
     v = _vars(r)
     assert v["APPLE_TEAM_ID"] == TEAM
     assert v["NOTARY_PROFILE"] == "my profile"
     assert v["SIGN_IDENTITY"] == "Developer ID Application: X (Y)"
-    assert v["NOTARY_KEY_ID"] == "KEY123"
-    assert v["NOTARY_ISSUER_ID"] == ""
+
+
+def test_env_loader_takes_an_empty_last_line_without_a_newline(tmp_path):
+    r = _load(tmp_path, f"APPLE_TEAM_ID={TEAM}\nSIGN_IDENTITY=")
+    assert r.returncode == 0, r.stderr
+    v = _vars(r)
+    assert v["APPLE_TEAM_ID"] == TEAM and v["SIGN_IDENTITY"] == ""
+
+
+def test_env_loader_ignores_the_retired_notary_id_keys(tmp_path):
+    # Older .env files may still carry them; nothing reads them, so they must stay harmless.
+    r = _load(tmp_path, f"APPLE_TEAM_ID={TEAM}\nNOTARY_KEY_ID=KEY123\nNOTARY_ISSUER_ID=abc\n")
+    assert r.returncode == 0, r.stderr
+    assert _vars(r)["APPLE_TEAM_ID"] == TEAM
 
 
 def test_env_loader_ignores_unknown_keys(tmp_path):

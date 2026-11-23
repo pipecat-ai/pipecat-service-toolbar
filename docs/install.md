@@ -11,7 +11,7 @@ release. You do not need Xcode, Python or a terminal.
 
 ## Install
 
-1. Open the `Pipecat-Service-Toolbar-<version>.dmg` file.
+1. Open the `Pipecat-Service-Toolbar-<version>-b<build>.dmg` file.
 2. Drag **Pipecat Service Toolbar** onto the **Applications** folder in the window that opens.
 3. Eject the disk image (the eject button next to it in Finder's sidebar).
 4. Open **Pipecat Service Toolbar** from Applications. macOS asks once whether to open an app downloaded

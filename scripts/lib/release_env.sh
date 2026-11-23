@@ -11,7 +11,7 @@
 # environment instead. Returns 2 on a line it cannot parse (naming the line number, never its
 # contents, which may hold an ID). Bash 3.2 compatible.
 
-RELEASE_ENV_KEYS="APPLE_TEAM_ID SIGN_IDENTITY NOTARY_PROFILE NOTARY_KEY_ID NOTARY_ISSUER_ID"
+RELEASE_ENV_KEYS="APPLE_TEAM_ID SIGN_IDENTITY NOTARY_PROFILE"
 
 load_release_env() {
     local file="$1" line key value n=0

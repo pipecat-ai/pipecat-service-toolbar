@@ -285,11 +285,16 @@ Each notarization usually takes a few minutes. `<name>` is `Pipecat-Service-Tool
 when HEAD is the commit that last changed `app-version.json`, otherwise with `-<shortsha>` appended.
 `app-dmg` never changes `app-version.json` or `CHANGELOG.md`.
 
+If `dist/dmg/` already holds a DMG, checksum or manifest of the same name, `app-dmg` refuses before
+building: that file may already have been shared, and a rebuild would change its checksum. Move the old
+files out of `dist/dmg/` to rebuild the same commit, or commit a change and bump the build.
+
 Share the `.dmg` and its `.sha256`. The manifest (commit, checksum, notary submission IDs) is your
 record. Recipients follow [Install the app](install.md).
 
 `DMG_SKIP_NOTARIZE=1 just app-dmg` is a rehearsal: it signs but skips Apple, and the name ends in
-`-UNNOTARIZED`. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only.
+`-UNNOTARIZED`. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only; the
+name then ends in `-TESTBUNDLE`. A rehearsal may overwrite an earlier rehearsal.
 
 ### Troubleshooting
 
@@ -321,12 +326,12 @@ Environment variables read by `scripts/`:
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `SIGN_IDENTITY` | `build_app.sh`, `resolve_sign_identity.sh` | Code-signing identity (default `-`, ad hoc). Unset, `just app-open` and `just app-install` take the self-signed `Code Signing` identity from `resolve_sign_identity.sh` (which asks the keychain through `has_sign_identity.sh`): `app-open` falls back to ad hoc when it is missing, `app-install` fails before the build. An explicit value (a name, or the certificate's full SHA-1 hash) always wins. The keychain check is advisory, as codesign reads the value: a full SHA-1 in any case, or a case-insensitive substring of a name; two identities sharing a name are left to codesign at signing. Sign for distribution with `SIGN_IDENTITY="Developer ID Application: …" just app-build`. |
+| `SIGN_IDENTITY` | `build_app.sh`, `resolve_sign_identity.sh`, `resolve_release_identity.sh` (also from `.env`) | Code-signing identity (default `-`, ad hoc). Unset, `just app-open` and `just app-install` take the self-signed `Code Signing` identity from `resolve_sign_identity.sh` (which asks the keychain through `has_sign_identity.sh`): `app-open` falls back to ad hoc when it is missing, `app-install` fails before the build. An explicit value (a name, or the certificate's full SHA-1 hash) always wins. The keychain check is advisory, as codesign reads the value: a full SHA-1 in any case, or a case-insensitive substring of a name; two identities sharing a name are left to codesign at signing. `SIGN_IDENTITY` alone signs without a secure timestamp, which notarization rejects: for a Developer ID build use `SIGN_MODE=release` (below; there it only narrows the choice among the team's identities). |
 | `SIGN_MODE` | `build_app.sh` | `dev` (default): sign with `SIGN_IDENTITY` and no timestamp, offline. `release`: the only mode notarization accepts. Before building it loads `.env`, requires `APPLE_TEAM_ID`, resolves the team's valid Developer ID Application identity (`resolve_release_identity.sh`; `SIGN_IDENTITY`, a full SHA-1 or exact name, only narrows the choice) and refuses `CONFIG=debug` and `BUNDLE_ID`. It signs with a secure timestamp (needs the network) and checks the result with `verify_release_signature.sh`. See [Release signing](#release-signing). |
 | `APPLE_TEAM_ID` | `build_app.sh` (release), `package_dmg.sh` | The Developer ID certificate's 10-character Team ID. Read from the environment or `.env`. |
 | `NOTARY_PROFILE` | `package_dmg.sh` | The `notarytool store-credentials` keychain profile (default `pipecat-notary`). Environment or `.env`. |
 | `DMG_SKIP_NOTARIZE` | `package_dmg.sh` | `1`: rehearsal DMG, signed but not notarized, named `-UNNOTARIZED`. Never shared. |
-| `DMG_APP_BUNDLE` | `package_dmg.sh` | Test only: package this prebuilt bundle instead of building one. Never for a shared DMG. |
+| `DMG_APP_BUNDLE` | `package_dmg.sh` | Test only: package this prebuilt bundle instead of building one; the DMG name gets `-TESTBUNDLE`. Never for a shared DMG. |
 | `CONFIG` | `build_app.sh` | Swift build configuration, `release` (default) or `debug`. |
 | `APP_INSTALL_DIR` | `just app-install`, `install_tester.sh` | Install destination (default `~/Applications`), for both the developer install and a tester drop. For the identity `just app-install` signs with, see `SIGN_IDENTITY`. |
 | `TESTER_APP_BUNDLE` | `package_tester.sh` | Test only: package this prebuilt bundle instead of building one with the self-signed identity. Never for a real drop. |
