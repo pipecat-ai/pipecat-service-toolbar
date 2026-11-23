@@ -77,3 +77,8 @@ __pycache__/
 
 # Tester drops (just app-tester-package)
 dist/
+
+# Local signing material, release settings and private maintainer notes: never commit
+.local_certificates/
+.private/
+.env

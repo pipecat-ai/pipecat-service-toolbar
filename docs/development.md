@@ -225,6 +225,26 @@ Release checklist:
 
 5. Once both guests pass, share the one-liner only in direct messages to known testers.
 
+## Release signing
+
+A build that can be notarized is signed with the team's Developer ID Application certificate and a
+secure timestamp. Team-specific values (Team ID, key IDs) stay out of this public repository: they go
+in a git-ignored `.env`, and the maintainers' private signing note says where to find them.
+
+1. Import the Developer ID `.p12` (certificate and private key) from the team's password manager:
+   `security import <file>.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign`, then
+   delete the downloaded file. `security find-identity -v -p codesigning` must list
+   `Developer ID Application: <Team> (<TEAMID>)`.
+2. `cp .env.example .env` and set `APPLE_TEAM_ID`. `.env` is parsed, never executed, and only release
+   builds read it; a variable set in the environment wins over it.
+3. `SIGN_MODE=release just app-build`. Every refusal (no Team ID, no identity, several identities, a
+   `BUNDLE_ID` override, a debug build) happens before compiling. After signing,
+   `scripts/verify_release_signature.sh` checks the bundle and the nested `uv`: Developer ID chain,
+   Team ID, hardened runtime, secure timestamp, no `get-task-allow`.
+
+Notarizing and packaging the DMG are planned in
+[the notarized DMG plan](plans/20261123-feature-notarized-dmg.md).
+
 ## Build settings
 
 Environment variables read by `scripts/`:
@@ -232,6 +252,8 @@ Environment variables read by `scripts/`:
 | Variable | Read by | Effect |
 |---|---|---|
 | `SIGN_IDENTITY` | `build_app.sh`, `resolve_sign_identity.sh` | Code-signing identity (default `-`, ad hoc). Unset, `just app-open` and `just app-install` take the self-signed `Code Signing` identity from `resolve_sign_identity.sh` (which asks the keychain through `has_sign_identity.sh`): `app-open` falls back to ad hoc when it is missing, `app-install` fails before the build. An explicit value (a name, or the certificate's full SHA-1 hash) always wins. The keychain check is advisory, as codesign reads the value: a full SHA-1 in any case, or a case-insensitive substring of a name; two identities sharing a name are left to codesign at signing. Sign for distribution with `SIGN_IDENTITY="Developer ID Application: …" just app-build`. |
+| `SIGN_MODE` | `build_app.sh` | `dev` (default): sign with `SIGN_IDENTITY` and no timestamp, offline. `release`: the only mode notarization accepts. Before building it loads `.env`, requires `APPLE_TEAM_ID`, resolves the team's valid Developer ID Application identity (`resolve_release_identity.sh`; `SIGN_IDENTITY`, a full SHA-1 or exact name, only narrows the choice) and refuses `CONFIG=debug` and `BUNDLE_ID`. It signs with a secure timestamp (needs the network) and checks the result with `verify_release_signature.sh`. See [Release signing](#release-signing). |
+| `APPLE_TEAM_ID` | `build_app.sh` (release) | The Developer ID certificate's 10-character Team ID. Read from the environment or `.env`. |
 | `CONFIG` | `build_app.sh` | Swift build configuration, `release` (default) or `debug`. |
 | `APP_INSTALL_DIR` | `just app-install`, `install_tester.sh` | Install destination (default `~/Applications`), for both the developer install and a tester drop. For the identity `just app-install` signs with, see `SIGN_IDENTITY`. |
 | `TESTER_APP_BUNDLE` | `package_tester.sh` | Test only: package this prebuilt bundle instead of building one with the self-signed identity. Never for a real drop. |

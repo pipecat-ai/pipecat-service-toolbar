@@ -653,7 +653,9 @@ with an observed lifecycle change.
 5. Copies `uv`, the wheel, the constraints and the checked-in STT
    constraints (`constraints/stt-*.txt`) into `Contents/Resources`.
 6. Codesigns inside-out with the hardened runtime. The only entitlement is
-   microphone input, for STT Try it.
+   microphone input, for STT Try it. `SIGN_MODE=release` signs with the team's Developer ID
+   identity and a secure timestamp, and verifies the result for notarization
+   ([Release signing](development.md#release-signing)); its checks run before step 1.
 
 Python itself is not bundled, and the bundle is about 43 MB, mostly `uv`.
 
