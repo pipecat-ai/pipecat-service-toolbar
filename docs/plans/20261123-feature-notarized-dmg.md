@@ -64,10 +64,13 @@ Verified against `main` at `1cfe741` on 2026-11-23:
 - **Version is read, never written.** `app-version.json` and `CHANGELOG.md` are untouched by `app-dmg`, as for
   tester drops. A DMG for a real release is built from the commit that bumped the version. File name:
   `Pipecat-Service-Toolbar-<version>-b<build>.dmg` (no spaces, so links and shells need no quoting); a build from a commit other than the version-bump commit
-  appends `-<shortsha>`.
+  appends `-<shortsha>`. A rehearsal appends `-UNNOTARIZED` and a `DMG_APP_BUNDLE` run `-TESTBUNDLE`. A
+  notarized run refuses to overwrite an existing DMG, checksum or manifest of the same name.
 - **Clean tree required.** `app-dmg` refuses a dirty tree, so every DMG maps to one commit, recorded in
   `<name>.manifest.json` with the DMG name, SHA-256, version, build, commit, notarized flag, notarization
-  submission IDs, test-bundle flag and creation time (no Team ID).
+  submission IDs, test-bundle flag and creation time (no Team ID). Version and build are read from the
+  commit (`git show <commit>:./app-version.json`), not the working tree, and validated (a plain dotted version,
+  a whole-number build) because they become file names.
 - **Output** goes to `dist/dmg/` (already ignored through `dist/`).
 
 ## Requirements
@@ -161,11 +164,13 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 ### Phase 2: DMG packager
 
 - [x] Add `scripts/package_dmg.sh`, invoked by `just app-dmg`. Steps, each failing closed:
-  1. Refuse a dirty tree; read version/build from `app-version.json`; resolve the Developer ID identity
+  1. Refuse a dirty tree (`git status --porcelain --untracked-files=all`) and git-ignored Swift files under
+     `Sources/`; read and validate version/build from the commit; resolve the Developer ID identity
      (through `resolve_release_identity.sh` with `APPLE_TEAM_ID` from `.env`; refuse zero or several, naming
      the setup step); check the notary profile
      exists before building, so a missing setup fails in seconds, not after the build.
-  2. `SIGN_MODE=release scripts/build_app.sh`.
+  2. `SIGN_MODE=release scripts/build_app.sh`, then refuse if HEAD or the tree changed during the build, or if
+     the staged app's `Info.plist` version/build is not the commit's.
   3. `ditto -c -k --keepParent <app> <scratch>/app.zip`;
      `xcrun notarytool submit app.zip --keychain-profile $NOTARY_PROFILE --wait --output-format json`;
      on any status other than `Accepted`, fetch `notarytool log <id>` into `dist/dmg/` and stop.
@@ -177,8 +182,11 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   7. Verify: `spctl -a -vvv -t exec <app>` reports `source=Notarized Developer ID`;
      `spctl -a -vvv -t open --context context:primary-signature <dmg>` accepts; mount the DMG read-only and
      re-run the app check on the mounted copy.
-  8. Write `<name>.dmg.sha256` and `<name>.manifest.json`, then move all three from scratch into `dist/dmg/`
-     (manifest last). Scratch is removed on every exit.
+  8. Write `<name>.dmg.sha256` and `<name>.manifest.json`, then publish all three from scratch into `dist/dmg/`
+     (manifest last). A notarized run links each with `ln`, which never replaces a file; on failure or
+     interrupt it removes only the files that are this run's own (same inode). Without hard-link support nothing
+     is published and the DMG is kept as `<name>.unpublished.dmg`. A rehearsal moves and may overwrite. Scratch
+     is removed on every exit. Only one `app-dmg` should run per checkout at a time (runs share `build/`).
 - [x] Tests stub the Apple tools on `PATH` (no override variables); `DMG_APP_BUNDLE` packages a prebuilt bundle, a test-mode marker in the manifest
       shows a DMG built with fakes, and the docs say never to share one.
 - [x] `DMG_SKIP_NOTARIZE=1` builds a signed but un-notarized rehearsal DMG named `…-UNNOTARIZED.dmg`, for checking
@@ -285,6 +293,10 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - 2026-11-23: `notarize-setup` skill added. Used it to set up one Mac (identity, `.env`, notary profile),
   then ran `scripts/package_dmg.sh` for real (app 0.4.1, build 474). Both submissions (app and DMG) were
   accepted and stapled; a quarantined copy of the DMG passed `spctl` as `Notarized Developer ID`.
+- 2026-11-23: three review-gauntlet rounds and a confirmation pass hardened the packager (all-or-nothing
+  publishing, version/build from the commit, ignored-source and post-build checks, a signature check that fails
+  closed, argument-passed manifest values). Full Python suite: 804+ passed, 3 skipped. The real notarized run
+  above predates these changes and is to be repeated on the final commit before merge.
 
 ## Findings
 
