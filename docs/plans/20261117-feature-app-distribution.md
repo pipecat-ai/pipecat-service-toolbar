@@ -43,6 +43,8 @@ Verified against the current checkout on 2026-11-17:
   Apple Speech still needs macOS 26+. Python and models download on demand.
 - `app-version.json` is currently version `0.4.1`, build `474`; app versions remain
   independent of `artifacts/tts.json` and `ServiceCatalog.sttServerRequirement`.
+  On 2026-11-23 the manifest moved to `server-pins/tts/wheel.json` in the
+  [server pin layout update](20261123-refactor-server-pins-layout.md).
 - `.github/workflows/test.yml` is the test workflow. Its `compatibility` job (Ubuntu, Python 3.12 and 3.13 matrix)
   runs the full pytest suite; its `macos-app` job
   runs only `python_tests/test_app_recipes.py`. There is no release workflow or standalone app installer in this checkout.

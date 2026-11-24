@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ``constraints/stt-<engine>.txt``: the hash-pinned constraints
+"""Regenerate ``server-pins/stt/constraints/stt-<engine>.txt``: the hash-pinned constraints
 the app installs each STT engine's environment with.
 
     uv run python scripts/compile_stt_constraints.py
@@ -26,7 +26,7 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO = SCRIPTS.parent
-OUT_DIR = REPO / "constraints"
+OUT_DIR = REPO / "server-pins/stt/constraints"
 
 PYTHON_VERSION = "3.12"
 PLATFORM = "aarch64-apple-darwin"
@@ -61,7 +61,7 @@ def _uv() -> str:
 
 def main() -> int:
     uv = _uv()
-    OUT_DIR.mkdir(exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, MACOSX_DEPLOYMENT_TARGET=MACOS_TARGET)
     for engine, requirements in sorted(engine_requirements().items()):
         out = OUT_DIR / f"stt-{engine}.txt"

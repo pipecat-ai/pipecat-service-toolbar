@@ -86,8 +86,8 @@ app-test:
 app-smoke *args:
     scripts/ui_smoke.sh {{args}}
 
-# Exit 1 unless constraints/tts.txt is exactly scripts/compile_tts_constraints.py's output for the
-# source_commit in artifacts/tts.json (CHECKOUT: a pipecat-local-tts-server clone with that commit).
+# Exit 1 unless server-pins/tts/constraints.txt is exactly scripts/compile_tts_constraints.py's output for the
+# source_commit in server-pins/tts/wheel.json (CHECKOUT: a pipecat-local-tts-server clone with that commit).
 tts-constraints-check checkout:
     uv run --no-project python scripts/compile_tts_constraints.py --server-checkout "{{checkout}}" --check
 

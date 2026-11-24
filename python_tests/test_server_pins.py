@@ -1,14 +1,14 @@
 """The server pins move together, or a test fails.
 
 A TTS release is described by several files that nothing else keeps in step:
-``artifacts/tts.json`` (what the app ships), ``pyproject.toml``/``uv.lock`` (the copy the
-compatibility tests import), ``constraints/tts.txt`` (what the wheel installs with) and the
+``server-pins/tts/wheel.json`` (what the app ships), ``pyproject.toml``/``uv.lock`` (the copy the
+compatibility tests import), ``server-pins/tts/constraints.txt`` (what the wheel installs with) and the
 recorded fixtures (``python_tests/fixtures/provenance.json``; CI compares the TTS ones with the
 pinned commit, ``scripts/check_tts_fixtures.py``). ``uv.lock`` and
-``constraints/tts.txt`` also agree on every package they share, so the compatibility tests run
+``server-pins/tts/constraints.txt`` also agree on every package they share, so the compatibility tests run
 the dependency versions the app installs. The STT server's pin is the Swift
 catalog's ``sttServerRequirement``; its recorded fixtures and hash-pinned
-``constraints/stt-*.txt`` are digested in ``provenance.json`` and checked against it here too.
+``server-pins/stt/constraints/stt-*.txt`` are digested in ``provenance.json`` and checked against it here too.
 
 Moving a pin: see "Moving a server pin" in ``docs/migration.md``.
 """
@@ -34,10 +34,10 @@ from ._stt_upstream import FIXTURE as STT_EXCERPT
 from ._stt_upstream import excerpt_for, stt_server_version, upstream_stt
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT = json.loads((ROOT / "artifacts/tts.json").read_text())
+ARTIFACT = json.loads((ROOT / "server-pins/tts/wheel.json").read_text())
 PROVENANCE = json.loads((ROOT / "python_tests/fixtures/provenance.json").read_text())
 SERVICE_SWIFT = ROOT / "Sources/PipecatToolbarCore/Service.swift"
-CONSTRAINTS = ROOT / "constraints/tts.txt"
+CONSTRAINTS = ROOT / "server-pins/tts/constraints.txt"
 PACKAGE = "pipecat-local-tts-server"
 # The app's target: the bundled uv installs the TTS server on arm64 macOS, CPython 3.12.
 TARGET = {
@@ -102,13 +102,13 @@ def test_the_compatibility_tests_import_the_release_the_app_ships():
     (entry,) = [p for p in lock["package"] if p["name"] == PACKAGE]
     assert [(w["url"], w["hash"]) for w in entry["wheels"]] == [
         (ARTIFACT["url"], f"sha256:{ARTIFACT['sha256']}")
-    ], "artifacts/tts.json and uv.lock name different wheels"
+    ], "server-pins/tts/wheel.json and uv.lock name different wheels"
     # What the drift tests actually import (a stale .venv fails here, not silently later).
     assert importlib.metadata.version(PACKAGE) == version, "run `uv sync --locked`"
 
 
 def test_the_compatibility_tests_lock_the_dependency_versions_the_app_installs():
-    """Every package ``uv.lock`` shares with an applicable pin in ``constraints/tts.txt`` is
+    """Every package ``uv.lock`` shares with an applicable pin in ``server-pins/tts/constraints.txt`` is
     locked at that pin, so the tests (and the Swift tone-server tests that launch ``.venv``)
     exercise what the bundled server installs with."""
     recorded = pins(CONSTRAINTS.read_text())
@@ -138,14 +138,14 @@ def test_the_recorded_constraints_belong_to_the_artifact():
     # `just tts-constraints-check <checkout>` (run in CI) proves the pins are the release's lock.
     covered = b"".join(lines[:3] + lines[4:])
     assert head[3] == f"# content-sha256: {hashlib.sha256(covered).hexdigest()}", (
-        "constraints/tts.txt was edited after scripts/compile_tts_constraints.py wrote it"
+        "server-pins/tts/constraints.txt was edited after scripts/compile_tts_constraints.py wrote it"
         " (content-sha256 does not match the other lines): regenerate it, do not edit it by hand"
     )
 
 
 def test_the_lean_lock_constrains_only_what_the_server_pins():
     """Every ``[tool.uv] constraint-dependencies`` entry in ``pyproject.toml`` is an applicable
-    pin of ``constraints/tts.txt`` at the same version, so a pin move cannot leave a stale entry
+    pin of ``server-pins/tts/constraints.txt`` at the same version, so a pin move cannot leave a stale entry
     holding the lean environment at a version the bundled server no longer installs."""
     recorded = pins(CONSTRAINTS.read_text())
     entries = tomllib.loads((ROOT / "pyproject.toml").read_text())["tool"]["uv"].get(
@@ -163,16 +163,16 @@ def test_the_lean_lock_constrains_only_what_the_server_pins():
             or pinned is None
             or Version(specifiers[0].version) != pinned
         ):
-            stale.append(f"{entry} (constraints/tts.txt: {pinned})")
+            stale.append(f"{entry} (server-pins/tts/constraints.txt: {pinned})")
     assert stale == [], (
         "remove these from [tool.uv] constraint-dependencies in pyproject.toml (or set them to the"
-        " constraints/tts.txt version), then run `uv lock` and `uv sync --locked`"
+        " server-pins/tts/constraints.txt version), then run `uv lock` and `uv sync --locked`"
     )
 
 
 def test_the_recorded_constraints_satisfy_the_wheels_requirements():
     """Every requirement the wheel declares, for every extra, on the app's target (arm64 macOS,
-    CPython 3.12), has a pin in ``constraints/tts.txt`` inside its version range."""
+    CPython 3.12), has a pin in ``server-pins/tts/constraints.txt`` inside its version range."""
     recorded = pins(CONSTRAINTS.read_text())
     requirements = [Requirement(r) for r in importlib.metadata.requires(PACKAGE) or []]
     extras = sorted({e for r in requirements for e in _extras(r)})
@@ -229,7 +229,7 @@ def test_every_recorded_fixture_is_listed_and_unchanged():
             "docs/supervised-contract.json",
             # Hash-pinned by a network resolver, so CI cannot regenerate them: a digest here makes
             # any edit (a dropped transitive pin included) a deliberate provenance update.
-            "constraints/stt-*.txt",
+            "server-pins/stt/constraints/stt-*.txt",
         )
         for p in ROOT.glob(pattern)
         if p.is_file()

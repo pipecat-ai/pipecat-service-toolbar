@@ -10,7 +10,7 @@ dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "ruff==0.15.19"]
 
 [tool.uv]
 package = false
-# The versions constraints/tts.txt installs the bundled server with, for every package this lean
+# The versions server-pins/tts/constraints.txt installs the bundled server with, for every package this lean
 # environment shares with it (python_tests/test_server_pins.py checks uv.lock against them).
 constraint-dependencies = [
     "packaging==26.2",

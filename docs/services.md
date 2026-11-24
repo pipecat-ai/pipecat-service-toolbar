@@ -40,10 +40,10 @@ for running both.
 ## How it works
 
 - **TTS**: `uv pip install "pipecat-local-tts-server[<backend>] @ <bundled wheel>"`,
-  pinned to `constraints/tts.txt`, then `python -m tts_server prefetch` and
+  pinned to `server-pins/tts/constraints.txt`, then `python -m tts_server prefetch` and
   `serve --supervised`.
 - **Whisper, Kyutai, Parakeet, Nemotron, Moonshine**: PyPI packages hash-pinned to the last
-  transitive dependency (`constraints/stt-<engine>.txt`, `uv pip install
+  transitive dependency (`server-pins/stt/constraints/stt-<engine>.txt`, `uv pip install
   --require-hashes`; a bundled app missing that file refuses the install rather
   than resolve unpinned), run by the upstream CLI (`python -m stt_server prefetch`
   and `serve --supervised`). The four default STT models (Whisper large-v3-turbo,

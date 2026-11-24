@@ -86,7 +86,7 @@ For STT setup, consult the
 |---|---|
 | [Using the toolbar](docs/usage.md) | Menu controls, external servers, restore, quit, caches and logs |
 | [Services and models](docs/services.md) | Ports, model IDs, variants, licences and runtimes |
-| [Development](docs/development.md) | Build, signing, tests, smoke checks and server artifacts |
+| [Development](docs/development.md) | Build, signing, tests, smoke checks and server pins |
 | [Architecture](docs/architecture.md) | Components, lifecycle, protocols, packaging and security |
 | [Migration and compatibility](docs/migration.md) | Existing installations, versioning and server-pin checklist |
 

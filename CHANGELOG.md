@@ -6,7 +6,7 @@ Server-only changes belong to
 [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server/releases).
 
 The app has its own version (`app-version.json`), independent of the server packages it
-installs (`artifacts/tts.json`, `Service.swift`). Releases from this repository never upgrade
+installs (`server-pins/tts/wheel.json`, `Service.swift`). Releases from this repository never upgrade
 a server package implicitly; a changed server pin is listed as its own entry.
 
 ## Version history

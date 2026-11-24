@@ -64,9 +64,9 @@ built `.app` always uses its bundle.
 |---|---|
 | `PIPECAT_TOOLBAR_UV` | The `uv` binary (else `~/.local/bin`, `~/.cargo/bin`, Homebrew, `PATH`). |
 | `PIPECAT_TOOLBAR_WHEEL` | The TTS server wheel (used only if the file exists). |
-| `PIPECAT_TOOLBAR_CONSTRAINTS` | The constraints file installed with that wheel (normally `constraints/tts.txt`). |
-| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | The folder of hash-pinned `stt-<engine>.txt` constraints (else `constraints/` of this toolbar checkout, found from the executable or working directory, even when `PIPECAT_TOOLBAR_REPO` names a TTS checkout). Outside the bundle a missing file installs unpinned; a bundled build refuses the install instead (`Tools.constraints(for:)` throws). |
-| `PIPECAT_TOOLBAR_REPO` | Explicit TTS source checkout override (empty counts as unset); normal development uses this app repository's pinned artifact. A path with no TTS or toolbar checkout at or above it fails the lookup (`repositoryOverrideNotFound`) rather than falling back to the pinned artifact. |
+| `PIPECAT_TOOLBAR_CONSTRAINTS` | The constraints file installed with that wheel (normally sourced from `server-pins/tts/constraints.txt`). |
+| `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | A folder of hash-pinned `stt-<engine>.txt` files. Defaults to `server-pins/stt/constraints/` in the selected or discovered toolbar checkout. Older toolbar checkouts use `constraints/`. A missing file allows an unbundled install to proceed unpinned. A bundled build refuses the install. |
+| `PIPECAT_TOOLBAR_REPO` | Selects a toolbar or TTS source checkout. When it names a TTS checkout, STT still uses pins from the discovered toolbar checkout if available. An empty value is treated as unset. A path with no checkout at or above it fails with `repositoryOverrideNotFound`. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
 ## Runtimes
@@ -644,14 +644,14 @@ with an observed lifecycle change.
 
 `scripts/build_app.sh` assembles `Pipecat Service Toolbar.app` in six steps:
 
-1. Downloads or reuses the exact TTS wheel in `artifacts/tts.json`, verifies its
-   SHA-256 and metadata, and copies the recorded `constraints/tts.txt`. App version
+1. Downloads or reuses the exact TTS wheel in `server-pins/tts/wheel.json`, verifies its
+   SHA-256 and metadata, and copies the recorded `server-pins/tts/constraints.txt`. App version
    and build number come from `app-version.json`.
 2. Fetches the pinned `uv` release and verifies its SHA-256.
 3. Compiles a release build.
 4. Renders the icon from the vector catmark (`--render-icon`).
-5. Copies `uv`, the wheel, the constraints and the checked-in STT
-   constraints (`constraints/stt-*.txt`) into `Contents/Resources`.
+5. Copies `uv` into `Contents/Resources/bin/`, the TTS wheel and its constraints into
+   `Contents/Resources/wheels/`, and the checked-in STT pins into `Contents/Resources/constraints/`.
 6. Codesigns inside-out with the hardened runtime. The only entitlement is
    microphone input, for STT Try it. `SIGN_MODE=release` signs with the team's Developer ID
    identity and a secure timestamp, and verifies the result for notarization
@@ -684,7 +684,7 @@ the bare file name.
 
 ### Pins
 
-- **STT packages.** `constraints/stt-<engine>.txt` pins every transitive
+- **STT packages.** `server-pins/stt/constraints/stt-<engine>.txt` pins every transitive
   dependency of an engine's requirements with sha256 hashes, resolved for
   CPython 3.12 on arm64 macOS 15. They are generated, checked in (so a build is
   reproducible offline) and installed with `--require-hashes` (verified for every
@@ -754,7 +754,7 @@ union of both emitters' lists) and the stt wire rate (`STTWire.rate`) against th
   per-service interpreters. The hardened runtime is on.
 - **Pinned downloads.**
   - `uv` is pinned to a version and SHA-256.
-  - The TTS wheel is SHA-256 pinned and its dependencies follow `constraints/tts.txt`;
+  - The TTS wheel is SHA-256 pinned and its dependencies follow `server-pins/tts/constraints.txt`;
     STT packages are hash-pinned to the last
     transitive dependency (see Pins).
   - Phonon's weights and Pocket TTS's voice embeddings are pinned to a commit.

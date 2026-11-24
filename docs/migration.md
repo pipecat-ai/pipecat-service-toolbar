@@ -40,7 +40,7 @@ and settings carry over. The designated requirement changes with the certificate
 ## Versions
 
 The app's version and build live only in `app-version.json`, and its release notes in
-`CHANGELOG.md`; server versions live in `artifacts/tts.json` and `Service.swift`. They are
+`CHANGELOG.md`; server versions live in `server-pins/tts/wheel.json` and `Service.swift`. They are
 unrelated numbers. Builds made before this repository existed were numbered after the TTS server
 release; the changelog renumbers them 0.1.0-0.4.0 (mapping table there), while the installed
 bundles keep reporting the old number. The build number only increases (installed builds reached
@@ -92,14 +92,14 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
 
 **TTS** (`pipecat-local-tts-server`):
 
-1. Update `artifacts/tts.json`: `version`, `filename`, `url`, `sha256` (from PyPI) and the release
+1. Update `server-pins/tts/wheel.json`: `version`, `filename`, `url`, `sha256` (from PyPI) and the release
    tag's full `source_commit`.
 2. `uv run --no-project python scripts/compile_tts_constraints.py --server-checkout <path>`
-   regenerates `constraints/tts.txt` from that commit's `uv.lock`; never edit the file by hand.
+   regenerates `server-pins/tts/constraints.txt` from that commit's `uv.lock`; never edit the file by hand.
    Its `content-sha256` header line is the SHA-256 of every other line (the `# server:` and
    `# source-commit:` lines and the pins), so `test_server_pins.py` fails on an accidental edit
    to any of them, and `scripts/prepare_tools.py` (so `just app-build` and `swift run`) refuses
-   a file whose header does not match `artifacts/tts.json` or its digest. That digest is not
+   a file whose header does not match `server-pins/tts/wheel.json` or its digest. That digest is not
    proof of origin: `just tts-constraints-check <path>` exits non-zero when the file is not the
    script's output for the pinned commit, and CI runs the same check against a clone of
    `source_repository` (the `compatibility` job, Python 3.12). The
@@ -107,8 +107,8 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    `.github/workflows/test.yml`), and when bumping that pin run the check and regenerate the
    file if it fails.
 3. Update the dependency in `pyproject.toml`, and set `[tool.uv] constraint-dependencies` to the
-   new `constraints/tts.txt` versions of the packages the lean environment shares with it, and
-   remove any entry `constraints/tts.txt` no longer pins (the tests list both). Then `uv lock`
+   new `server-pins/tts/constraints.txt` versions of the packages the lean environment shares with it, and
+   remove any entry `server-pins/tts/constraints.txt` no longer pins (the tests list both). Then `uv lock`
    and `uv sync --locked`.
 4. Re-record the files copied from the server at the new `source_commit`:
    `python_tests/fixtures/upstream/tts-README.md` (its `README.md`) and `tts-justfile` (its
@@ -126,7 +126,7 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
 
 1. Change `ServiceCatalog.sttServerRequirement` and every engine's requirement in
    `Service.swift`.
-2. Regenerate `constraints/stt-*.txt` with `scripts/compile_stt_constraints.py` (network
+2. Regenerate `server-pins/stt/constraints/stt-*.txt` with `scripts/compile_stt_constraints.py` (network
    needed). CI cannot rerun that resolver, so their digests in `provenance.json` are what makes
    any edit deliberate (a dropped transitive pin would otherwise pass CI and fail
    `--require-hashes` at install).
@@ -145,7 +145,7 @@ the release the excerpt's name and header record, and the opt-in `PIPECAT_STT_SE
    fails (see below).
 
 **Installed environments.** An intentional pin change changes the environment fingerprint (TTS:
-the wheel filename in `artifacts/tts.json`; STT: each engine's requirements, which carry
+the wheel filename in `server-pins/tts/wheel.json`; STT: each engine's requirements, which carry
 `sttServerRequirement`), so installed environments refresh their packages on next start (models
 stay cached). `RepositoryMigrationTests` fails with "Existing environment would refresh" for
 every affected service: that is the signal. Its fixture
