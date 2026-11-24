@@ -81,6 +81,69 @@ import Testing
         #expect(try tools.constraints(for: Service.whisper.info)?.path == pin.path)
     }
 
+    @Test func checkoutLocalPinOverridesFollowTheMoveOnlyWhenMissing() async throws {
+        let (toolbar, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        let root = toolbar.deletingLastPathComponent()
+        let fm = FileManager.default
+        let wheel = root.appending(path: "custom.whl")
+        try Data().write(to: wheel)
+        let newTTSPin = toolbar.appending(path: "server-pins/tts/constraints.txt")
+        let newSTTPins = toolbar.appending(path: "server-pins/stt/constraints")
+        let newSTTPin = newSTTPins.appending(path: "stt-whisper.txt")
+
+        let oldDirectory = toolbar.appending(path: "constraints")
+        let oldTTSPin = oldDirectory.appending(path: "tts.txt")
+        let oldSTTPin = oldDirectory.appending(path: "stt-whisper.txt")
+        let paths = AppPaths(
+            supportDir: root.appending(path: "support"), cacheDir: root.appending(path: "cache"),
+            logsDir: root.appending(path: "logs"), hubDir: root.appending(path: "hub"),
+            derivedModelsDir: root.appending(path: "derived"))
+        let noTools = try #require(Bundle(path: root.path))
+        func locate(ttsPin: URL, sttDirectory: URL) async throws -> Tools {
+            try await ToolLocator.locate(bundle: noTools, environment: [
+                "PIPECAT_TOOLBAR_UV": "/usr/bin/true",
+                "PIPECAT_TOOLBAR_REPO": tts.path,
+                "PIPECAT_TOOLBAR_WHEEL": wheel.path,
+                "PIPECAT_TOOLBAR_CONSTRAINTS": ttsPin.path,
+                "PIPECAT_TOOLBAR_STT_CONSTRAINTS": sttDirectory.path,
+            ], paths: paths)
+        }
+
+        let missingTargets = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
+        #expect(missingTargets.constraints?.path == oldTTSPin.path)
+        #expect(missingTargets.sttConstraints?.path == oldDirectory.path)
+
+        try fm.createDirectory(at: newSTTPins, withIntermediateDirectories: true)
+        try Data().write(to: newTTSPin)
+        try Data().write(to: newSTTPin)
+        let migrated = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
+        #expect(try migrated.constraints(for: Service.tone.info)?.path == newTTSPin.path)
+        #expect(try migrated.constraints(for: Service.whisper.info)?.path == newSTTPin.path)
+
+        let custom = toolbar.appending(path: "my-pins")
+        let customTTSPin = custom.appending(path: "tts.txt")
+        let missingCustom = try await locate(ttsPin: customTTSPin, sttDirectory: custom)
+        #expect(missingCustom.constraints?.path == customTTSPin.path)
+        #expect(missingCustom.sttConstraints?.path == custom.path)
+
+        let externalDirectory = tts.appending(path: "constraints")
+        let externalTTSPin = externalDirectory.appending(path: "tts.txt")
+        try fm.createDirectory(at: tts.appending(path: "server-pins/tts"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: tts.appending(path: "server-pins/stt/constraints"), withIntermediateDirectories: true)
+        try Data().write(to: tts.appending(path: "server-pins/tts/constraints.txt"))
+        let external = try await locate(ttsPin: externalTTSPin, sttDirectory: externalDirectory)
+        #expect(external.constraints?.path == externalTTSPin.path)
+        #expect(external.sttConstraints?.path == externalDirectory.path)
+
+        try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
+        try Data().write(to: oldTTSPin)
+        try Data().write(to: oldSTTPin)
+        let existing = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
+        #expect(try existing.constraints(for: Service.tone.info)?.path == oldTTSPin.path)
+        #expect(try existing.constraints(for: Service.whisper.info)?.path == oldSTTPin.path)
+    }
+
     @Test func theToolbarRootIsNotTheTTSCheckout() throws {
         let (_, tts, cleanup) = try Self.tree()
         defer { cleanup() }

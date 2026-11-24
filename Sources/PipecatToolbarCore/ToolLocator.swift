@@ -85,12 +85,33 @@ public enum ToolLocatorError: LocalizedError, Sendable {
 /// (a `PIPECAT_TOOLBAR_REPO` that names no checkout throws rather than falling back).
 public enum ToolLocator {
     private static let wheelManifest = "server-pins/tts/wheel.json"
+    private static let sttPinDirectory = "server-pins/stt/constraints"
+
+    private static func hasCurrentWheelManifest(in root: URL) -> Bool {
+        FileManager.default.fileExists(atPath: root.appending(path: wheelManifest).path)
+    }
 
     private static func isToolbarCheckout(_ root: URL) -> Bool {
-        let files = FileManager.default
         // A repository override can point to a toolbar checkout from before the pin move.
-        return files.fileExists(atPath: root.appending(path: wheelManifest).path)
-            || files.fileExists(atPath: root.appending(path: "artifacts/tts.json").path)
+        hasCurrentWheelManifest(in: root)
+            || FileManager.default.fileExists(atPath: root.appending(path: "artifacts/tts.json").path)
+    }
+
+    /// Honor explicit paths, except when the exact missing path moved within its own checkout.
+    private static func pinOverride(_ path: String, from legacyPath: String, to currentPath: String) -> URL {
+        let requested = URL(filePath: path)
+        let files = FileManager.default
+        guard !files.fileExists(atPath: requested.path) else { return requested }
+
+        let normalized = requested.standardizedFileURL
+        let checkout = legacyPath.split(separator: "/").reduce(normalized) { url, _ in
+            url.deletingLastPathComponent()
+        }
+        guard normalized.path == checkout.appending(path: legacyPath).path,
+              hasCurrentWheelManifest(in: checkout) else { return requested }
+
+        let relocated = checkout.appending(path: currentPath)
+        return files.fileExists(atPath: relocated.path) ? relocated : requested
     }
 
     public static func locate(
@@ -122,11 +143,15 @@ public enum ToolLocator {
         guard let uv = findUV(environment: environment) else { throw ToolLocatorError.uvNotFound }
 
         let repo = findRepositoryRoot(environment: environment)
-        let sttConstraints = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"].map { URL(filePath: $0) }
+        let sttConstraints = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"].map {
+            pinOverride($0, from: "constraints", to: sttPinDirectory)
+        }
             ?? defaultSTTConstraints(repo: repo, toolbarRoot: findToolbarRoot())
 
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
-            let constraints = environment["PIPECAT_TOOLBAR_CONSTRAINTS"].map { URL(filePath: $0) }
+            let constraints = environment["PIPECAT_TOOLBAR_CONSTRAINTS"].map {
+                pinOverride($0, from: "constraints/tts.txt", to: "server-pins/tts/constraints.txt")
+            }
             return Tools(
                 uv: uv, wheel: URL(filePath: wheelPath), constraints: constraints,
                 sttConstraints: sttConstraints, source: .override)
@@ -227,8 +252,7 @@ public enum ToolLocator {
             selected = toolbarRoot ?? repo
         }
         guard let selected else { return nil }
-        let pinDirectory = FileManager.default.fileExists(atPath: selected.appending(path: wheelManifest).path)
-            ? "server-pins/stt/constraints" : "constraints"
+        let pinDirectory = hasCurrentWheelManifest(in: selected) ? sttPinDirectory : "constraints"
         return selected.appending(path: pinDirectory)
     }
 

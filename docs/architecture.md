@@ -69,6 +69,10 @@ built `.app` always uses its bundle.
 | `PIPECAT_TOOLBAR_REPO` | Selects a toolbar or TTS source checkout. When it names a TTS checkout, STT still uses pins from the discovered toolbar checkout if available. An empty value is treated as unset. A path with no checkout at or above it fails with `repositoryOverrideNotFound`. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
+When an explicit pin override still points at a missing `constraints/tts.txt` file or
+`constraints/` directory in a current toolbar checkout, the app uses the corresponding
+`server-pins/` path in that checkout if it exists. Existing override paths take precedence.
+
 ## Runtimes
 
 Each service has one of three `ServiceRuntime` values:

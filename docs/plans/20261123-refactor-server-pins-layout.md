@@ -51,3 +51,9 @@ The sandbox blocked test loopback sockets, some macOS test subprocesses and the 
 - Swift reported 520 tests across 54 suites. The older-checkout override selected its own STT pins, and the existing-environment test confirmed that the app would reuse installed environments.
 - Python reported 806 passed and 3 skipped. Ruff formatting and lint passed.
 - The ad-hoc bundle passed strict signature verification. Its wheel matched the manifest hash, and all six bundled constraints files matched their checked-in sources.
+
+## 2026-11-24 override compatibility correction
+
+An explicit override could still point at the checkout's `constraints/tts.txt` or `constraints/` after the move. `ToolLocator` now redirects only those exact missing paths when their checkout has the current wheel manifest and the replacement exists. [Development overrides](../architecture.md#development-overrides)
+
+The regression test exercises `ToolLocator.locate` through both environment variables. It verifies the pins resolved for Tone and Whisper, and checks that existing paths, unrelated checkout paths and missing replacements keep their original behavior.
