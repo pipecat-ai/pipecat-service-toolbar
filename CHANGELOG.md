@@ -17,6 +17,7 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 | App version | Shipped as | Date |
 |---|---|---|
+| 0.4.2 | First Developer ID signed and notarized build (build 475) | 2026-11-23 |
 | 0.4.1 | New numbering; first build from this repository (build 474) | 2026-11-17 |
 | 0.4.0 | 0.9.1 (build 468) | 2026-11-16 |
 | 0.3.0 | 0.9.0 | 2026-10-31 |
@@ -27,6 +28,22 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 | 0.1.0 | 0.7.0 (first release) | 2026-10-25 |
 
 ## [Unreleased]
+
+## [0.4.2] - 2026-11-23
+
+### Added
+
+- Notarized releases. A maintainer builds a Developer ID signed, notarized and stapled disk image with
+  `just app-dmg`; it opens without a Gatekeeper warning and without a network connection. Install steps
+  are in [docs/install.md](docs/install.md); the maintainer guide is "Notarized DMG" in
+  [docs/development.md](docs/development.md).
+
+### Changed
+
+- This build is signed with the team's Developer ID certificate instead of the self-signed identity of
+  earlier builds. Its version and build are 0.4.2 (475); the app's behaviour and the server pins
+  (TTS 0.9.1, STT 0.6.0) are unchanged. See [migration and compatibility](docs/migration.md) for what the
+  signer change means for an installed copy.
 
 ## [0.4.1] - 2026-11-17
 
