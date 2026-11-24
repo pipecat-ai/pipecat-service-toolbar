@@ -1,12 +1,16 @@
 # Task: Install the app with a Homebrew cask
 
-**Status**: Not Started
+**Status**: Proposed (needs team review; not approved for implementation)
 **Component**: distribution
 **Assigned to**: Varun Singh
 **Priority**: Medium
 **Branch**: planned on `docs/homebrew-cask-plan`
 **Created**: 2026-11-23
 **Review Gates**: none
+
+> **Review needed.** This plan records a proposal and the reasoning behind it. Nobody has decided that the
+> project wants a Homebrew channel. Do not start Phase 1 until the owner answers questions 1 to 4 under
+> "Open questions".
 
 ## Objective
 
@@ -53,11 +57,28 @@ quit-refusal and installer-compatibility design of Phase 8 in
   tap PR whether `zap` removes them (default: it removes preferences and logs only, not models or
   environments).
 
-## Open questions for the owner
+## Open questions
 
-1. Who creates `pipecat-ai/homebrew-tap`? It needs organization admin access.
-2. Is a project-owned tap enough, or does the owner want a submission to Homebrew's main cask repository later?
-3. Does the cask require `--appdir=~/Applications`, or only recommend it? Default: recommend.
+Answer 1 to 4 before any implementation. 5 to 8 can wait for the tap PR.
+
+1. **Do we want a Homebrew channel at all?** The notarized DMG already installs without a Gatekeeper warning.
+   Homebrew adds `brew install` and `brew upgrade` for people who script their setup, and it is the only
+   update path besides a manual re-download, since the app does not update itself. It costs a tap to run, a
+   tap PR per release and a second install path to support. Who installs this app, and do they expect `brew`?
+2. **Who owns the tap?** Creating `pipecat-ai/homebrew-tap` needs organization admin access. The proposal is
+   that a team group owns it, with credentials in the team's password manager, so no single person holds it.
+   Decide who can merge to `Casks/`.
+3. **One shared tap or a tap inside this repository?** See Findings. The proposal is one shared tap if a second
+   Pipecat app is likely.
+4. **Visibility.** The proposal is public (see Findings).
+5. **`--appdir=~/Applications`:** required or only recommended? Default: recommended.
+6. **`zap`:** remove only preferences and logs, or also models and environments? Default: the former.
+7. **Who owns the token that bumps the tap from CI,** once the release workflow exists? Use a token limited to
+   the tap, kept in CI secrets.
+8. **Main cask repository:** is a submission to Homebrew's own cask repository wanted later?
+
+If the answer to 1 is no, update the two plans that assume Homebrew: the App Store decision record and the
+app-distribution plan. Then close this plan.
 
 ## Implementation Checklist
 
@@ -121,11 +142,34 @@ quit-refusal and installer-compatibility design of Phase 8 in
 
 ## Progress
 
-- 2026-11-23: plan drafted after v0.4.2 was published. Scope chosen by the owner: a minimal DMG cask first.
+- 2026-11-23: plan drafted after v0.4.2 was published. Scope chosen by the owner if Homebrew goes ahead: a
+  minimal DMG cask first.
+- 2026-11-23: design discussion recorded in Findings; open questions rewritten. Status is Proposed: the owner is
+  taking questions 1 to 4 to the team.
 
 ## Findings
 
 - 2026-11-23: no tap or Pipecat cask found (see Context).
+- **A tap is a separate repository.** The toolbar repository builds the DMG and holds the release. The tap holds
+  one small cask file per app (version, release URL, SHA-256) and never a binary. `brew tap` clones the whole
+  tap onto each user's machine, so keeping it small matters. One tap serves every project: each adds its own
+  file under `Casks/` with its own token. The repository must be named `homebrew-<name>` for the short
+  `pipecat-ai/tap/<token>` form to work.
+- **Alternative: a tap inside this repository,** tapped with `brew tap <org>/<repo> <URL>`. It works, but each
+  user's tap would clone the app's full history, the short install form would not work, and cask changes would
+  share this repository's merge flow. Reasonable for one app, a poor fit for a second.
+- **A private tap would defeat the purpose.** Users would need GitHub credentials just to run `brew install`,
+  and the DMG is a public release asset. A cask file holds only a version, a URL and a checksum, all already
+  public. The control that matters is who can merge to `Casks/`: require a PR and an approval, so a
+  compromised account cannot change a checksum silently.
+- **The tap bump needs a credential later.** A release workflow that opens the tap PR needs a token limited to
+  the tap, stored in CI secrets with a copy in the team's password manager, not a personal token. The minimal
+  cask needs no shared account, only org admin to create the repository.
+- **Homebrew is not needed for the app to work.** Cheaper alternatives: the DMG with an update note on the
+  Releases page, or the curl installer from the app-distribution plan (which needs the same lock and quit
+  design as its Phase 8).
+- **Two plans assume Homebrew is the main channel:** the App Store decision record ("ship through Homebrew")
+  and the app-distribution plan.
 
 ## Issues & Solutions
 

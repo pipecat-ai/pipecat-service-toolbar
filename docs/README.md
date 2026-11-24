@@ -23,5 +23,5 @@ Start with the [project README](../README.md) to build the app and connect Pipec
 - [App distribution plan](plans/20261117-feature-app-distribution.md): standalone installation and manual updates first as a GitHub alpha; Homebrew follows later using a stable release's notarized archive.
 - [Self-signed tester channel plan](plans/20261121-feature-selfsigned-tester-channel.md): interim owner-built, self-signed builds for known testers until the Apple-signed alpha is available; Homebrew stays with the Apple-signed plan.
 - [Notarized DMG plan](plans/20261123-feature-notarized-dmg.md): a Developer ID signed, notarized DMG that any maintainer builds locally with `just app-dmg`.
-- [Homebrew cask plan](plans/20261123-feature-homebrew-cask.md): a minimal cask in a project-owned tap that installs the notarized DMG; the lock and installer-interop design stays in the app-distribution plan.
+- [Homebrew cask plan](plans/20261123-feature-homebrew-cask.md): proposed, needs team review; a minimal cask in a project-owned tap that installs the notarized DMG. The lock and installer-interop design stays in the app-distribution plan.
 - [App Store decision](plans/20261117-design-app-store-distribution.md): retained decision record explaining why this route is not planned.
