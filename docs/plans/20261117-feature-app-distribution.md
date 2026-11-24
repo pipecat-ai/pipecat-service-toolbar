@@ -987,6 +987,10 @@ the Phase 7 stable release ahead of Phase 8 Homebrew work.
 
 ### Phase 8: Homebrew cask
 
+> A minimal cask that installs the notarized DMG is planned separately in
+> [Homebrew cask](20261123-feature-homebrew-cask.md). It does not implement the lock, quit refusal or installer
+> interoperability below; this phase remains the design for those.
+
 **Gate:** Gate C
 **Impl files:** new `packaging/homebrew/pipecat-service-toolbar.rb`, new `packaging/homebrew/cask.rb.in`, new `packaging/homebrew/release-manifest.txt`, new `packaging/homebrew/inputs.json`, new `docs/release-evidence/X.Y.Z-homebrew.md`, new `scripts/render_homebrew_cask.py`, `.github/workflows/test.yml`, `README.md`, `docs/development.md`, `docs/migration.md`, `AGENTS.md` (pinned release records are not version authorities), this plan
 **Test files:** `python_tests/test_distribution_contract.py`, `python_tests/test_app_installer.py`, `python_tests/test_docs.py`

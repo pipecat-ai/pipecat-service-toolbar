@@ -245,6 +245,7 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 
 ### Phase 5: Follow-ups (separate plans)
 
+- A Homebrew cask that installs the DMG: [Homebrew cask plan](20261123-feature-homebrew-cask.md).
 - Optional DMG window styling (background image, icon positions); deliberately left out to keep the packager
   dependency-free.
 - Publishing the DMG as a GitHub release asset next to the app-distribution plan's ZIP. Done for the DMG:
