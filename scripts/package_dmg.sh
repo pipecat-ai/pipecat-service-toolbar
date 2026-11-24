@@ -126,12 +126,15 @@ fi
 
 # --- 1. preflight -------------------------------------------------------------------------
 
-# Git-ignored files under Sources/ are invisible to `git status` yet SwiftPM compiles them, so they
-# could ship in an app named after a commit that lacks them. Build output elsewhere stays ignored.
+# Git-ignored Swift files under Sources/ are invisible to `git status` yet SwiftPM compiles them, so
+# they could ship in an app named after a commit that lacks them. ls-files lists each file whatever
+# status.showUntrackedFiles says; other ignored files (.DS_Store, build output) are harmless.
 check_no_ignored_sources() {
-    local ignored
-    ignored="$(git status --porcelain --ignored=matching -- Sources Package.swift | grep '^!!' || true)"
-    [[ -z "$ignored" ]] || die "git-ignored files under Sources/ would be compiled into the app:
+    local listed ignored
+    listed="$(git ls-files --others --ignored --exclude-standard -- Sources Package.swift)" \
+        || die "cannot check for git-ignored sources"
+    ignored="$(printf '%s\n' "$listed" | grep '\.swift$' || true)"
+    [[ -z "$ignored" ]] || die "git-ignored Swift files would be compiled into the app:
 $ignored
        Remove them first (every DMG maps to one commit)."
 }

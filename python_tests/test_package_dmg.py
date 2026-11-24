@@ -593,12 +593,30 @@ def test_an_ignored_source_file_is_refused_before_any_work(env):
     extra.parent.mkdir(parents=True)
     extra.write_text("x")
     r = env.run()
-    assert r.returncode == 1 and "git-ignored files under Sources/" in r.stderr
-    assert "Sources/Target/build/" in r.stderr
+    assert r.returncode == 1 and "git-ignored Swift files" in r.stderr
+    assert "Sources/Target/build/Extra.swift" in r.stderr
     assert not [
         c for c in env.calls() if c.startswith(("hdiutil", "ditto", "xcrun notarytool submit"))
     ]
     assert env.published() == []
+
+
+def test_the_ignored_source_check_holds_when_git_hides_untracked_files(env):
+    _git(env.root, "config", "status.showUntrackedFiles", "no")
+    extra = env.root / "Sources/Target/build/Extra.swift"
+    extra.parent.mkdir(parents=True)
+    extra.write_text("x")
+    r = env.run()
+    assert r.returncode == 1 and "git-ignored Swift files" in r.stderr
+
+
+def test_an_ignored_ds_store_under_sources_is_harmless(env):
+    (env.root / ".gitignore").write_text("dist/\n.env\nbuild/\n.DS_Store\n")
+    _git(env.root, "commit", "-q", "-am", "ignore .DS_Store")
+    (env.root / "Sources/Target").mkdir(parents=True)
+    (env.root / "Sources/Target/.DS_Store").write_text("x")
+    r = env.run()
+    assert r.returncode == 0, r.stderr
 
 
 def test_ignored_build_output_outside_sources_is_allowed(env):
