@@ -297,6 +297,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   publishing, version/build from the commit, ignored-source and post-build checks, a signature check that fails
   closed, argument-passed manifest values). Full Python suite: 804+ passed, 3 skipped. The real notarized run
   above predates these changes and is to be repeated on the final commit before merge.
+- 2026-11-23: PR #5 merged. `just app-dmg` was run on the merged `main` with the hardened packager: both
+  submissions accepted and stapled, the three files published, a quarantined copy passed `spctl`. Recorded
+  in Findings. The UTM-guest and second-maintainer items in Phase 4 are still open.
 
 ## Findings
 
@@ -311,6 +314,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - The DMG's own `spctl` check (`-t open --context context:primary-signature`, on a copy marked as downloaded)
   reported `source=Notarized Developer ID`. `stapler validate` passed on the DMG's app. The
   `codesign -dvvv` output and the clean-guest checks in Phase 4 are still to do.
+- Post-merge validation run (`main` at the merge commit `8deeab1`): `Pipecat-Service-Toolbar-0.4.1-b474-8deeab1.dmg`,
+  manifest `notarized: true`, SHA-256 `c8be64f79fa946de0b1ce2d058ec706ce6686a544b139ad26675f3db76ff8423`. `spctl`
+  accepted a quarantined copy as notarized and `stapler validate` passed. This DMG is a validation build, not a release.
 
 ## Issues & Solutions
 
