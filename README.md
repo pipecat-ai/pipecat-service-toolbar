@@ -11,6 +11,11 @@ Services started by the toolbar stop when it quits; external servers stay runnin
 ## Quickstart
 
 Requires **Apple Silicon and macOS 15+**; Apple Speech needs **macOS 26+**.
+
+**Got a DMG?** Open it, drag the app to Applications and launch it; see
+[Install the app](docs/install.md). Maintainers building a shareable DMG: follow
+[Notarized DMG](docs/development.md#notarized-dmg); the credentials are in the team's password manager.
+
 To build from source, install **Xcode 26+** (including the macOS 26 SDK),
 [uv](https://docs.astral.sh/uv/), and `just`.
 

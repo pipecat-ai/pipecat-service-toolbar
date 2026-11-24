@@ -389,6 +389,11 @@ sequenceDiagram
 Status (2026-11-22): Phases 1-4 are implemented on `feature/selfsigned-tester-channel` (PR #4 open, CI green at
 `02403c8`); Phases 5-6 are pending and owner-run. The `**Status**` header above the marker is not edited.
 
+Update (2026-11-23): the Developer ID certificate that the Context and Objective above call "pending" is now
+available, and a notarized DMG can be built locally (`just app-dmg`; see
+[Notarized DMG](20261123-feature-notarized-dmg.md), PR #5). This plan's text above the marker is not edited.
+Whether the channel should still run, or be retired early (Phase 6), is the owner's decision; nothing here changes it.
+
 - [x] Phase 1: Signer pin and verifier
 - [x] Phase 2: Package a tester build
 - [x] Phase 3: Install path

@@ -77,3 +77,15 @@ __pycache__/
 
 # Tester drops (just app-tester-package)
 dist/
+
+# Local signing material, release settings and private maintainer notes: never commit
+.local_certificates/
+.private/
+.env
+# Certificates and keys saved anywhere else in the tree (Developer ID .p12, notary .p8, .cer)
+*.p12
+*.p8
+*.cer
+
+# JetBrains IDE settings
+.idea/

@@ -1499,6 +1499,14 @@ and authenticated public or archived bytes, including the failed and withdrawn r
 
 Planning only. Renamed and expanded from the original Homebrew plan; no installer or release code implemented.
 
+Status (2026-11-23): the Developer ID certificate this plan waited on now exists. A maintainer Mac can build a
+notarized, stapled DMG locally (`SIGN_MODE=release`, `just app-dmg`; see
+[Notarized DMG](20261123-feature-notarized-dmg.md), PR #5), so the "identity not yet provisioned" and
+"release signing needs a secure-timestamp mode" statements above the marker are out of date (the marker text is
+not edited). That local flow is not this plan's protected, ZIP-based release workflow and satisfies none of
+Phases 1-8. The Phase 2 packager is in progress on `feature/app-distribution-packager` (one commit, no PR when
+checked). Homebrew is still Phase 8 and has not started.
+
 - [ ] Phase 1 — Owner qualifies tools and release prerequisites
 - [ ] Phase 2 — Gate A merges the protected packager
 - [ ] Phase 3 — Owner validates signing and records the signed predecessor
