@@ -4,7 +4,9 @@ certificate, network or macOS needed; runs under /bin/bash (3.2 on macOS)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import plistlib
 import re
 import shutil
 import subprocess
@@ -101,23 +103,62 @@ esac
     "sleep": "exit 0\n",
     "ditto": r"""
 echo "ditto $*" >> "$STUB_LOG"
+# STUB_BEFORE_DITTO: a shell command run before staging the app (another run replacing build/
+# after the packager's Git check).
+if [ "$1" != "-c" ] && [ -n "${STUB_BEFORE_DITTO:-}" ]; then /bin/bash -c "$STUB_BEFORE_DITTO"; fi
 if [ "$1" = "-c" ]; then echo zip > "${@: -1}"; else cp -R "$1" "$2"; fi
+""",
+    # The real ln, except for publishing hard links (two arguments, no -s) when STUB_LN asks:
+    #   nolinks   fail like a file system without hard links;
+    #   dir-race  a directory appears at the name just before ln (ln then links into it);
+    #   term-<n>  after the n-th publishing link succeeds, TERM the packager (an interrupt).
+    "ln": r"""
+if [ "$1" = "-s" ] || [ "$#" -ne 2 ] || [ -z "${STUB_LN:-}" ]; then exec /bin/ln "$@"; fi
+n=$(( $(cat "$STUB_DIR/ln" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/ln"
+case "$STUB_LN" in
+  nolinks) echo "ln: $2: Operation not supported" >&2; exit 1 ;;
+  dir-race) [ "$n" = 1 ] && mkdir "$2"; exec /bin/ln "$@" ;;
+  term-*)
+    /bin/ln "$@" || exit
+    if [ "$n" = "${STUB_LN#term-}" ]; then
+      # The outermost ancestor running the packager (ln may run in a command substitution).
+      pid=$PPID; target=""
+      while [ "${pid:-1}" -gt 1 ]; do
+        case "$(ps -o command= -p "$pid")" in *package_dmg.sh*) target=$pid ;; *) break ;; esac
+        pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+      done
+      kill -TERM "$target"
+    fi ;;
+esac
 """,
 }
 
 
 # Stands in for scripts/build_app.sh: records what package_dmg.sh hands it, optionally runs
-# STUB_BUILD_HOOK (something changing the checkout mid-build), and leaves a bundle in build/.
+# STUB_BUILD_HOOK (something changing the checkout mid-build), and leaves a bundle in build/
+# whose Info.plist carries app-version.json's version and build, as the real script's does.
 _BUILD_APP = r"""#!/bin/bash
 set -e
 printf 'SIGN_IDENTITY=%s\nSIGN_MODE=%s\nCONFIG=%s\n' "${SIGN_IDENTITY:-}" "${SIGN_MODE:-}" \
   "${CONFIG:-}" > "$STUB_DIR/build-env"
 if [ -n "${STUB_BUILD_HOOK:-}" ]; then /bin/bash -c "$STUB_BUILD_HOOK"; fi
-app="$(cd "$(dirname "$0")/.." && pwd)/build/Pipecat Service Toolbar.app"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+app="$root/build/Pipecat Service Toolbar.app"
 mkdir -p "$app/Contents/Resources/bin"
 : > "$app/Contents/Resources/bin/uv"
 chmod 755 "$app/Contents/Resources/bin/uv"
+python3 -c 'import json,plistlib,sys
+v = json.load(open(sys.argv[1]))
+plistlib.dump({"CFBundleShortVersionString": str(v["version"]), "CFBundleVersion": str(v["build"])},
+              open(sys.argv[2], "wb"))' "$root/app-version.json" "$app/Contents/Info.plist"
 """
+
+
+def _write_plist(app: Path, version: object, build: object) -> None:
+    (app / "Contents").mkdir(parents=True, exist_ok=True)
+    (app / "Contents/Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleShortVersionString": str(version), "CFBundleVersion": str(build)})
+    )
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -153,6 +194,7 @@ class Env:
         (bundle / "Contents/Resources/bin").mkdir(parents=True)
         (bundle / "Contents/Resources/bin/uv").write_text("")
         (bundle / "Contents/Resources/bin/uv").chmod(0o755)
+        _write_plist(bundle, "1.2.3", 42)
         self.bundle = bundle
         (self.root / "app-version.json").write_text(json.dumps({"version": "1.2.3", "build": 42}))
         (self.root / ".gitignore").write_text("dist/\n.env\nbuild/\n")
@@ -167,9 +209,11 @@ class Env:
         *args: str,
         dotenv: str | None = f"APPLE_TEAM_ID={TEAM}\n",
         bundle: bool = True,
+        script: str | None = None,
         **extra: str,
     ):
-        """bundle=True packages the prebuilt test bundle (DMG_APP_BUNDLE); False runs build_app.sh."""
+        """bundle=True packages the prebuilt test bundle (DMG_APP_BUNDLE); False runs build_app.sh.
+        script: how to name the packager on the command line (default: its absolute path)."""
         if dotenv is not None:
             (self.root / ".env").write_text(dotenv)
         env = {
@@ -184,7 +228,7 @@ class Env:
             **extra,
         }
         return subprocess.run(
-            ["/bin/bash", str(self.root / "scripts/package_dmg.sh"), *args],
+            ["/bin/bash", script or str(self.root / "scripts/package_dmg.sh"), *args],
             cwd=self.root,
             env=env,
             capture_output=True,
@@ -207,6 +251,7 @@ class Env:
             json.dumps({"version": version, "build": build})
         )
         _git(self.root, "commit", "-q", "-am", "version")
+        _write_plist(self.bundle, version, build)
 
 
 @pytest.fixture
@@ -234,8 +279,10 @@ def test_happy_path_publishes_dmg_checksum_and_manifest(env):
     assert manifest["notarized"] is True
     assert manifest["notary_submissions"] == {"app": "sub-1", "dmg": "sub-2"}
     assert manifest["test_bundle"] is True
-    sha = (env.out / f"{DMG}.sha256").read_text().split()
-    assert sha == [manifest["sha256"], DMG]
+    # The checksum and manifest both describe the published bytes.
+    digest = hashlib.sha256((env.out / DMG).read_bytes()).hexdigest()
+    assert (env.out / f"{DMG}.sha256").read_text() == f"{digest}  {DMG}\n"
+    assert manifest["sha256"] == digest
     # No scratch folder is left behind, and the mount was detached.
     assert not [p for p in env.out.iterdir() if p.name.startswith(".")]
     assert (env.stub_dir / "detached").exists()
@@ -516,6 +563,10 @@ def test_name_and_message_say_whether_it_may_be_shared(env, skip, bundle, suffix
         pytest.param(
             """echo '{"version": "9.9.9", "build": 1}' > app-version.json""", id="edited-version"
         ),
+        pytest.param(
+            "git config status.showUntrackedFiles no && mkdir -p Sources && echo x > Sources/New.swift",
+            id="untracked-file-hidden-by-config",
+        ),
     ],
 )
 def test_a_checkout_changed_during_the_build_is_refused(env, hook):
@@ -527,26 +578,175 @@ def test_a_checkout_changed_during_the_build_is_refused(env, hook):
     assert env.published() == []
 
 
+def test_an_untracked_file_hidden_by_config_is_refused_before_any_work(env):
+    _git(env.root, "config", "status.showUntrackedFiles", "no")
+    (env.root / "Sources").mkdir()
+    (env.root / "Sources/New.swift").write_text("x")
+    r = env.run()
+    assert r.returncode == 1 and "not clean" in r.stderr
+    assert not [c for c in env.calls() if c.startswith(("hdiutil", "ditto"))]
+
+
+def test_version_and_commit_come_from_the_same_checkout(env):
+    # A version-bump commit lands just before the packager reads HEAD: the name and manifest must
+    # carry the version of the commit they record.
+    real = shutil.which("git")
+    (env.bin / "git").write_text(
+        "#!/bin/bash\n"
+        f'if [ "$#" = 2 ] && [ "$1 $2" = "rev-parse HEAD" ] && [ ! -e "$STUB_DIR/bumped" ]; then\n'
+        '  : > "$STUB_DIR/bumped"\n'
+        """  echo '{"version": "9.9.9", "build": 1}' > app-version.json\n"""
+        f"  '{real}' commit -q -am bump\n"
+        "fi\n"
+        f"exec '{real}' \"$@\"\n"
+    )
+    (env.bin / "git").chmod(0o755)
+    r = env.run(bundle=False)
+    assert r.returncode == 0, r.stderr
+    (manifest_path,) = env.out.glob("*.manifest.json")
+    manifest = json.loads(manifest_path.read_text())
+    committed = json.loads(_git(env.root, "show", f"{manifest['commit']}:app-version.json"))
+    assert (manifest["version"], manifest["build"]) == (committed["version"], committed["build"])
+    assert manifest_path.name == "Pipecat-Service-Toolbar-9.9.9-b1.manifest.json"
+
+
+_APP_PLIST = f"build/{APP}/Contents/Info.plist"
+
+
+@pytest.mark.parametrize(
+    ("bundle", "replace"),
+    [
+        pytest.param(
+            False,
+            f"""python3 -c 'import plistlib; plistlib.dump({{"CFBundleShortVersionString": "9.9.9",
+ "CFBundleVersion": "7"}}, open("{_APP_PLIST}", "wb"))'""",
+            id="build-replaced",
+        ),
+        pytest.param(False, f"rm '{_APP_PLIST}'", id="no-plist"),
+        pytest.param(True, None, id="test-bundle-of-another-version"),
+    ],
+)
+def test_the_staged_app_must_carry_the_commits_version(env, bundle, replace):
+    # build/ is shared: another run may replace the app after the Git check.
+    if bundle:
+        _write_plist(env.bundle, "1.2.3", 41)
+    r = env.run(bundle=bundle, **({"STUB_BEFORE_DITTO": replace} if replace else {}))
+    assert r.returncode == 1
+    assert "not 1.2.3 build 42" in r.stderr and "Nothing was published" in r.stderr
+    assert not [c for c in env.calls() if c.startswith(("xcrun notarytool submit", "hdiutil"))]
+    assert env.published() == []
+
+
+def test_a_relative_invocation_works_with_cdpath_set(env):
+    r = env.run("--doctor", script="scripts/package_dmg.sh", CDPATH=".")
+    assert r.returncode == 0, r.stderr
+    assert "Ready: just app-dmg" in r.stdout
+
+
 # --- publish contract: exclusive, all or nothing, retry works ------------------------------
 
 _SET = [f"{DMG}", f"{DMG}.sha256", "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.manifest.json"]
 
 
+def _snapshot(path: Path) -> object:
+    """What is at path, without following a final symlink."""
+    if path.is_symlink():
+        return ("link", str(path.readlink()))
+    if path.is_dir():
+        return ("dir", sorted(p.name for p in path.iterdir()))
+    return ("file", path.read_bytes()) if path.exists() else None
+
+
+# Destination states another party can create after this run's preflight check. Each is refused,
+# left exactly as it was, and none of this run's files remain; once moved away, a retry publishes.
+_FOREIGN = {
+    "regular-file": "echo other-run > '{p}'",
+    "directory": "mkdir '{p}'",
+    "dangling-symlink": "ln -s nowhere '{p}'",
+    "symlink-to-directory": "mkdir -p '{elsewhere}' && ln -s '{elsewhere}' '{p}'",
+}
+
+
 @pytest.mark.parametrize("taken", _SET, ids=["dmg", "sha256", "manifest"])
-def test_publish_never_replaces_a_file_and_leaves_nothing_partial(env, taken):
-    # Another run of the same commit publishes `taken` after this run's preflight check.
+@pytest.mark.parametrize("state", list(_FOREIGN))
+def test_publish_refuses_any_existing_name_and_leaves_nothing_partial(env, state, taken):
     planted = env.out / taken
-    r = env.run(STUB_DURING_DETACH=f"echo other-run > '{planted}'")
+    elsewhere = env.tmp / "elsewhere"
+    plant = _FOREIGN[state].format(p=planted, elsewhere=elsewhere)
+    r = env.run(STUB_DURING_DETACH=plant)
     assert r.returncode == 1
     assert f"cannot publish dist/dmg/{taken}" in r.stderr
-    # The other run's file is untouched, and none of this run's files remain.
+    # The other party's entry is untouched (nothing linked into a directory), and none of this
+    # run's files remain.
     assert env.published() == [taken]
-    assert planted.read_text() == "other-run\n"
+    reference = env.tmp / "reference"
+    subprocess.run(["/bin/bash", "-c", _FOREIGN[state].format(p=reference, elsewhere=elsewhere)])
+    assert _snapshot(planted) == _snapshot(reference)
+    assert not elsewhere.exists() or not list(elsewhere.iterdir())
     # Once it is moved away, a retry publishes the full set.
-    planted.unlink()
+    if planted.is_dir() and not planted.is_symlink():
+        planted.rmdir()
+    else:
+        planted.unlink()
     r = env.run()
     assert r.returncode == 0, r.stderr
     assert env.published() == sorted(_SET)
+
+
+def test_publish_to_an_absent_name_publishes_the_full_set(env):
+    r = env.run()
+    assert r.returncode == 0, r.stderr
+    assert env.published() == sorted(_SET)
+
+
+def test_a_name_holding_this_runs_own_file_is_refused_and_removed(env):
+    # Same inode as this run's scratch DMG: refused (it was not this run's link), and since it is
+    # this run's bytes, cleanup removes it, so a plain retry works.
+    planted = env.out / DMG
+    r = env.run(STUB_DURING_DETACH=f"/bin/ln '{env.out}'/.dmg-package.*/'{DMG}' '{planted}'")
+    assert r.returncode == 1
+    assert f"cannot publish dist/dmg/{DMG}" in r.stderr
+    assert env.published() == []
+    assert env.run().returncode == 0
+    assert env.published() == sorted(_SET)
+
+
+def test_a_directory_appearing_just_before_ln_is_not_published_into(env):
+    # ln links INTO a directory and succeeds: the packager must notice and take the link back.
+    r = env.run(STUB_LN="dir-race")
+    assert r.returncode == 1
+    assert f"cannot publish dist/dmg/{DMG}" in r.stderr
+    assert env.published() == [DMG]
+    assert (env.out / DMG).is_dir() and not list((env.out / DMG).iterdir())
+
+
+@pytest.mark.parametrize(
+    ("at", "kept"),
+    [
+        pytest.param("1", [], id="after-dmg"),
+        pytest.param("2", [], id="after-sha256"),
+        pytest.param("3", sorted(_SET), id="after-manifest"),
+    ],
+)
+def test_an_interrupt_while_publishing_leaves_all_or_nothing(env, at, kept):
+    r = env.run(STUB_LN=f"term-{at}")
+    assert r.returncode != 0
+    assert env.published() == kept
+    # No scratch is left, and a retry is never blocked by this run.
+    if not kept:
+        assert env.run().returncode == 0
+        assert env.published() == sorted(_SET)
+
+
+def test_without_hard_links_the_notarized_dmg_is_kept_unpublished(env):
+    # Two notarizations must not be lost on a file system that cannot hard-link.
+    r = env.run(STUB_LN="nolinks")
+    assert r.returncode == 1
+    assert "Operation not supported" in r.stderr and "does not support hard links" in r.stderr
+    kept = "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.unpublished.dmg"
+    assert env.published() == [kept]
+    digest = hashlib.sha256((env.out / kept).read_bytes()).hexdigest()
+    assert f"sha256 {digest}" in r.stderr
 
 
 def test_a_rehearsal_publish_may_replace_files(env):

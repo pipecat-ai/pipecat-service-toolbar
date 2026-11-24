@@ -66,7 +66,8 @@ Verified against `main` at `1cfe741` on 2026-11-23:
   `Pipecat-Service-Toolbar-<version>-b<build>.dmg` (no spaces, so links and shells need no quoting); a build from a commit other than the version-bump commit
   appends `-<shortsha>`.
 - **Clean tree required.** `app-dmg` refuses a dirty tree, so every DMG maps to one commit, recorded in
-  `<name>.manifest.json` with the SHA-256, version, build, Team ID and notarization submission IDs.
+  `<name>.manifest.json` with the DMG name, SHA-256, version, build, commit, notarized flag, notarization
+  submission IDs, test-bundle flag and creation time (no Team ID).
 - **Output** goes to `dist/dmg/` (already ignored through `dist/`).
 
 ## Requirements
@@ -230,7 +231,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - [ ] Install Kokoro and Whisper and run Try it, proving uv and uv-managed CPython run under the notarized,
       hardened app. Grant Microphone; relaunch; the grant persists.
 - [ ] Replace an existing self-signed install: data and models are kept; permissions prompt once.
-- [ ] Record `spctl`, `stapler validate` and `codesign -dvvv` output in `## Findings`.
+- [ ] Record only pass or fail for each `spctl`, `stapler validate` and `codesign -dvvv` check in
+      `## Findings`; never paste their output, the Team ID or the signing authority's name into this
+      public plan.
 
 ### Phase 5: Follow-ups (separate plans)
 

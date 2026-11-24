@@ -61,7 +61,7 @@ check() {
         *com.apple.security.get-task-allow*) fail "$label" "has the get-task-allow entitlement" ;;
     esac
     if [[ "$label" == "app" ]]; then
-        printf '%s\n' "$info" | grep -qx "Identifier=$BUNDLE_ID_EXPECTED" \
+        printf '%s\n' "$info" | grep -qxF "Identifier=$BUNDLE_ID_EXPECTED" \
             || fail "$label" "Identifier is not $BUNDLE_ID_EXPECTED"
     fi
 }

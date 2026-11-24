@@ -408,6 +408,12 @@ def test_verify_accepts_no_entitlements(tmp_path, fake_app):
             "Identifier",
             id="bundle-id",
         ),
+        # The identifier is a fixed string: its periods must not match any character.
+        pytest.param(
+            {"dv": _GOOD_DV.replace("ai.pipecat.ServiceToolbar", "ai-pipecat-ServiceToolbar")},
+            "Identifier",
+            id="bundle-id-lookalike",
+        ),
         pytest.param(
             {"ent": "<key>com.apple.security.get-task-allow</key><true/>"},
             "get-task-allow",

@@ -289,8 +289,11 @@ when HEAD is the commit that last changed `app-version.json`, otherwise with `-<
 If `dist/dmg/` already holds a DMG, checksum or manifest of the same name, `app-dmg` refuses before
 building: that file may already have been shared, and a rebuild would change its checksum. Move the old
 files out of `dist/dmg/` to rebuild the same commit, or commit a change and bump the build. Publishing
-is all or nothing and never replaces a file: a run that fails while publishing removes what it put in
-`dist/dmg/`, so the next run can retry.
+is all or nothing and never replaces a file: a run that fails or is interrupted while publishing removes
+what it put in `dist/dmg/`, so the next run can retry. On a file system without hard links (exFAT, some
+network shares) nothing is published and the notarized DMG is kept as `<name>.unpublished.dmg`. Run only
+one `just app-dmg` per checkout at a time: runs share `build/`, and a run refuses an app whose version
+or build does not match its commit.
 
 Share the `.dmg` and its `.sha256`. The manifest (commit, checksum, notary submission IDs) is your
 record. Recipients follow [Install the app](install.md).

@@ -21,9 +21,10 @@
 #   4. DMG (app + Applications link) with hdiutil, sign it, notarize it, staple it, assess it;
 #   5. mount the DMG read-only and re-verify the app inside;
 #   6. publish .dmg, .dmg.sha256 and .manifest.json (last) from scratch into dist/dmg/.
-#      A notarized DMG is published all or nothing and never over an existing file: each is
-#      hard-linked into place (fails if the name exists), and a failure removes what this run
-#      linked, so a retry is not blocked. A rehearsal overwrites an earlier rehearsal.
+#      A notarized DMG is published all or nothing and never over an existing name: each is
+#      hard-linked into place, and cleanup removes any published name that is this run's own
+#      scratch file unless all three are in place, so a retry is not blocked. A rehearsal
+#      overwrites an earlier rehearsal.
 # A rejected submission saves Apple's log in dist/dmg/ and publishes nothing.
 #
 # Name: Pipecat-Service-Toolbar-<version>-b<build>.dmg when HEAD is the commit that last changed
@@ -34,8 +35,10 @@
 #   assessments; the name ends in -UNNOTARIZED. Never share one.
 # DMG_APP_BUNDLE=<app>: TEST ONLY. Package this prebuilt bundle instead of building; the manifest
 #   records it. Never share one.
+# Only one `just app-dmg` per checkout at a time: runs share build/.
 # Bash 3.2 compatible.
 set -euo pipefail
+unset CDPATH  # `cd dir` would print the path and corrupt the command substitution below
 
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(dirname "$SCRIPTS")"
@@ -124,7 +127,8 @@ fi
 # --- 1. preflight -------------------------------------------------------------------------
 
 step "Checking the working tree and signing setup"
-TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
+# --untracked-files=all: status.showUntrackedFiles=no must not hide a source file from the check.
+TREE_STATUS="$(git status --porcelain --untracked-files=all)" || die "cannot check whether the working tree is clean"
 [[ -z "$TREE_STATUS" ]] || die "working tree is not clean; commit or stash first (every DMG maps to one commit)"
 check_team
 HASH="$(resolve_identity)" || exit 1
@@ -134,18 +138,20 @@ if [[ -z "$SKIP_NOTARIZE" ]]; then
     echo "    notary profile '$NOTARY_PROFILE' OK"
 fi
 
-read_json() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \
-    "$ROOT/app-version.json" "$1"; }
-VERSION="$(read_json version)"
-BUILD="$(read_json build)"
+# The version and build come from the commit the DMG is named after, not the working tree, so a
+# checkout finishing between the two reads cannot pair one commit with another's version.
+COMMIT="$(git rev-parse HEAD)"
+read_json() { git show "$COMMIT:app-version.json" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
+VERSION="$(read_json version)" || die "cannot read app-version.json at $COMMIT"
+BUILD="$(read_json build)" || die "cannot read app-version.json at $COMMIT"
 # Both become part of file names: refuse anything but a plain version and build number.
 VERSION_RE='^[0-9]+(\.[0-9]+)*([-+.][0-9A-Za-z.]+)*$'
 [[ "$VERSION" =~ $VERSION_RE ]] || die "app-version.json: version '$VERSION' is not a plain version (like 1.2.3)"
 [[ "$BUILD" =~ ^[0-9]+$ ]] || die "app-version.json: build '$BUILD' is not a whole number"
-COMMIT="$(git rev-parse HEAD)"
-SHORT="$(git rev-parse --short=7 HEAD)"
+SHORT="$(git rev-parse --short=7 "$COMMIT")"
 NAME="Pipecat-Service-Toolbar-$VERSION-b$BUILD"
-[[ "$(git log -1 --format=%H -- app-version.json)" == "$COMMIT" ]] || NAME="$NAME-$SHORT"
+[[ "$(git log -1 --format=%H "$COMMIT" -- app-version.json)" == "$COMMIT" ]] || NAME="$NAME-$SHORT"
 [[ -z "$SKIP_NOTARIZE" ]] || NAME="$NAME-UNNOTARIZED"
 # A leftover DMG_APP_BUNDLE must never yield a normally named, shareable DMG.
 [[ -z "${DMG_APP_BUNDLE:-}" ]] || NAME="$NAME-TESTBUNDLE"
@@ -153,7 +159,8 @@ DMG="$NAME.dmg"
 echo "    $DMG"
 # A notarized DMG may already have been shared: a rebuild would change its bytes and checksum under
 # the same name, so refuse before spending two notarizations. Rehearsals are never shared.
-if [[ -z "$SKIP_NOTARIZE" && ( -e "$OUT/$DMG" || -e "$OUT/$DMG.sha256" || -e "$OUT/$NAME.manifest.json" ) ]]; then
+taken() { [[ -e "$OUT/$1" || -L "$OUT/$1" ]]; }  # in any form, a dangling link included
+if [[ -z "$SKIP_NOTARIZE" ]] && { taken "$DMG" || taken "$DMG.sha256" || taken "$NAME.manifest.json"; }; then
     die "dist/dmg/$DMG already exists (this commit was built before; it may have been shared). Move it, its .sha256 and its manifest out of dist/dmg to rebuild, or commit a change and bump the build in app-version.json."
 fi
 
@@ -172,7 +179,8 @@ fi
 # The name and manifest record COMMIT, read before the build: the build must have seen that commit.
 [[ "$(git rev-parse HEAD)" == "$COMMIT" ]] \
     || die "HEAD moved off $COMMIT during the build; the DMG would not match its name. Nothing was published."
-TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
+TREE_STATUS="$(git status --porcelain --untracked-files=all)" \
+    || die "cannot check whether the working tree is clean"
 [[ -z "$TREE_STATUS" ]] \
     || die "the working tree changed during the build; the DMG would not match commit $COMMIT. Nothing was published."
 
@@ -180,15 +188,28 @@ TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working
 
 SCRATCH=""
 MOUNT=""
-CREATED=()  # files this run linked into dist/dmg while publishing; emptied once all are in place
+PUBLISH=("$DMG" "$DMG.sha256" "$NAME.manifest.json")  # manifest last
+
+# ours <name>: dist/dmg/<name> is this run's scratch file (same inode), whoever's link put it there.
+ours() { [[ -n "$SCRATCH" && -e "$OUT/$1" && "$OUT/$1" -ef "$SCRATCH/$1" ]]; }
+
+# Removes this run's files from dist/dmg unless all of them are published. Identity, not a record
+# of what was linked: a signal between `ln` and any bookkeeping cannot leave an unknown file, and a
+# file another run published is never this run's inode, so it is never removed.
+unpublish_partial() {
+    local f complete=1
+    for f in "${PUBLISH[@]}"; do ours "$f" || complete=""; done
+    [[ -z "$complete" ]] || return 0
+    for f in "${PUBLISH[@]}"; do
+        if ours "$f"; then rm -f "$OUT/$f"; fi
+    done
+}
+
 cleanup() {
     if [[ -n "$MOUNT" ]]; then
         hdiutil detach -quiet "$MOUNT" 2>/dev/null || hdiutil detach -force -quiet "$MOUNT" 2>/dev/null || true
     fi
-    local f
-    if ((${#CREATED[@]} > 0)); then
-        for f in "${CREATED[@]}"; do rm -f "$OUT/$f"; done
-    fi
+    unpublish_partial
     [[ -z "$SCRATCH" ]] || rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
@@ -197,6 +218,19 @@ SCRATCH="$(mktemp -d "$OUT/.dmg-package.XXXXXX")"
 STAGE="$SCRATCH/stage"
 mkdir "$STAGE"
 ditto "$BUNDLE" "$STAGE/$APP_NAME"
+
+# build/ is shared: another build may have replaced it after the Git check above. The staged copy
+# is what gets notarized, so it must carry this commit's version and build.
+plist_value() {
+    python3 -c 'import plistlib,sys
+try:
+    with open(sys.argv[1], "rb") as f: print(plistlib.load(f).get(sys.argv[2], ""))
+except Exception: print("")' "$STAGE/$APP_NAME/Contents/Info.plist" "$1"
+}
+STAGED_VERSION="$(plist_value CFBundleShortVersionString)"
+STAGED_BUILD="$(plist_value CFBundleVersion)"
+[[ "$STAGED_VERSION" == "$VERSION" && "$STAGED_BUILD" == "$BUILD" ]] \
+    || die "the app to package is version '${STAGED_VERSION:-?}' build '${STAGED_BUILD:-?}', not $VERSION build $BUILD of commit $COMMIT (did another build replace it?). Nothing was published."
 
 SUBMISSIONS=""
 
@@ -329,6 +363,9 @@ json.dump({
 PY
 
 step "Publishing into dist/dmg"
+# Unlike package_tester.sh, this needs no lock and no signal masking: a hard link never replaces a
+# name, so two runs cannot publish over each other, and cleanup decides by inode what is this run's,
+# so an interrupt at any point leaves either the full set or none of this run's files.
 if [[ -n "$SKIP_NOTARIZE" ]]; then
     # A rehearsal is never shared, so it may replace an earlier rehearsal of the same name.
     rm -f "$OUT/$NAME.manifest.json"
@@ -336,15 +373,33 @@ if [[ -n "$SKIP_NOTARIZE" ]]; then
     mv -f "$SCRATCH/$DMG.sha256" "$OUT/$DMG.sha256"
     mv -f "$SCRATCH/$NAME.manifest.json" "$OUT/$NAME.manifest.json"
 else
-    # All or nothing, and never over a file another run published since the preflight check: ln
-    # refuses an existing name (scratch is in dist/dmg, so it is the same file system), and on any
-    # failure cleanup removes the files this run linked, so a retry is not blocked.
-    for f in "$DMG" "$DMG.sha256" "$NAME.manifest.json"; do
-        ln "$SCRATCH/$f" "$OUT/$f" 2>/dev/null \
-            || die "cannot publish dist/dmg/$f (did another run of this commit publish it?). Nothing of this run was published."
-        CREATED+=("$f")
+    # All or nothing, and never over a name another run published since the preflight check. ln
+    # refuses an existing file, but links INTO a directory (or a link to one), so any existing name
+    # is refused first and the link is checked afterwards. Scratch is in dist/dmg: same file system.
+    for f in "${PUBLISH[@]}"; do
+        if taken "$f"; then
+            die "cannot publish dist/dmg/$f: it appeared during this run (another run of this commit?). Nothing of this run was published."
+        fi
+        if ! LN_ERR="$(ln "$SCRATCH/$f" "$OUT/$f" 2>&1)"; then
+            if taken "$f"; then
+                die "cannot publish dist/dmg/$f: $LN_ERR
+       It exists now (another run of this commit?). Nothing of this run was published."
+            fi
+            # The file system cannot hard-link: keep the twice-notarized DMG under a name that is
+            # plainly unpublished rather than losing it with scratch.
+            unpublish_partial
+            mv -f "$SCRATCH/$DMG" "$OUT/$NAME.unpublished.dmg"
+            die "cannot publish dist/dmg/$f: $LN_ERR
+       The file system holding dist/dmg does not support hard links, which publishing needs. The
+       notarized DMG was kept as dist/dmg/$NAME.unpublished.dmg (sha256 $SHA256);
+       move the checkout to an APFS or HFS+ volume and run again. Nothing was published."
+        fi
+        if ! ours "$f"; then
+            # A directory appeared between the check and ln: ln linked into it. Take that back.
+            if [[ -d "$OUT/$f" && "$OUT/$f/$f" -ef "$SCRATCH/$f" ]]; then rm -f "$OUT/$f/$f"; fi
+            die "cannot publish dist/dmg/$f: something else appeared there during this run. Nothing of this run was published."
+        fi
     done
-    CREATED=()
 fi
 
 step "Done"
