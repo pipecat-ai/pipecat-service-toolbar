@@ -16,7 +16,9 @@ extraction provenance and compatibility: docs/migration.md.
 - Keep bundle identifier `ai.pipecat.ServiceToolbar`, signing identity continuity,
   preference keys, AppPaths layout, cache precedence, and environment fingerprints compatible.
 - App version/build: app-version.json (only there; notes in CHANGELOG.md, which is the app's, not the
-  servers'). Server artifact: server-pins/tts/wheel.json. Unrelated numbers. Build numbers only increase.
+  servers'). Build numbers only increase.
+- Server pins: `server-pins/tts/` holds the TTS wheel manifest and shared constraints.
+  `server-pins/stt/constraints/` holds the per-engine STT constraints.
   App releases must not implicitly upgrade server packages or force model downloads.
 - Moving a server pin: follow "Moving a server pin" in docs/migration.md; test_server_pins.py checks it,
   and CI also runs `just tts-constraints-check <checkout>` and `just tts-fixtures-check <checkout>`

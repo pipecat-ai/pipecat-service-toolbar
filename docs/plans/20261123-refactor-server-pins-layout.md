@@ -57,3 +57,5 @@ The sandbox blocked test loopback sockets, some macOS test subprocesses and the 
 An explicit override could still point at the checkout's `constraints/tts.txt` or `constraints/` after the move. `ToolLocator` now redirects only those exact missing paths when their checkout has the current wheel manifest and the replacement exists. [Development overrides](../architecture.md#development-overrides)
 
 The regression test exercises `ToolLocator.locate` through both environment variables. It verifies the pins resolved for Tone and Whisper, and checks that existing paths, unrelated checkout paths and missing replacements keep their original behavior.
+
+The corrected branch passed the full Swift suite (521 tests) and 39 focused Python tests. The rebuilt bundle passed strict signature verification. Its wheel hash and all six constraints files matched their source pins.

@@ -29,6 +29,11 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 
 ## [Unreleased]
 
+### Changed
+
+- Group the TTS wheel manifest and the TTS and STT constraints under `server-pins/`.
+  Source builds still accept overrides pointing at the pins' previous checkout paths.
+
 ## [0.4.2] - 2026-11-23
 
 ### Added
