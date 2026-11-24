@@ -52,7 +52,11 @@ check() {
         || fail "$label" "hardened runtime flag missing"
     printf '%s\n' "$info" | grep -q '^Timestamp=' \
         || fail "$label" "no secure timestamp (built with --timestamp=none?)"
-    entitlements="$(codesign -d --entitlements - --xml "$path" 2>/dev/null || true)"
+    # No entitlements is an empty, successful read; a failed read must not pass as "none".
+    if ! entitlements="$(codesign -d --entitlements - --xml "$path" 2>/dev/null)"; then
+        fail "$label" "cannot read the entitlements (codesign -d --entitlements failed)"
+        entitlements=""
+    fi
     case "$entitlements" in
         *com.apple.security.get-task-allow*) fail "$label" "has the get-task-allow entitlement" ;;
     esac

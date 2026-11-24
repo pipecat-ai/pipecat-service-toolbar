@@ -1,6 +1,6 @@
 """scripts/package_dmg.sh with every Apple tool stubbed (security, codesign, xcrun, spctl, hdiutil,
-ditto), in a throwaway git repository. No certificate, network or macOS needed; runs under
-/bin/bash (3.2 on macOS)."""
+ditto) and scripts/build_app.sh replaced by a recorder, in a throwaway git repository. No
+certificate, network or macOS needed; runs under /bin/bash (3.2 on macOS)."""
 
 from __future__ import annotations
 
@@ -54,11 +54,18 @@ case "$1 $2" in
   "notarytool history") exit "${STUB_HISTORY_RC:-0}" ;;
   "notarytool submit")
     n=$(( $(cat "$STUB_DIR/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/n"
+    # STUB_NOTARY_EMPTY=1: notarytool fails before printing any result.
+    if [ -n "${STUB_NOTARY_EMPTY:-}" ]; then echo "network down" >&2; exit 1; fi
     status="${STUB_NOTARY_STATUS:-Accepted}"
     if [ "$n" = "2" ] && [ -n "${STUB_NOTARY_STATUS_2:-}" ]; then status="$STUB_NOTARY_STATUS_2"; fi
     printf '{"id":"sub-%s","status":"%s","message":"m"}\n' "$n" "$status"
     [ "$status" = "Accepted" ] || exit 1 ;;
-  "notarytool log") echo '{"issues":[{"message":"stub issue"}]}' > "${@: -1}" ;;
+  "notarytool log")
+    # Apple has no log for an unfinished submission.
+    case "${STUB_NOTARY_STATUS:-}${STUB_NOTARY_STATUS_2:-}" in
+      *"In Progress"*) echo "Submission log is not yet available" >&2; exit 1 ;;
+    esac
+    echo '{"issues":[{"message":"stub issue"}]}' > "${@: -1}" ;;
   "stapler staple"|"stapler validate") exit "${STUB_STAPLE_RC:-0}" ;;
   *) exit 64 ;;
 esac
@@ -77,6 +84,11 @@ case "$1" in
     mnt=""; prev=""; for a in "$@"; do [ "$prev" = "-mountpoint" ] && mnt="$a"; prev="$a"; done
     src="$(cat "$STUB_DIR/src")"; cp -R "$src/." "$mnt/" ;;
   detach)
+    # STUB_DURING_DETACH: a shell command run once here, after the preflight and before publishing
+    # (stands in for another run of the same commit publishing meanwhile).
+    if [ -n "${STUB_DURING_DETACH:-}" ] && [ ! -e "$STUB_DIR/during" ]; then
+      : > "$STUB_DIR/during"; /bin/bash -c "$STUB_DURING_DETACH"
+    fi
     # STUB_DETACH_BUSY=<n>: the first n plain detaches fail like a busy volume; -force never does.
     if [ "${STUB_DETACH_BUSY:-0}" -gt 0 ] && [[ " $* " != *" -force "* ]]; then
       n=$(( $(cat "$STUB_DIR/busy" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_DIR/busy"
@@ -92,6 +104,20 @@ echo "ditto $*" >> "$STUB_LOG"
 if [ "$1" = "-c" ]; then echo zip > "${@: -1}"; else cp -R "$1" "$2"; fi
 """,
 }
+
+
+# Stands in for scripts/build_app.sh: records what package_dmg.sh hands it, optionally runs
+# STUB_BUILD_HOOK (something changing the checkout mid-build), and leaves a bundle in build/.
+_BUILD_APP = r"""#!/bin/bash
+set -e
+printf 'SIGN_IDENTITY=%s\nSIGN_MODE=%s\nCONFIG=%s\n' "${SIGN_IDENTITY:-}" "${SIGN_MODE:-}" \
+  "${CONFIG:-}" > "$STUB_DIR/build-env"
+if [ -n "${STUB_BUILD_HOOK:-}" ]; then /bin/bash -c "$STUB_BUILD_HOOK"; fi
+app="$(cd "$(dirname "$0")/.." && pwd)/build/Pipecat Service Toolbar.app"
+mkdir -p "$app/Contents/Resources/bin"
+: > "$app/Contents/Resources/bin/uv"
+chmod 755 "$app/Contents/Resources/bin/uv"
+"""
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -117,6 +143,8 @@ class Env:
         ):
             shutil.copy(SCRIPTS / rel, self.root / "scripts" / rel)
             (self.root / "scripts" / rel).chmod(0o755)
+        (self.root / "scripts/build_app.sh").write_text(_BUILD_APP)
+        (self.root / "scripts/build_app.sh").chmod(0o755)
         for name, body in _STUBS.items():
             (self.bin / name).write_text("#!/bin/bash\n" + body)
             (self.bin / name).chmod(0o755)
@@ -127,14 +155,21 @@ class Env:
         (bundle / "Contents/Resources/bin/uv").chmod(0o755)
         self.bundle = bundle
         (self.root / "app-version.json").write_text(json.dumps({"version": "1.2.3", "build": 42}))
-        (self.root / ".gitignore").write_text("dist/\n.env\n")
+        (self.root / ".gitignore").write_text("dist/\n.env\nbuild/\n")
         _git(self.root, "init", "-q")
         _git(self.root, "config", "user.email", "t@example.com")
         _git(self.root, "config", "user.name", "t")
         _git(self.root, "add", "-A")
         _git(self.root, "commit", "-q", "-m", "init")
 
-    def run(self, *args: str, dotenv: str | None = f"APPLE_TEAM_ID={TEAM}\n", **extra: str):
+    def run(
+        self,
+        *args: str,
+        dotenv: str | None = f"APPLE_TEAM_ID={TEAM}\n",
+        bundle: bool = True,
+        **extra: str,
+    ):
+        """bundle=True packages the prebuilt test bundle (DMG_APP_BUNDLE); False runs build_app.sh."""
         if dotenv is not None:
             (self.root / ".env").write_text(dotenv)
         env = {
@@ -145,7 +180,7 @@ class Env:
             "STUB_DV": str(self.tmp / "dv"),
             "STUB_HASH": HASH,
             "STUB_NAME": NAME,
-            "DMG_APP_BUNDLE": str(self.bundle),
+            **({"DMG_APP_BUNDLE": str(self.bundle)} if bundle else {}),
             **extra,
         }
         return subprocess.run(
@@ -166,6 +201,12 @@ class Env:
 
     def published(self) -> list[str]:
         return sorted(p.name for p in self.out.iterdir()) if self.out.exists() else []
+
+    def set_version(self, version: object, build: object) -> None:
+        (self.root / "app-version.json").write_text(
+            json.dumps({"version": version, "build": build})
+        )
+        _git(self.root, "commit", "-q", "-am", "version")
 
 
 @pytest.fixture
@@ -308,9 +349,21 @@ def test_rejected_notarization_saves_the_log_and_publishes_nothing(env, extra, l
 
 
 def test_timeout_without_a_result_publishes_nothing(env):
+    # A --wait timeout leaves the submission In Progress: Apple has no log yet, so the error must
+    # not name a log file; it says how to poll the submission instead.
     r = env.run(STUB_NOTARY_STATUS="In Progress")
     assert r.returncode == 1 and "In Progress" in r.stderr
-    assert not [p for p in env.published() if p.endswith((".dmg", ".manifest.json"))]
+    assert "xcrun notarytool info sub-1 --keychain-profile pipecat-notary" in r.stderr
+    assert "notary-log.json" not in r.stderr
+    assert env.published() == []
+
+
+def test_notarytool_failing_without_a_result_publishes_nothing(env):
+    r = env.run(STUB_NOTARY_EMPTY="1")
+    assert r.returncode == 1
+    assert "notarization of the app failed (exit 1)" in r.stderr and "network down" in r.stderr
+    assert "notarytool log" not in "\n".join(env.calls())
+    assert env.published() == []
 
 
 def test_staple_failure_publishes_nothing(env):
@@ -409,3 +462,159 @@ def test_recipes_call_the_packager():
     justfile = (REPO_ROOT / "justfile").read_text()
     assert "app-dmg:\n    scripts/package_dmg.sh\n" in justfile
     assert "app-dmg-doctor:\n    scripts/package_dmg.sh --doctor\n" in justfile
+
+
+# --- the real build handoff (no DMG_APP_BUNDLE) -------------------------------------------
+
+PLAIN = "Pipecat-Service-Toolbar-1.2.3-b42"
+
+
+def test_build_app_gets_the_resolved_identity_in_release_mode(env):
+    r = env.run(bundle=False)
+    assert r.returncode == 0, r.stderr
+    env_lines = (env.stub_dir / "build-env").read_text().splitlines()
+    assert env_lines == [f"SIGN_IDENTITY={HASH}", "SIGN_MODE=release", "CONFIG=release"]
+    # The bundle build_app.sh left in build/ is what was staged and packaged.
+    assert any(c.startswith("ditto ") and f"/build/{APP}" in c for c in env.calls())
+    assert env.published() == [f"{PLAIN}.dmg", f"{PLAIN}.dmg.sha256", f"{PLAIN}.manifest.json"]
+    manifest = json.loads((env.out / f"{PLAIN}.manifest.json").read_text())
+    assert manifest["test_bundle"] is False and manifest["notarized"] is True
+    assert manifest["notary_submissions"] == {"app": "sub-1", "dmg": "sub-2"}
+
+
+# Naming and the closing message over the whole (rehearsal, test bundle) space: only a notarized
+# build of the commit gets a plain name and is called shareable.
+@pytest.mark.parametrize(
+    ("skip", "bundle", "suffix", "message"),
+    [
+        pytest.param(False, False, "", "Share the .dmg", id="notarized-build"),
+        pytest.param(False, True, "-TESTBUNDLE", "TEST BUNDLE", id="notarized-test-bundle"),
+        pytest.param(True, False, "-UNNOTARIZED", "REHEARSAL", id="rehearsal-build"),
+        pytest.param(
+            True, True, "-UNNOTARIZED-TESTBUNDLE", "REHEARSAL", id="rehearsal-test-bundle"
+        ),
+    ],
+)
+def test_name_and_message_say_whether_it_may_be_shared(env, skip, bundle, suffix, message):
+    r = env.run(bundle=bundle, **({"DMG_SKIP_NOTARIZE": "1"} if skip else {}))
+    assert r.returncode == 0, r.stderr
+    assert f"{PLAIN}{suffix}.dmg" in env.published()
+    assert message in r.stdout
+    shareable = not skip and not bundle
+    assert ("Share the" in r.stdout) is shareable
+    assert ("Do not share" in r.stdout) is not shareable
+
+
+# --- provenance: the build must see the commit the name records ---------------------------
+
+
+@pytest.mark.parametrize(
+    "hook",
+    [
+        pytest.param("git commit -q --allow-empty -m moved", id="new-commit"),
+        pytest.param("echo x > README", id="untracked-file"),
+        pytest.param(
+            """echo '{"version": "9.9.9", "build": 1}' > app-version.json""", id="edited-version"
+        ),
+    ],
+)
+def test_a_checkout_changed_during_the_build_is_refused(env, hook):
+    r = env.run(bundle=False, STUB_BUILD_HOOK=hook)
+    assert r.returncode == 1
+    assert "during the build" in r.stderr and "Nothing was published" in r.stderr
+    # Refused before spending a notarization.
+    assert not [c for c in env.calls() if c.startswith(("xcrun notarytool submit", "hdiutil"))]
+    assert env.published() == []
+
+
+# --- publish contract: exclusive, all or nothing, retry works ------------------------------
+
+_SET = [f"{DMG}", f"{DMG}.sha256", "Pipecat-Service-Toolbar-1.2.3-b42-TESTBUNDLE.manifest.json"]
+
+
+@pytest.mark.parametrize("taken", _SET, ids=["dmg", "sha256", "manifest"])
+def test_publish_never_replaces_a_file_and_leaves_nothing_partial(env, taken):
+    # Another run of the same commit publishes `taken` after this run's preflight check.
+    planted = env.out / taken
+    r = env.run(STUB_DURING_DETACH=f"echo other-run > '{planted}'")
+    assert r.returncode == 1
+    assert f"cannot publish dist/dmg/{taken}" in r.stderr
+    # The other run's file is untouched, and none of this run's files remain.
+    assert env.published() == [taken]
+    assert planted.read_text() == "other-run\n"
+    # Once it is moved away, a retry publishes the full set.
+    planted.unlink()
+    r = env.run()
+    assert r.returncode == 0, r.stderr
+    assert env.published() == sorted(_SET)
+
+
+def test_a_rehearsal_publish_may_replace_files(env):
+    name = "Pipecat-Service-Toolbar-1.2.3-b42-UNNOTARIZED-TESTBUNDLE"
+    planted = env.out / f"{name}.dmg.sha256"
+    r = env.run(DMG_SKIP_NOTARIZE="1", STUB_DURING_DETACH=f"echo old > '{planted}'")
+    assert r.returncode == 0, r.stderr
+    assert env.published() == [f"{name}.dmg", f"{name}.dmg.sha256", f"{name}.manifest.json"]
+    assert planted.read_text().split()[1] == f"{name}.dmg"
+
+
+# --- manifest inputs: values are data, never code or paths --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("version", "build"),
+    [
+        pytest.param("3.0", 5, id="two-part"),
+        pytest.param("0.4.1", 474, id="current"),
+        pytest.param("1.2.3-beta.1", 7, id="prerelease"),
+        pytest.param("2.0.0+meta.5", 1, id="build-metadata"),
+        pytest.param("10", "42", id="string-build"),
+    ],
+)
+def test_plain_versions_reach_name_and_manifest_unchanged(env, version, build):
+    env.set_version(version, build)
+    r = env.run()
+    assert r.returncode == 0, r.stderr
+    name = f"Pipecat-Service-Toolbar-{version}-b{build}-TESTBUNDLE"
+    assert env.published() == [f"{name}.dmg", f"{name}.dmg.sha256", f"{name}.manifest.json"]
+    manifest = json.loads((env.out / f"{name}.manifest.json").read_text())
+    assert manifest["version"] == version and manifest["build"] == int(build)
+
+
+@pytest.mark.parametrize(
+    ("version", "build"),
+    [
+        pytest.param('1.2"3', 42, id="quote"),
+        pytest.param('1"+open("PWNED","w").name+"', 42, id="python-injection"),
+        pytest.param("../../escape", 42, id="dot-dot"),
+        pytest.param("1.2/3", 42, id="slash"),
+        pytest.param("1.2 3", 42, id="space"),
+        pytest.param("", 42, id="empty"),
+        pytest.param("v1.2", 42, id="prefix"),
+        pytest.param("1.2.3", "4a", id="build-letters"),
+        pytest.param("1.2.3", -1, id="build-negative"),
+        pytest.param("1.2.3", 1.5, id="build-float"),
+        pytest.param("1.2.3", '42")+open("PWNED","w").name+("', id="build-injection"),
+    ],
+)
+def test_odd_versions_are_refused_before_any_work(env, version, build):
+    env.set_version(version, build)
+    r = env.run()
+    assert r.returncode == 1
+    assert "app-version.json" in r.stderr
+    assert not [
+        c for c in env.calls() if c.startswith(("hdiutil", "ditto", "xcrun notarytool submit"))
+    ]
+    assert env.published() == []
+    assert not list(env.tmp.rglob("PWNED")) and not list(env.tmp.rglob("*.dmg"))
+
+
+def test_a_bundle_path_with_quotes_is_recorded_as_data(env, tmp_path):
+    odd = tmp_path / 'a") and open("PWNED","w") and ("$(touch PWNED2)\\' / APP
+    shutil.copytree(env.bundle, odd)
+    env.bundle = odd
+    r = env.run()
+    assert r.returncode == 0, r.stderr
+    manifest = json.loads((env.out / f"{PLAIN}-TESTBUNDLE.manifest.json").read_text())
+    assert manifest["test_bundle"] is True
+    assert not list(tmp_path.rglob("PWNED*"))

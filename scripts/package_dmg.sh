@@ -15,11 +15,15 @@
 # Order, each step failing closed:
 #   1. preflight (before compiling): clean tree, APPLE_TEAM_ID, one Developer ID identity, the
 #      notary profile answers;
-#   2. SIGN_MODE=release build_app.sh (signs and verifies the app);
+#   2. SIGN_MODE=release build_app.sh (signs and verifies the app), then HEAD and the tree must
+#      be unchanged, so the DMG matches the commit it is named after;
 #   3. notarize the app (ditto ZIP), staple it, Gatekeeper-assess it;
 #   4. DMG (app + Applications link) with hdiutil, sign it, notarize it, staple it, assess it;
 #   5. mount the DMG read-only and re-verify the app inside;
-#   6. move .dmg, .dmg.sha256 and .manifest.json (last) from scratch into dist/dmg/.
+#   6. publish .dmg, .dmg.sha256 and .manifest.json (last) from scratch into dist/dmg/.
+#      A notarized DMG is published all or nothing and never over an existing file: each is
+#      hard-linked into place (fails if the name exists), and a failure removes what this run
+#      linked, so a retry is not blocked. A rehearsal overwrites an earlier rehearsal.
 # A rejected submission saves Apple's log in dist/dmg/ and publishes nothing.
 #
 # Name: Pipecat-Service-Toolbar-<version>-b<build>.dmg when HEAD is the commit that last changed
@@ -134,6 +138,10 @@ read_json() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sy
     "$ROOT/app-version.json" "$1"; }
 VERSION="$(read_json version)"
 BUILD="$(read_json build)"
+# Both become part of file names: refuse anything but a plain version and build number.
+VERSION_RE='^[0-9]+(\.[0-9]+)*([-+.][0-9A-Za-z.]+)*$'
+[[ "$VERSION" =~ $VERSION_RE ]] || die "app-version.json: version '$VERSION' is not a plain version (like 1.2.3)"
+[[ "$BUILD" =~ ^[0-9]+$ ]] || die "app-version.json: build '$BUILD' is not a whole number"
 COMMIT="$(git rev-parse HEAD)"
 SHORT="$(git rev-parse --short=7 HEAD)"
 NAME="Pipecat-Service-Toolbar-$VERSION-b$BUILD"
@@ -161,14 +169,25 @@ else
     SIGN_IDENTITY="$HASH" SIGN_MODE=release CONFIG=release "$SCRIPTS/build_app.sh"
     BUNDLE="$ROOT/build/$APP_NAME"
 fi
+# The name and manifest record COMMIT, read before the build: the build must have seen that commit.
+[[ "$(git rev-parse HEAD)" == "$COMMIT" ]] \
+    || die "HEAD moved off $COMMIT during the build; the DMG would not match its name. Nothing was published."
+TREE_STATUS="$(git status --porcelain)" || die "cannot check whether the working tree is clean"
+[[ -z "$TREE_STATUS" ]] \
+    || die "the working tree changed during the build; the DMG would not match commit $COMMIT. Nothing was published."
 
 # --- scratch, cleanup ---------------------------------------------------------------------
 
 SCRATCH=""
 MOUNT=""
+CREATED=()  # files this run linked into dist/dmg while publishing; emptied once all are in place
 cleanup() {
     if [[ -n "$MOUNT" ]]; then
         hdiutil detach -quiet "$MOUNT" 2>/dev/null || hdiutil detach -force -quiet "$MOUNT" 2>/dev/null || true
+    fi
+    local f
+    if ((${#CREATED[@]} > 0)); then
+        for f in "${CREATED[@]}"; do rm -f "$OUT/$f"; done
     fi
     [[ -z "$SCRATCH" ]] || rm -rf "$SCRATCH"
 }
@@ -195,10 +214,17 @@ try: print(json.load(sys.stdin).get("status", ""))
 except Exception: print("")')"
     if [[ "$status" != "Accepted" ]]; then
         if [[ -n "$id" ]]; then
-            xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" \
-                "$OUT/$NAME.$label.notary-log.json" >/dev/null 2>&1 || true
-            die "notarization of the $label ended '${status:-unknown}' (submission $id).
-       Apple's log: $OUT/$NAME.$label.notary-log.json (or: xcrun notarytool log $id --keychain-profile $NOTARY_PROFILE)"
+            # Apple has no log until the submission finishes (a --wait timeout leaves it In Progress).
+            local log="$OUT/$NAME.$label.notary-log.json"
+            if xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" \
+                "$SCRATCH/notary-log.json" >/dev/null 2>&1 && [[ -s "$SCRATCH/notary-log.json" ]]; then
+                mv -f "$SCRATCH/notary-log.json" "$log"
+                die "notarization of the $label ended '${status:-unknown}' (submission $id).
+       Apple's log: $log"
+            fi
+            die "notarization of the $label ended '${status:-unknown}' (submission $id); Apple has no log for it yet.
+       Check on it: xcrun notarytool info $id --keychain-profile $NOTARY_PROFILE
+       Once it has finished: xcrun notarytool log $id --keychain-profile $NOTARY_PROFILE"
         fi
         die "notarization of the $label failed (exit $rc): $(tail -n 3 "$SCRATCH/notary.err" 2>/dev/null)"
     fi
@@ -284,33 +310,50 @@ with open(sys.argv[1], "rb") as f:
     for chunk in iter(lambda: f.read(1 << 20), b""): h.update(chunk)
 print(h.hexdigest())' "$SCRATCH/$DMG")"
 printf '%s  %s\n' "$SHA256" "$DMG" >"$SCRATCH/$DMG.sha256"
-python3 - "$SCRATCH/$NAME.manifest.json" <<PY
-import json, sys, datetime
-subs = dict(s.split(":", 1) for s in "$SUBMISSIONS".split()) if "$SUBMISSIONS" else {}
+# Every value reaches Python as an argument, never as source text.
+python3 - "$SCRATCH/$NAME.manifest.json" "$DMG" "$SHA256" "$VERSION" "$BUILD" "$COMMIT" \
+    "$SKIP_NOTARIZE" "$SUBMISSIONS" "${DMG_APP_BUNDLE:-}" <<'PY'
+import datetime, json, sys
+out, dmg, sha256, version, build, commit, skip, submissions, test_bundle = sys.argv[1:]
 json.dump({
-    "dmg": "$DMG",
-    "sha256": "$SHA256",
-    "version": "$VERSION",
-    "build": int("$BUILD"),
-    "commit": "$COMMIT",
-    "notarized": not bool("$SKIP_NOTARIZE"),
-    "notary_submissions": subs,
-    "test_bundle": bool("${DMG_APP_BUNDLE:-}"),
+    "dmg": dmg,
+    "sha256": sha256,
+    "version": version,
+    "build": int(build),
+    "commit": commit,
+    "notarized": not skip,
+    "notary_submissions": dict(s.split(":", 1) for s in submissions.split()),
+    "test_bundle": bool(test_bundle),
     "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-}, open(sys.argv[1], "w"), indent=2)
+}, open(out, "w"), indent=2)
 PY
 
 step "Publishing into dist/dmg"
-rm -f "$OUT/$NAME.manifest.json"
-mv -f "$SCRATCH/$DMG" "$OUT/$DMG"
-mv -f "$SCRATCH/$DMG.sha256" "$OUT/$DMG.sha256"
-mv -f "$SCRATCH/$NAME.manifest.json" "$OUT/$NAME.manifest.json"
+if [[ -n "$SKIP_NOTARIZE" ]]; then
+    # A rehearsal is never shared, so it may replace an earlier rehearsal of the same name.
+    rm -f "$OUT/$NAME.manifest.json"
+    mv -f "$SCRATCH/$DMG" "$OUT/$DMG"
+    mv -f "$SCRATCH/$DMG.sha256" "$OUT/$DMG.sha256"
+    mv -f "$SCRATCH/$NAME.manifest.json" "$OUT/$NAME.manifest.json"
+else
+    # All or nothing, and never over a file another run published since the preflight check: ln
+    # refuses an existing name (scratch is in dist/dmg, so it is the same file system), and on any
+    # failure cleanup removes the files this run linked, so a retry is not blocked.
+    for f in "$DMG" "$DMG.sha256" "$NAME.manifest.json"; do
+        ln "$SCRATCH/$f" "$OUT/$f" 2>/dev/null \
+            || die "cannot publish dist/dmg/$f (did another run of this commit publish it?). Nothing of this run was published."
+        CREATED+=("$f")
+    done
+    CREATED=()
+fi
 
 step "Done"
 echo "    $OUT/$DMG"
 echo "    sha256 $SHA256"
 if [[ -n "$SKIP_NOTARIZE" ]]; then
     echo "    REHEARSAL: not notarized. Do not share this DMG."
+elif [[ -n "${DMG_APP_BUNDLE:-}" ]]; then
+    echo "    TEST BUNDLE: packaged from a prebuilt test bundle, not built from commit $COMMIT. Do not share this DMG."
 else
     echo "    Share the .dmg (and .sha256). The manifest is your record."
 fi

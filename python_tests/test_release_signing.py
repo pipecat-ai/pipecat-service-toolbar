@@ -168,7 +168,14 @@ def test_env_example_lists_exactly_the_loaded_keys_and_holds_no_values():
 
 
 def test_private_files_are_git_ignored():
-    for path in (".env", ".private/note.md", ".local_certificates/key.p12"):
+    for path in (
+        ".env",
+        ".private/note.md",
+        ".local_certificates/key.p12",
+        "AuthKey_ABC123.p8",
+        "devid.p12",
+        "scripts/developerID_application.cer",
+    ):
         r = subprocess.run(["git", "check-ignore", "-q", path], cwd=REPO_ROOT)
         assert r.returncode == 0, f"{path} is not git-ignored"
     r = subprocess.run(["git", "check-ignore", "-q", ".env.example"], cwd=REPO_ROOT)
@@ -329,7 +336,7 @@ def fake_app(tmp_path: Path) -> Path:
     return app
 
 
-def _verify(tmp_path, app, dv=_GOOD_DV, ent=_GOOD_ENT, verify_rc=0, team=TEAM):
+def _verify(tmp_path, app, dv=_GOOD_DV, ent=_GOOD_ENT, verify_rc=0, team=TEAM, ent_rc=0):
     bindir = tmp_path / "codesign-bin"
     bindir.mkdir(exist_ok=True)
     (tmp_path / "dv").write_text(dv)
@@ -339,7 +346,7 @@ def _verify(tmp_path, app, dv=_GOOD_DV, ent=_GOOD_ENT, verify_rc=0, team=TEAM):
         "codesign",
         'case " $* " in\n'
         '  *" --verify "*) exit "$STUB_VERIFY_RC" ;;\n'
-        '  *" --entitlements "*) cat "$STUB_ENT" ;;\n'
+        '  *" --entitlements "*) cat "$STUB_ENT"; exit "$STUB_ENT_RC" ;;\n'
         '  *" -dvvv "*) cat "$STUB_DV" >&2 ;;\n'
         "  *) exit 64 ;;\n"
         "esac\n",
@@ -349,6 +356,7 @@ def _verify(tmp_path, app, dv=_GOOD_DV, ent=_GOOD_ENT, verify_rc=0, team=TEAM):
         "STUB_DV": str(tmp_path / "dv"),
         "STUB_ENT": str(tmp_path / "ent"),
         "STUB_VERIFY_RC": str(verify_rc),
+        "STUB_ENT_RC": str(ent_rc),
     }
     return subprocess.run(
         ["/bin/bash", str(VERIFY), str(app), team],
@@ -361,6 +369,12 @@ def _verify(tmp_path, app, dv=_GOOD_DV, ent=_GOOD_ENT, verify_rc=0, team=TEAM):
 
 def test_verify_accepts_a_release_signature(tmp_path, fake_app):
     r = _verify(tmp_path, fake_app)
+    assert r.returncode == 0, r.stderr
+
+
+def test_verify_accepts_no_entitlements(tmp_path, fake_app):
+    # The nested uv has none: codesign prints nothing and succeeds.
+    r = _verify(tmp_path, fake_app, ent="")
     assert r.returncode == 0, r.stderr
 
 
@@ -400,6 +414,11 @@ def test_verify_accepts_a_release_signature(tmp_path, fake_app):
             id="get-task-allow",
         ),
         pytest.param({"verify_rc": 1}, "--verify", id="verify-fails"),
+        # A failed entitlements read, with or without output, must not count as "no entitlements".
+        pytest.param(
+            {"ent": "", "ent_rc": 42}, "cannot read the entitlements", id="ent-read-fails"
+        ),
+        pytest.param({"ent_rc": 1}, "cannot read the entitlements", id="ent-read-fails-output"),
     ],
 )
 def test_verify_refuses(tmp_path, fake_app, change, message):

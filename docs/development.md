@@ -236,7 +236,8 @@ in a git-ignored `.env`, and the maintainers' private signing note says where to
    delete the downloaded file. `security find-identity -v -p codesigning` must list
    `Developer ID Application: <Team> (<TEAMID>)`.
 2. `cp .env.example .env` and set `APPLE_TEAM_ID`. `.env` is parsed, never executed, and only release
-   builds read it; a variable set in the environment wins over it.
+   builds (`SIGN_MODE=release`), `just app-dmg` and `just app-dmg-doctor` read it; a variable set in the
+   environment wins over it.
 3. `SIGN_MODE=release just app-build`. Every refusal (no Team ID, no identity, several identities, a
    `BUNDLE_ID` override, a debug build) happens before compiling. After signing,
    `scripts/verify_release_signature.sh` checks the bundle and the nested `uv`: Developer ID chain,
@@ -275,7 +276,7 @@ the team's values are in the maintainers' private signing note, never in this re
 Run `just app-dmg` from a clean tree, normally `main` at a release commit. Before compiling it checks the
 tree, the identity and the notary profile. Then it:
 
-1. builds with `SIGN_MODE=release`;
+1. builds with `SIGN_MODE=release`, and refuses if HEAD or the tree changed during the build;
 2. notarizes the app (as a ZIP), staples it and checks that Gatekeeper sees it as notarized;
 3. creates the disk image (`hdiutil`, APFS, ULFO), signs it, notarizes it, staples it and assesses it;
 4. mounts the image read-only and checks the app inside again;
@@ -287,13 +288,16 @@ when HEAD is the commit that last changed `app-version.json`, otherwise with `-<
 
 If `dist/dmg/` already holds a DMG, checksum or manifest of the same name, `app-dmg` refuses before
 building: that file may already have been shared, and a rebuild would change its checksum. Move the old
-files out of `dist/dmg/` to rebuild the same commit, or commit a change and bump the build.
+files out of `dist/dmg/` to rebuild the same commit, or commit a change and bump the build. Publishing
+is all or nothing and never replaces a file: a run that fails while publishing removes what it put in
+`dist/dmg/`, so the next run can retry.
 
 Share the `.dmg` and its `.sha256`. The manifest (commit, checksum, notary submission IDs) is your
 record. Recipients follow [Install the app](install.md).
 
-`DMG_SKIP_NOTARIZE=1 just app-dmg` is a rehearsal: it signs but skips Apple, and the name ends in
-`-UNNOTARIZED`. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only; the
+`DMG_SKIP_NOTARIZE=1 just app-dmg` is a rehearsal: it signs but skips Apple's notary service, and the
+name ends in `-UNNOTARIZED`. It still needs the network: signing asks Apple's timestamp service for
+secure timestamps. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only; the
 name then ends in `-TESTBUNDLE`. A rehearsal may overwrite an earlier rehearsal.
 
 ### Troubleshooting

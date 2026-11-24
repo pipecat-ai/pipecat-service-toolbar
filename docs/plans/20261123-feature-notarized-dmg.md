@@ -66,7 +66,7 @@ Verified against `main` at `1cfe741` on 2026-11-23:
   `Pipecat-Service-Toolbar-<version>-b<build>.dmg` (no spaces, so links and shells need no quoting); a build from a commit other than the version-bump commit
   appends `-<shortsha>`.
 - **Clean tree required.** `app-dmg` refuses a dirty tree, so every DMG maps to one commit, recorded in
-  `<dmg>.manifest.json` with the SHA-256, version, build, Team ID and notarization submission IDs.
+  `<name>.manifest.json` with the SHA-256, version, build, Team ID and notarization submission IDs.
 - **Output** goes to `dist/dmg/` (already ignored through `dist/`).
 
 ## Requirements
@@ -80,7 +80,8 @@ maintainers out of band. Committed docs and scripts use placeholders (`<TEAMID>`
 and refer to that note. The values the scripts need (`APPLE_TEAM_ID`, optional `SIGN_IDENTITY`,
 and `NOTARY_PROFILE`; the notary Key ID and Issuer ID were dropped from `.env` because no script reads them) go in a git-ignored
 `.env` copied from the committed `.env.example`. `scripts/lib/release_env.sh` parses it without executing it,
-takes only those keys, and lets the environment win. Only release builds read it.
+takes only those keys, and lets the environment win. Only release builds and the DMG packager
+(`just app-dmg`, `just app-dmg-doctor`) read it.
 
 Two shared secrets, both kept in the team's password manager, with access limited to maintainers who ship builds:
 
@@ -97,14 +98,15 @@ Phase 1 merges.
 
 Each maintainer who builds a DMG, once per Mac (exact item names and IDs: `.private/signing-setup.md`):
 
-1. Download the `.p12` and its password into the git-ignored `.local_certificates/`.
+1. Download the `.p12` into the git-ignored `.local_certificates/`. Its password stays in the password
+   manager: it is typed from there when prompted, never saved to disk.
 2. Import it: `security import <file>.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign`
    (prompts for the `.p12` password). Answer **Always Allow** if a later build asks for key access.
 3. Verify: `security find-identity -v -p codesigning` lists `"Developer ID Application: <Team> (<TEAMID>)"`.
    If it is missing, the `.p12` has no private key or the Developer ID G2 intermediate is missing
    (apple.com/certificateauthority).
-4. Download the `.p8` and copy the Key ID and Issuer ID, then store them in the keychain:
-   `xcrun notarytool store-credentials pipecat-notary --key AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>`.
+4. Download the `.p8` into `.local_certificates/` and copy the Key ID and Issuer ID, then store them in the keychain:
+   `xcrun notarytool store-credentials pipecat-notary --key .local_certificates/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>`.
    The command validates the key against Apple before saving. The profile name defaults to `pipecat-notary`;
    `NOTARY_PROFILE` overrides it.
 5. Delete the downloaded `.p12` and `.p8`; the keychain now holds both.
@@ -174,7 +176,7 @@ replace the password-manager item. Never revoke a certificate that signed shippe
   7. Verify: `spctl -a -vvv -t exec <app>` reports `source=Notarized Developer ID`;
      `spctl -a -vvv -t open --context context:primary-signature <dmg>` accepts; mount the DMG read-only and
      re-run the app check on the mounted copy.
-  8. Write `<name>.dmg.sha256` and `<name>.dmg.manifest.json`, then move all three from scratch into `dist/dmg/`
+  8. Write `<name>.dmg.sha256` and `<name>.manifest.json`, then move all three from scratch into `dist/dmg/`
      (manifest last). Scratch is removed on every exit.
 - [x] Tests stub the Apple tools on `PATH` (no override variables); `DMG_APP_BUNDLE` packages a prebuilt bundle, a test-mode marker in the manifest
       shows a DMG built with fakes, and the docs say never to share one.
@@ -193,8 +195,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
       downloads), with placeholders only and a pointer to the private maintainer note for names and IDs,
       the Account Holder renewal note, `just app-dmg`, outputs, the verification
       commands (`codesign -dvvv --entitlements - <app>`, `spctl -a -vvv`, `stapler validate`), troubleshooting
-      (reading `notarytool log`, the common rejections: missing timestamp, unsigned nested binary, `get-task-allow`)
-      and the release checklist (Phase 4). Add `SIGN_MODE`, `NOTARY_PROFILE` and `DMG_SKIP_NOTARIZE` to
+      (reading `notarytool log`, the common rejections: missing timestamp, unsigned nested binary, `get-task-allow`).
+      The DMG release checklist is Phase 4 work; development.md's existing "Release checklist" is the tester
+      drop's. Add `SIGN_MODE`, `NOTARY_PROFILE` and `DMG_SKIP_NOTARIZE` to
       **Build settings**.
 - [x] `docs/install.md` (new, user-facing): requirements (Apple silicon, macOS 15+, Apple Speech macOS 26+),
       download, open the DMG, drag to Applications, first launch, quitting a running copy before replacing it,
@@ -217,7 +220,9 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 
 - [ ] **Second-maintainer test:** a team member other than the author, on their own Mac, follows only the docs
       the private maintainer note and the two password-manager items, runs `just app-dmg-doctor` and `just app-dmg` from `main`, and gets a
-      notarized DMG. Every place they got stuck becomes a doc fix. Record the manifest in `## Findings`.
+      notarized DMG. Every place they got stuck becomes a doc fix. Record in `## Findings` only the DMG name,
+      the commit, the manifest's `notarized` flag and the checksum; never the notary submission IDs (they
+      stay in the private maintainer note).
 - [ ] On a clean macOS 15 and macOS 26 UTM guest snapshot, **download the DMG through a browser** (so it is
       quarantined; never strip `com.apple.quarantine`), open it, drag the app to `~/Applications` and
       `/Applications`, launch. Expect only the standard "downloaded from the internet" dialog.
