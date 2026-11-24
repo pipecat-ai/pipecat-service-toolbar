@@ -10,10 +10,10 @@ import Testing
         let toolbar = root.appending(path: "toolbar")
         let tts = root.appending(path: "tts-checkout")
         let fm = FileManager.default
-        try fm.createDirectory(at: toolbar.appending(path: "artifacts"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: toolbar.appending(path: "server-pins/tts"), withIntermediateDirectories: true)
         try fm.createDirectory(at: toolbar.appending(path: "scripts"), withIntermediateDirectories: true)
         try fm.createDirectory(at: tts, withIntermediateDirectories: true)
-        try Data("{}".utf8).write(to: toolbar.appending(path: "artifacts/tts.json"))
+        try Data("{}".utf8).write(to: toolbar.appending(path: "server-pins/tts/wheel.json"))
         try Data("[project]\nname = \"pipecat-local-tts-server\"\n".utf8).write(to: tts.appending(path: "pyproject.toml"))
         return (toolbar, tts, { try? fm.removeItem(at: root) })
     }
@@ -24,21 +24,61 @@ import Testing
         let found = ToolLocator.toolbarRoot(from: [toolbar.appending(path: "scripts")])
         #expect(found?.standardizedFileURL == toolbar.standardizedFileURL)
         let chosen = ToolLocator.defaultSTTConstraints(repo: tts, toolbarRoot: found)
-        #expect(chosen?.standardizedFileURL == toolbar.appending(path: "constraints").standardizedFileURL)
+        #expect(chosen?.standardizedFileURL == toolbar.appending(path: "server-pins/stt/constraints").standardizedFileURL)
     }
 
     @Test func aToolbarCheckoutOverrideBringsItsOwnSTTConstraints() throws {
         let (toolbar, tts, cleanup) = try Self.tree()
         defer { cleanup() }
         let other = toolbar.deletingLastPathComponent().appending(path: "other-toolbar")
-        try FileManager.default.createDirectory(at: other.appending(path: "artifacts"), withIntermediateDirectories: true)
-        try Data("{}".utf8).write(to: other.appending(path: "artifacts/tts.json"))
+        try FileManager.default.createDirectory(at: other.appending(path: "server-pins/tts"), withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: other.appending(path: "server-pins/tts/wheel.json"))
         // `repo` is a toolbar checkout that is not the one the executable runs from.
         let chosen = ToolLocator.defaultSTTConstraints(repo: other, toolbarRoot: toolbar)
-        #expect(chosen?.standardizedFileURL == other.appending(path: "constraints").standardizedFileURL)
+        #expect(chosen?.standardizedFileURL == other.appending(path: "server-pins/stt/constraints").standardizedFileURL)
         // A TTS source checkout carries none of the pins, so the executable's toolbar root still wins.
         let fromTTS = ToolLocator.defaultSTTConstraints(repo: tts, toolbarRoot: toolbar)
-        #expect(fromTTS?.standardizedFileURL == toolbar.appending(path: "constraints").standardizedFileURL)
+        #expect(fromTTS?.standardizedFileURL == toolbar.appending(path: "server-pins/stt/constraints").standardizedFileURL)
+    }
+
+    @Test func aLegacyToolbarCheckoutOverrideUsesItsOwnToolsAndSTTConstraints() async throws {
+        let (toolbar, tts, cleanup) = try Self.tree()
+        defer { cleanup() }
+        let root = tts.deletingLastPathComponent()
+        let legacy = root.appending(path: "legacy-toolbar")
+        let pins = legacy.appending(path: "constraints")
+        let fm = FileManager.default
+        try fm.createDirectory(at: legacy.appending(path: "artifacts"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: pins, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: legacy.appending(path: "artifacts/tts.json"))
+        let pin = pins.appending(path: "stt-whisper.txt")
+        try Data("legacy whisper pins".utf8).write(to: pin)
+
+        let uv = root.appending(path: "uv")
+        let wheel = "pipecat_local_tts_server-0.9.1-py3-none-any.whl"
+        // Only the legacy checkout has this marker. Accept its prepare_tools invocation,
+        // and fail if ToolLocator sends an upstream wheel build or changes the working directory.
+        let script = """
+            #!/bin/sh
+            set -eu
+            test -f artifacts/tts.json
+            test "$5" = scripts/prepare_tools.py
+            printf '%s\\n' '\(wheel)' > "$7/MANIFEST"
+            """
+        try Data(script.utf8).write(to: uv)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uv.path)
+        let paths = AppPaths(
+            supportDir: root.appending(path: "support"), cacheDir: root.appending(path: "cache"),
+            logsDir: root.appending(path: "logs"), hubDir: root.appending(path: "hub"),
+            derivedModelsDir: root.appending(path: "derived"))
+        let noTools = try #require(Bundle(path: root.path))
+        let selected = try #require(ToolLocator.explicitRepositoryRoot(legacy.path))
+        #expect(ToolLocator.defaultSTTConstraints(repo: selected, toolbarRoot: toolbar)?.path == pins.path)
+        let tools = try await ToolLocator.locate(
+            bundle: noTools, environment: ["PIPECAT_TOOLBAR_UV": uv.path, "PIPECAT_TOOLBAR_REPO": legacy.path],
+            paths: paths)
+        #expect(tools.wheelName == wheel)
+        #expect(try tools.constraints(for: Service.whisper.info)?.path == pin.path)
     }
 
     @Test func theToolbarRootIsNotTheTTSCheckout() throws {
