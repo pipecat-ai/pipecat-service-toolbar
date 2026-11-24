@@ -587,6 +587,28 @@ def test_an_untracked_file_hidden_by_config_is_refused_before_any_work(env):
     assert not [c for c in env.calls() if c.startswith(("hdiutil", "ditto"))]
 
 
+def test_an_ignored_source_file_is_refused_before_any_work(env):
+    # SwiftPM compiles every .swift under the target directory, ignored by git or not.
+    extra = env.root / "Sources/Target/build/Extra.swift"
+    extra.parent.mkdir(parents=True)
+    extra.write_text("x")
+    r = env.run()
+    assert r.returncode == 1 and "git-ignored files under Sources/" in r.stderr
+    assert "Sources/Target/build/" in r.stderr
+    assert not [
+        c for c in env.calls() if c.startswith(("hdiutil", "ditto", "xcrun notarytool submit"))
+    ]
+    assert env.published() == []
+
+
+def test_ignored_build_output_outside_sources_is_allowed(env):
+    (env.root / "dist").mkdir(exist_ok=True)
+    (env.root / "build/Extra.swift").parent.mkdir(exist_ok=True)
+    (env.root / "build/Extra.swift").write_text("x")
+    r = env.run()
+    assert r.returncode == 0, r.stderr
+
+
 def test_version_and_commit_come_from_the_same_checkout(env):
     # A version-bump commit lands just before the packager reads HEAD: the name and manifest must
     # carry the version of the commit they record.

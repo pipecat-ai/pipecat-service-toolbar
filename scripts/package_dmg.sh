@@ -126,10 +126,21 @@ fi
 
 # --- 1. preflight -------------------------------------------------------------------------
 
+# Git-ignored files under Sources/ are invisible to `git status` yet SwiftPM compiles them, so they
+# could ship in an app named after a commit that lacks them. Build output elsewhere stays ignored.
+check_no_ignored_sources() {
+    local ignored
+    ignored="$(git status --porcelain --ignored=matching -- Sources Package.swift | grep '^!!' || true)"
+    [[ -z "$ignored" ]] || die "git-ignored files under Sources/ would be compiled into the app:
+$ignored
+       Remove them first (every DMG maps to one commit)."
+}
+
 step "Checking the working tree and signing setup"
 # --untracked-files=all: status.showUntrackedFiles=no must not hide a source file from the check.
 TREE_STATUS="$(git status --porcelain --untracked-files=all)" || die "cannot check whether the working tree is clean"
 [[ -z "$TREE_STATUS" ]] || die "working tree is not clean; commit or stash first (every DMG maps to one commit)"
+check_no_ignored_sources
 check_team
 HASH="$(resolve_identity)" || exit 1
 echo "    identity $HASH"
@@ -141,7 +152,7 @@ fi
 # The version and build come from the commit the DMG is named after, not the working tree, so a
 # checkout finishing between the two reads cannot pair one commit with another's version.
 COMMIT="$(git rev-parse HEAD)"
-read_json() { git show "$COMMIT:app-version.json" \
+read_json() { git show "$COMMIT:./app-version.json" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 VERSION="$(read_json version)" || die "cannot read app-version.json at $COMMIT"
 BUILD="$(read_json build)" || die "cannot read app-version.json at $COMMIT"
@@ -183,6 +194,7 @@ TREE_STATUS="$(git status --porcelain --untracked-files=all)" \
     || die "cannot check whether the working tree is clean"
 [[ -z "$TREE_STATUS" ]] \
     || die "the working tree changed during the build; the DMG would not match commit $COMMIT. Nothing was published."
+check_no_ignored_sources
 
 # --- scratch, cleanup ---------------------------------------------------------------------
 

@@ -236,8 +236,8 @@ in a git-ignored `.env`, and the maintainers' private signing note says where to
    delete the downloaded file. `security find-identity -v -p codesigning` must list
    `Developer ID Application: <Team> (<TEAMID>)`.
 2. `cp .env.example .env` and set `APPLE_TEAM_ID`. `.env` is parsed, never executed, and only release
-   builds (`SIGN_MODE=release`), `just app-dmg` and `just app-dmg-doctor` read it; a variable set in the
-   environment wins over it.
+   builds (`SIGN_MODE=release`), `just app-dmg` and `just app-dmg-doctor` read it; a variable set and non-empty in
+   the environment wins over it (an empty one counts as unset).
 3. `SIGN_MODE=release just app-build`. Every refusal (no Team ID, no identity, several identities, a
    `BUNDLE_ID` override, a debug build) happens before compiling. After signing,
    `scripts/verify_release_signature.sh` checks the bundle and the nested `uv`: Developer ID chain,
