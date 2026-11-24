@@ -64,14 +64,15 @@ built `.app` always uses its bundle.
 |---|---|
 | `PIPECAT_TOOLBAR_UV` | The `uv` binary (else `~/.local/bin`, `~/.cargo/bin`, Homebrew, `PATH`). |
 | `PIPECAT_TOOLBAR_WHEEL` | The TTS server wheel (used only if the file exists). |
-| `PIPECAT_TOOLBAR_CONSTRAINTS` | The constraints file installed with that wheel (normally sourced from `server-pins/tts/constraints.txt`). |
+| `PIPECAT_TOOLBAR_CONSTRAINTS` | The TTS constraints file. This override applies only when `PIPECAT_TOOLBAR_WHEEL` points to an existing file. |
 | `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | A folder of hash-pinned `stt-<engine>.txt` files. Defaults to `server-pins/stt/constraints/` in the selected or discovered toolbar checkout. Older toolbar checkouts use `constraints/`. A missing file allows an unbundled install to proceed unpinned. A bundled build refuses the install. |
 | `PIPECAT_TOOLBAR_REPO` | Selects a toolbar or TTS source checkout. When it names a TTS checkout, STT still uses pins from the discovered toolbar checkout if available. An empty value is treated as unset. A path with no checkout at or above it fails with `repositoryOverrideNotFound`. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
-When an explicit pin override still points at a missing `constraints/tts.txt` file or
-`constraints/` directory in a current toolbar checkout, the app uses the corresponding
-`server-pins/` path in that checkout if it exists. Existing override paths take precedence.
+If an active TTS constraints override points to a missing `constraints/tts.txt` in a current
+toolbar checkout, the app tries `server-pins/tts/constraints.txt` in that checkout. An STT
+override pointing to the old checkout-local `constraints/` checks that directory first for
+each engine and tries `server-pins/stt/constraints/` in the same checkout for a missing pin.
 
 ## Runtimes
 

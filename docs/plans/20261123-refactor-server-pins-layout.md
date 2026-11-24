@@ -59,3 +59,7 @@ An explicit override could still point at the checkout's `constraints/tts.txt` o
 The regression test exercises `ToolLocator.locate` through both environment variables. It verifies the pins resolved for Tone and Whisper, and checks that existing paths, unrelated checkout paths and missing replacements keep their original behavior.
 
 The corrected branch passed the full Swift suite (521 tests) and 39 focused Python tests. The rebuilt bundle passed strict signature verification. Its wheel hash and all six constraints files matched their source pins.
+
+## 2026-11-24 per-engine override correction
+
+A legacy STT directory can survive the move if it contains local files. The override now checks for each engine's pin in that directory before trying the relocated pin in the same checkout. Legacy matching follows filesystem traversal and casing rules. [Development overrides](../architecture.md#development-overrides)

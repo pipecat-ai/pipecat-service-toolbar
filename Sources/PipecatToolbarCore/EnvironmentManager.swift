@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum InstallStage: String, Sendable, Equatable {
@@ -486,7 +487,7 @@ public actor EnvironmentManager {
         }
         if let constraints = pins {
             args += ["--constraint", constraints.lastPathComponent]
-            workingDir = constraints.deletingLastPathComponent()
+            workingDir = try Self.constraintsWorkingDirectory(for: constraints)
             // The STT constraints carry a sha256 for every wheel (the uv.lock export does not).
             if case .sttHelper = info.runtime { args.append("--require-hashes") }
         }
@@ -502,6 +503,23 @@ public actor EnvironmentManager {
             service: backend.rawValue, fingerprint: tools.fingerprint(for: info),
             python: pythonVersion, createdAt: Date()
         ).write(paths.marker(backend))
+    }
+
+    private static func constraintsWorkingDirectory(for file: URL) throws -> URL {
+        let directory = file.deletingLastPathComponent()
+        guard directory.path.split(separator: "/").contains("..") else { return directory }
+
+        // Process standardizes its working directory URL lexically. Resolve it on disk first
+        // so a symlink followed by ".." keeps the checkout that contained the selected pin.
+        let resolved = directory.withUnsafeFileSystemRepresentation { path -> URL? in
+            guard let path, let physical = realpath(path, nil) else { return nil }
+            defer { free(physical) }
+            return URL(fileURLWithFileSystemRepresentation: physical, isDirectory: true, relativeTo: nil)
+        }
+        guard let resolved else {
+            throw InstallError(stage: .packages, message: "Cannot access the constraints directory.", logTail: [])
+        }
+        return resolved
     }
 
     /// Runs one uv step; a non-zero exit becomes an `InstallError` with the log tail.

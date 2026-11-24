@@ -79,6 +79,27 @@ import Testing
             paths: paths)
         #expect(tools.wheelName == wheel)
         #expect(try tools.constraints(for: Service.whisper.info)?.path == pin.path)
+
+        let oldDirectory = toolbar.appending(path: "constraints")
+        let currentDirectory = toolbar.appending(path: "server-pins/stt/constraints")
+        try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
+        try fm.createDirectory(at: currentDirectory, withIntermediateDirectories: true)
+        try Data().write(to: oldDirectory.appending(path: ".DS_Store"))
+        let currentPin = currentDirectory.appending(path: "stt-whisper.txt")
+        try Data().write(to: currentPin)
+        try Data().write(to: toolbar.appending(path: "server-pins/tts/constraints.txt"))
+        for wheelPath: String? in [nil, root.appending(path: "missing.whl").path] {
+            var environment = [
+                "PIPECAT_TOOLBAR_UV": uv.path, "PIPECAT_TOOLBAR_REPO": legacy.path,
+                "PIPECAT_TOOLBAR_CONSTRAINTS": oldDirectory.appending(path: "tts.txt").path,
+                "PIPECAT_TOOLBAR_STT_CONSTRAINTS": oldDirectory.path,
+            ]
+            environment["PIPECAT_TOOLBAR_WHEEL"] = wheelPath
+            let built = try await ToolLocator.locate(bundle: noTools, environment: environment, paths: paths)
+            #expect(built.source == .repository)
+            #expect(built.constraints?.path == paths.cacheDir.appending(path: "dev-wheel/constraints.txt").path)
+            #expect(try built.constraints(for: Service.whisper.info)?.path == currentPin.path)
+        }
     }
 
     @Test func checkoutLocalPinOverridesFollowTheMoveOnlyWhenMissing() async throws {
@@ -88,6 +109,14 @@ import Testing
         let fm = FileManager.default
         let wheel = root.appending(path: "custom.whl")
         try Data().write(to: wheel)
+        let uv = root.appending(path: "uv")
+        let uvArgs = root.appending(path: "uv-args")
+        let script = """
+            #!/bin/sh
+            printf '%s\\n' "$(/bin/pwd -P)" "$@" > '\(uvArgs.path)'
+            """
+        try Data(script.utf8).write(to: uv)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uv.path)
         let newTTSPin = toolbar.appending(path: "server-pins/tts/constraints.txt")
         let newSTTPins = toolbar.appending(path: "server-pins/stt/constraints")
         let newSTTPin = newSTTPins.appending(path: "stt-whisper.txt")
@@ -100,9 +129,9 @@ import Testing
             logsDir: root.appending(path: "logs"), hubDir: root.appending(path: "hub"),
             derivedModelsDir: root.appending(path: "derived"))
         let noTools = try #require(Bundle(path: root.path))
-        func locate(ttsPin: URL, sttDirectory: URL) async throws -> Tools {
-            try await ToolLocator.locate(bundle: noTools, environment: [
-                "PIPECAT_TOOLBAR_UV": "/usr/bin/true",
+        func locate(ttsPin: URL, sttDirectory: URL, bundle: Bundle? = nil) async throws -> Tools {
+            try await ToolLocator.locate(bundle: bundle ?? noTools, environment: [
+                "PIPECAT_TOOLBAR_UV": uv.path,
                 "PIPECAT_TOOLBAR_REPO": tts.path,
                 "PIPECAT_TOOLBAR_WHEEL": wheel.path,
                 "PIPECAT_TOOLBAR_CONSTRAINTS": ttsPin.path,
@@ -121,6 +150,15 @@ import Testing
         #expect(try migrated.constraints(for: Service.tone.info)?.path == newTTSPin.path)
         #expect(try migrated.constraints(for: Service.whisper.info)?.path == newSTTPin.path)
 
+        let mixed = try await locate(
+            ttsPin: toolbar.appending(path: "Constraints/TTS.TXT"),
+            sttDirectory: toolbar.appending(path: "Constraints"))
+        let caseCapability = try toolbar.resourceValues(
+            forKeys: [.volumeSupportsCaseSensitiveNamesKey]).volumeSupportsCaseSensitiveNames
+        let caseSensitive = try #require(caseCapability as Bool?)
+        #expect(mixed.constraints?.path == (caseSensitive ? toolbar.appending(path: "Constraints/TTS.TXT") : newTTSPin).path)
+        #expect(try mixed.constraints(for: Service.whisper.info)?.path == (caseSensitive ? nil : newSTTPin.path))
+
         let custom = toolbar.appending(path: "my-pins")
         let customTTSPin = custom.appending(path: "tts.txt")
         let missingCustom = try await locate(ttsPin: customTTSPin, sttDirectory: custom)
@@ -136,12 +174,126 @@ import Testing
         #expect(external.constraints?.path == externalTTSPin.path)
         #expect(external.sttConstraints?.path == externalDirectory.path)
 
+        // The symlink changes what .. refers to. Both override paths must follow it before choosing a checkout.
+        let child = tts.appending(path: "child")
+        let link = toolbar.appending(path: "linked-child")
+        try fm.createDirectory(at: child, withIntermediateDirectories: false)
+        try fm.createSymbolicLink(at: link, withDestinationURL: child)
+        let traversedDirectory = toolbar.appending(path: "linked-child/../constraints")
+        let traversedTTSPin = traversedDirectory.appending(path: "tts.txt")
+        let outside = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
+        #expect(outside.constraints?.path == traversedTTSPin.path)
+        #expect(try outside.constraints(for: Service.whisper.info) == nil)
         try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
         try Data().write(to: oldTTSPin)
+        let missingConstraints = EnvironmentManager(paths: paths, tools: outside)
+        try await VariantTests.fakeEnvironment(.tone, missingConstraints, paths)
+        await #expect(throws: InstallError.self) {
+            try await missingConstraints.install(.tone, mode: .packages).consume { _ in }
+        }
+        #expect(!fm.fileExists(atPath: uvArgs.path))
+        try fm.removeItem(at: oldDirectory)
+
+        try Data("{}".utf8).write(to: tts.appending(path: "server-pins/tts/wheel.json"))
+        try Data().write(to: tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt"))
+        let traversed = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
+        #expect(try traversed.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
+            == tts.appending(path: "server-pins/tts/constraints.txt").resolvingSymlinksInPath().path)
+        #expect(try traversed.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
+            == tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt").resolvingSymlinksInPath().path)
+        let manager = EnvironmentManager(paths: paths, tools: traversed)
+        for (service, pin): (Service, URL) in [
+            (.tone, tts.appending(path: "server-pins/tts/constraints.txt")),
+            (.whisper, tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt")),
+        ] {
+            try await VariantTests.fakeEnvironment(service, manager, paths)
+            try await manager.install(service, mode: .packages).consume { _ in }
+            let args = try String(contentsOf: uvArgs, encoding: .utf8).split(separator: "\n").map(String.init)
+            let workingDirectory = try #require(args.first)
+            #expect(URL(filePath: workingDirectory).resolvingSymlinksInPath().path
+                == pin.deletingLastPathComponent().resolvingSymlinksInPath().path)
+            let flag = try #require(args.firstIndex(of: "--constraint"))
+            #expect(args.dropFirst(flag + 1).first == pin.lastPathComponent)
+            #expect(args.contains("--require-hashes") == (service == .whisper))
+        }
+
+        // Construct relative overrides without changing the process-wide working directory.
+        let cwdDepth = fm.currentDirectoryPath.split(separator: "/").count
+        let relativeDirectory = String(repeating: "../", count: cwdDepth) + traversedDirectory.path.dropFirst()
+        let relative = try await ToolLocator.locate(bundle: noTools, environment: [
+            "PIPECAT_TOOLBAR_UV": "/usr/bin/true",
+            "PIPECAT_TOOLBAR_WHEEL": wheel.path,
+            "PIPECAT_TOOLBAR_CONSTRAINTS": relativeDirectory + "/tts.txt",
+            "PIPECAT_TOOLBAR_STT_CONSTRAINTS": relativeDirectory,
+        ], paths: paths)
+        #expect(try relative.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
+            == tts.appending(path: "server-pins/tts/constraints.txt").resolvingSymlinksInPath().path)
+        #expect(try relative.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
+            == tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt").resolvingSymlinksInPath().path)
+
+        try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
+        try Data().write(to: oldDirectory.appending(path: ".DS_Store"))
+        let leftover = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
+        #expect(try leftover.constraints(for: Service.tone.info)?.path == newTTSPin.path)
+        #expect(try leftover.constraints(for: Service.whisper.info)?.path == newSTTPin.path)
+
+        try Data().write(to: oldTTSPin)
         try Data().write(to: oldSTTPin)
+        try Data().write(to: oldDirectory.appending(path: "stt-kyutai.txt"))
+        try Data().write(to: newSTTPins.appending(path: "stt-parakeet.txt"))
         let existing = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
         #expect(try existing.constraints(for: Service.tone.info)?.path == oldTTSPin.path)
-        #expect(try existing.constraints(for: Service.whisper.info)?.path == oldSTTPin.path)
+        for (service, expected): (Service, URL?) in [
+            (.whisper, oldSTTPin),
+            (.kyutai, oldDirectory.appending(path: "stt-kyutai.txt")),
+            (.parakeet, newSTTPins.appending(path: "stt-parakeet.txt")),
+            (.nemotron, nil),
+        ] {
+            #expect(try existing.constraints(for: service.info)?.path == expected?.path, "\(service)")
+        }
+
+        let customDirectory = toolbar.appending(path: "custom-constraints")
+        try fm.createDirectory(at: customDirectory, withIntermediateDirectories: true)
+        let customPin = customDirectory.appending(path: "stt-kyutai.txt")
+        try Data().write(to: customPin)
+        try fm.moveItem(at: oldDirectory, to: root.appending(path: "former-constraints"))
+        try fm.createSymbolicLink(at: oldDirectory, withDestinationURL: customDirectory)
+        let symlinked = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory)
+        #expect(symlinked.constraints?.path == oldTTSPin.path)
+        #expect(try symlinked.constraints(for: Service.kyutai.info)?.path == oldDirectory.appending(path: "stt-kyutai.txt").path)
+        #expect(try symlinked.constraints(for: Service.whisper.info) == nil)
+
+        let bundleContents = root.appending(path: "WithTools.app/Contents")
+        let resources = bundleContents.appending(path: "Resources")
+        let bundleWheels = resources.appending(path: "wheels")
+        let bundleUV = resources.appending(path: "bin/uv")
+        try fm.createDirectory(at: bundleUV.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: bundleWheels, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: bundleUV, withDestinationURL: URL(filePath: "/usr/bin/true"))
+        let bundledWheel = "bundled.whl"
+        try Data(bundledWheel.utf8).write(to: bundleWheels.appending(path: "MANIFEST"))
+        try Data().write(to: bundleWheels.appending(path: bundledWheel))
+        let bundledPin = bundleWheels.appending(path: "constraints.txt")
+        try Data().write(to: bundledPin)
+        let bundle = try #require(Bundle(url: bundleContents.deletingLastPathComponent()))
+        let bundled = try await locate(ttsPin: oldTTSPin, sttDirectory: oldDirectory, bundle: bundle)
+        #expect(bundled.source == .bundle)
+        #expect(bundled.constraints?.path == bundledPin.path)
+        #expect(throws: ToolLocatorError.self) { try bundled.constraints(for: Service.whisper.info) }
+    }
+
+    @Test(arguments: [true, false, nil] as [Bool?])
+    func legacyPinComponentsFollowTheVolumeCasePolicy(caseSensitive: Bool?) {
+        for (exact, mixed) in [
+            ("constraints", "Constraints"), ("tts.txt", "TTS.TXT"),
+            ("constraints", "conſtraints"), ("tts.txt", "ttſ.txt"),
+        ] {
+            #expect(ToolLocator.matchesLegacyPinName(Substring(exact), exact, caseSensitive: caseSensitive))
+            #expect(ToolLocator.matchesLegacyPinName(Substring(mixed), exact, caseSensitive: caseSensitive)
+                == (caseSensitive == false))
+            #expect(!ToolLocator.matchesLegacyPinName(Substring(exact + ".bak"), exact, caseSensitive: caseSensitive))
+        }
+        #expect(!ToolLocator.matchesLegacyPinName("con\u{200D}straints", "constraints", caseSensitive: caseSensitive))
     }
 
     @Test func theToolbarRootIsNotTheTTSCheckout() throws {

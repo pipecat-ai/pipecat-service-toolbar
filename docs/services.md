@@ -40,13 +40,15 @@ for running both.
 ## How it works
 
 - **TTS**: `uv pip install "pipecat-local-tts-server[<backend>] @ <bundled wheel>"`,
-  pinned to `server-pins/tts/constraints.txt`, then `python -m tts_server prefetch` and
-  `serve --supervised`.
+  pinned to `Contents/Resources/wheels/constraints.txt` in the app bundle, then
+  `python -m tts_server prefetch` and `serve --supervised`. The build copies the pins from
+  `server-pins/tts/constraints.txt` in the checkout.
 - **Whisper, Kyutai, Parakeet, Nemotron, Moonshine**: PyPI packages hash-pinned to the last
-  transitive dependency (`server-pins/stt/constraints/stt-<engine>.txt`, `uv pip install
-  --require-hashes`; a bundled app missing that file refuses the install rather
-  than resolve unpinned), run by the upstream CLI (`python -m stt_server prefetch`
-  and `serve --supervised`). The four default STT models (Whisper large-v3-turbo,
+  transitive dependency with `uv pip install --require-hashes`. The build copies each
+  `stt-<engine>.txt` from `server-pins/stt/constraints/` in the checkout to
+  `Contents/Resources/constraints/` in the app bundle. A bundled app refuses the install
+  when the engine's file is missing. The upstream CLI runs the service
+  (`python -m stt_server prefetch` and `serve --supervised`). The four default STT models (Whisper large-v3-turbo,
   Kyutai 1B, Parakeet, Nemotron) are pinned to a recorded Hub commit by upstream 0.6.0
   itself (`PINNED_REVISIONS`; `prefetch --json` reports the `revision`). The app passes
   no revision flag (there is none), only `--model <repo>`: a model other than a pinned
