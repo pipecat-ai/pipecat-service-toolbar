@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// What the app needs to build and run environments: `uv`, the TTS server wheel
@@ -8,25 +9,33 @@ public struct Tools: Sendable, Equatable {
     public let uv: URL
     public let wheel: URL
     /// Pins exported from `uv.lock` so TTS environments match what CI tests.
-    public let constraints: URL?
+    public var constraints: URL? {
+        guard let ttsConstraints, let legacyTTSConstraints else { return ttsConstraints }
+        return legacyTTSConstraints.pin(or: ttsConstraints)
+    }
     /// The preferred folder of hash-pinned `stt-<engine>.txt` constraints for the STT environments.
     public let sttConstraints: URL?
     public let source: Source
-    private let sttConstraintsFallback: URL?
+    private let ttsConstraints: URL?
+    private let legacyTTSConstraints: ToolLocator.LegacyTTSConstraints?
+    private let legacySTTDirectory: ToolLocator.LegacyConstraintsDirectory?
 
     public init(uv: URL, wheel: URL, constraints: URL?, sttConstraints: URL? = nil, source: Source) {
         self.init(uv: uv, wheel: wheel, constraints: constraints, sttConstraints: sttConstraints,
-                  sttConstraintsFallback: nil, source: source)
+                  legacySTTDirectory: nil, source: source)
     }
 
     fileprivate init(
-        uv: URL, wheel: URL, constraints: URL?, sttConstraints: URL?, sttConstraintsFallback: URL?, source: Source
+        uv: URL, wheel: URL, constraints: URL?, sttConstraints: URL?,
+        legacyTTSConstraints: ToolLocator.LegacyTTSConstraints? = nil,
+        legacySTTDirectory: ToolLocator.LegacyConstraintsDirectory?, source: Source
     ) {
         self.uv = uv.absoluteURL
         self.wheel = wheel.absoluteURL
-        self.constraints = constraints?.absoluteURL
+        self.ttsConstraints = constraints?.absoluteURL
         self.sttConstraints = sttConstraints?.absoluteURL
-        self.sttConstraintsFallback = sttConstraintsFallback?.absoluteURL
+        self.legacyTTSConstraints = legacyTTSConstraints
+        self.legacySTTDirectory = legacySTTDirectory
         self.source = source
     }
 
@@ -39,9 +48,13 @@ public struct Tools: Sendable, Equatable {
         case .ttsServer: return constraints
         case .sttHelper(let engine, _):
             let name = "stt-\(engine).txt"
-            for directory in [sttConstraints, sttConstraintsFallback].compactMap({ $0 }) {
+            let legacy = legacySTTDirectory.flatMap { $0.acceptsRelocation ? $0 : nil }
+            if let directory = legacy?.directory ?? sttConstraints {
                 let file = directory.appending(path: name)
                 if FileManager.default.fileExists(atPath: file.path) { return file }
+            }
+            if let relocated = legacy?.replacement(at: "\(ToolLocator.sttPinDirectory)/\(name)") {
+                return relocated
             }
             if source == .bundle { throw ToolLocatorError.sttConstraintsMissing(name) }
             return nil
@@ -94,7 +107,7 @@ public enum ToolLocatorError: LocalizedError, Sendable {
 /// (a `PIPECAT_TOOLBAR_REPO` that names no checkout throws rather than falling back).
 public enum ToolLocator {
     private static let wheelManifest = "server-pins/tts/wheel.json"
-    private static let sttPinDirectory = "server-pins/stt/constraints"
+    fileprivate static let sttPinDirectory = "server-pins/stt/constraints"
 
     private static func hasCurrentWheelManifest(in root: URL) -> Bool {
         FileManager.default.fileExists(atPath: root.appending(path: wheelManifest).path)
@@ -104,18 +117,6 @@ public enum ToolLocator {
         // A repository override can point to a toolbar checkout from before the pin move.
         hasCurrentWheelManifest(in: root)
             || FileManager.default.fileExists(atPath: root.appending(path: "artifacts/tts.json").path)
-    }
-
-    private static func pinOverrideURL(_ path: String) -> URL {
-        // Foundation normalizes relative paths against the current directory. Make the path absolute
-        // first when it contains `..`, so the filesystem can traverse any preceding symlink.
-        guard !path.hasPrefix("/"), path.split(separator: "/").contains("..") else {
-            return URL(filePath: path)
-        }
-        let absolute = path.hasPrefix("~/")
-            ? (path as NSString).expandingTildeInPath
-            : FileManager.default.currentDirectoryPath + "/" + path
-        return URL(filePath: absolute)
     }
 
     static func matchesLegacyPinName(_ name: Substring, _ expected: String, caseSensitive: @autoclosure () -> Bool?) -> Bool {
@@ -128,31 +129,112 @@ public enum ToolLocator {
         try? directory.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]).volumeSupportsCaseSensitiveNames
     }
 
-    /// Find a replacement only for the old checkout-local path. Keep the traversable prefix as
-    /// spelled, including any `..`, while probing the checkout and its replacement on disk.
-    private static func relocatedPin(for requested: URL, legacyFile: String? = nil, currentPath: String) -> URL? {
-        let parts = requested.path.split(separator: "/").filter { $0 != "." }
-        let depth = legacyFile == nil ? 1 : 2
-        guard parts.count >= depth else { return nil }
-        let directoryName = parts[parts.count - depth]
-        let checkout = URL(filePath: "/" + parts.dropLast(depth).joined(separator: "/"), directoryHint: .isDirectory)
-        guard matchesLegacyPinName(directoryName, "constraints", caseSensitive: caseSensitiveVolume(at: checkout)),
-              hasCurrentWheelManifest(in: checkout) else { return nil }
+    struct LegacyConstraintsDirectory: Sendable, Equatable {
+        let checkout: URL
+        let directory: URL
 
-        let legacyDirectory = checkout.appending(path: String(directoryName))
-        let files = FileManager.default
-        var isDirectory: ObjCBool = false
-        let oldDirectoryExists = files.fileExists(atPath: legacyDirectory.path, isDirectory: &isDirectory)
-        // A symlink or a non-directory in the old location is an explicit custom path.
-        guard (try? files.destinationOfSymbolicLink(atPath: legacyDirectory.path)) == nil,
-              !oldDirectoryExists || isDirectory.boolValue else { return nil }
-        if let legacyFile, let name = parts.last {
-            let volume = oldDirectoryExists ? legacyDirectory : checkout
-            guard matchesLegacyPinName(name, legacyFile, caseSensitive: caseSensitiveVolume(at: volume)) else { return nil }
+        var acceptsRelocation: Bool {
+            // A running app can outlive a checkout revision or a local override.
+            let kind = ToolLocator.entryKind(at: directory)
+            return kind == .directory || kind == .missing
         }
 
-        let relocated = checkout.appending(path: currentPath)
-        return files.fileExists(atPath: relocated.path) ? relocated : nil
+        func replacement(at path: String) -> URL? {
+            guard ToolLocator.hasCurrentWheelManifest(in: checkout) else { return nil }
+            let pin = checkout.appending(path: path)
+            return FileManager.default.fileExists(atPath: pin.path) ? pin : nil
+        }
+    }
+
+    fileprivate struct LegacyTTSConstraints: Sendable, Equatable {
+        let location: LegacyConstraintsDirectory
+        let name: String
+
+        func pin(or requested: URL) -> URL {
+            guard location.acceptsRelocation else { return requested }
+            let primary = location.directory.appending(path: name)
+            guard ToolLocator.entryKind(at: primary) == .missing else { return primary }
+            return location.replacement(at: "server-pins/tts/constraints.txt") ?? primary
+        }
+    }
+
+    private enum EntryKind { case directory, missing, other }
+
+    private static func entryKind(at url: URL) -> EntryKind {
+        url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return .other }
+            var entry = stat()
+            if lstat(path, &entry) == 0 {
+                return (entry.st_mode & S_IFMT) == S_IFDIR ? .directory : .other
+            }
+            return errno == ENOENT ? .missing : .other
+        }
+    }
+
+    private static func physicalDirectory(at url: URL) -> URL? {
+        url.withUnsafeFileSystemRepresentation { path -> URL? in
+            guard let path, let physical = realpath(path, nil) else { return nil }
+            defer { free(physical) }
+            return URL(fileURLWithFileSystemRepresentation: physical, isDirectory: true, relativeTo: nil)
+        }
+    }
+
+    private static func reachedThroughLegacyAlias(_ physical: URL, components: [Substring]) -> Bool {
+        for index in components.indices.reversed()
+        where matchesLegacyPinName(components[index], "constraints", caseSensitive: false) {
+            let spelled = URL(filePath: "/" + components.prefix(through: index).joined(separator: "/"))
+            let parent = spelled.deletingLastPathComponent()
+            guard matchesLegacyPinName(components[index], "constraints", caseSensitive: caseSensitiveVolume(at: parent)),
+                  physicalDirectory(at: spelled)?.path == physical.path else { continue }
+            // The resolved directory alone hides an explicit symlink in the caller's path.
+            return entryKind(at: spelled) != .directory
+        }
+        return false
+    }
+
+    /// Inspect the path as written so a symlink before `..` can select its physical checkout.
+    /// A path that does not establish a legacy location keeps the original Foundation URL.
+    private static func legacyDirectory(for path: String) -> LegacyConstraintsDirectory? {
+        let expanded = (path as NSString).expandingTildeInPath
+        let absolute = expanded.hasPrefix("/") ? expanded : FileManager.default.currentDirectoryPath + "/" + expanded
+        let parts = absolute.split(separator: "/").filter { $0 != "." }
+        guard let name = parts.last else { return nil }
+        let traversesParents = parts.contains("..")
+        let checkout: URL
+        let directory: URL
+        if name == ".." {
+            let traversal = URL(filePath: absolute, directoryHint: .isDirectory)
+            guard let physical = physicalDirectory(at: traversal),
+                  !reachedThroughLegacyAlias(physical, components: parts) else { return nil }
+            checkout = physical.deletingLastPathComponent()
+            directory = physical
+        } else {
+            let prefix = URL(filePath: "/" + parts.dropLast().joined(separator: "/"), directoryHint: .isDirectory)
+            if traversesParents {
+                guard let physical = physicalDirectory(at: prefix) else { return nil }
+                checkout = physical
+            } else {
+                checkout = prefix
+            }
+            directory = checkout.appending(path: String(name))
+        }
+        guard matchesLegacyPinName(Substring(directory.lastPathComponent), "constraints",
+                                   caseSensitive: caseSensitiveVolume(at: checkout)),
+              isToolbarCheckout(checkout) else { return nil }
+        return LegacyConstraintsDirectory(checkout: checkout, directory: directory)
+    }
+
+    private static func legacyTTSConstraints(for path: String) -> LegacyTTSConstraints? {
+        guard !path.hasSuffix("/") else { return nil }
+        let slash = path.lastIndex(of: "/")
+        let parent = slash.map { String(path[...$0]) } ?? "."
+        let name = slash.map { path[path.index(after: $0)...] } ?? path[...]
+        guard let legacy = legacyDirectory(for: parent) else { return nil }
+        let volume = entryKind(at: legacy.directory) == .directory ? legacy.directory : legacy.checkout
+        guard matchesLegacyPinName(name, "tts.txt", caseSensitive: caseSensitiveVolume(at: volume)) else {
+            return nil
+        }
+        return LegacyTTSConstraints(location: legacy, name: String(name))
     }
 
     public static func locate(
@@ -184,33 +266,17 @@ public enum ToolLocator {
         guard let uv = findUV(environment: environment) else { throw ToolLocatorError.uvNotFound }
 
         let repo = findRepositoryRoot(environment: environment)
-        let sttConstraints: URL?
-        let sttConstraintsFallback: URL?
-        if let path = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"] {
-            let requested = pinOverrideURL(path)
-            let relocated = relocatedPin(for: requested, currentPath: sttPinDirectory)
-            if let relocated, !fm.fileExists(atPath: requested.path) {
-                sttConstraints = relocated
-                sttConstraintsFallback = nil
-            } else {
-                sttConstraints = requested
-                sttConstraintsFallback = relocated
-            }
-        } else {
-            sttConstraints = defaultSTTConstraints(repo: repo, toolbarRoot: findToolbarRoot())
-            sttConstraintsFallback = nil
-        }
+        let sttOverride = environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"]
+        let sttConstraints = sttOverride.map { URL(filePath: $0) }
+            ?? defaultSTTConstraints(repo: repo, toolbarRoot: findToolbarRoot())
+        let legacySTTDirectory = sttOverride.flatMap(legacyDirectory(for:))
 
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
-            let constraints = environment["PIPECAT_TOOLBAR_CONSTRAINTS"].map { path in
-                let requested = pinOverrideURL(path)
-                guard !fm.fileExists(atPath: requested.path) else { return requested }
-                return relocatedPin(for: requested, legacyFile: "tts.txt", currentPath: "server-pins/tts/constraints.txt")
-                    ?? requested
-            }
+            let ttsOverride = environment["PIPECAT_TOOLBAR_CONSTRAINTS"]
             return Tools(
-                uv: uv, wheel: URL(filePath: wheelPath), constraints: constraints,
-                sttConstraints: sttConstraints, sttConstraintsFallback: sttConstraintsFallback, source: .override)
+                uv: uv, wheel: URL(filePath: wheelPath), constraints: ttsOverride.map { URL(filePath: $0) },
+                sttConstraints: sttConstraints, legacyTTSConstraints: ttsOverride.flatMap(legacyTTSConstraints(for:)),
+                legacySTTDirectory: legacySTTDirectory, source: .override)
         }
 
         // An explicit checkout that matches nothing is a mistake, not a request for the pinned
@@ -221,7 +287,7 @@ public enum ToolLocator {
         }
         guard let repo else { throw ToolLocatorError.wheelNotFound }
         return try await buildFromRepository(
-            repo, uv: uv, sttConstraints: sttConstraints, sttConstraintsFallback: sttConstraintsFallback,
+            repo, uv: uv, sttConstraints: sttConstraints, legacySTTDirectory: legacySTTDirectory,
             paths: paths, processes: processes)
     }
 
@@ -314,7 +380,7 @@ public enum ToolLocator {
     }
 
     static func buildFromRepository(
-        _ repo: URL, uv: URL, sttConstraints: URL? = nil, sttConstraintsFallback: URL? = nil, paths: AppPaths,
+        _ repo: URL, uv: URL, sttConstraints: URL? = nil, legacySTTDirectory: LegacyConstraintsDirectory? = nil, paths: AppPaths,
         processes: ProcessRegistry = ProcessRegistry()
     ) async throws -> Tools {
         let out = paths.cacheDir.appending(path: "dev-wheel")
@@ -336,7 +402,7 @@ public enum ToolLocator {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return Tools(uv: uv, wheel: out.appending(path: name),
                          constraints: out.appending(path: "constraints.txt"),
-                         sttConstraints: sttConstraints, sttConstraintsFallback: sttConstraintsFallback, source: .repository)
+                         sttConstraints: sttConstraints, legacySTTDirectory: legacySTTDirectory, source: .repository)
         }
 
         let build = Subprocess(
@@ -364,7 +430,7 @@ public enum ToolLocator {
         let exported = try await processes.collect(export)
         return Tools(
             uv: uv, wheel: wheel, constraints: exported.status == 0 ? constraints : nil,
-            sttConstraints: sttConstraints, sttConstraintsFallback: sttConstraintsFallback, source: .repository)
+            sttConstraints: sttConstraints, legacySTTDirectory: legacySTTDirectory, source: .repository)
     }
 }
 
