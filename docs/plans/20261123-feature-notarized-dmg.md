@@ -247,7 +247,8 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 
 - Optional DMG window styling (background image, icon positions); deliberately left out to keep the packager
   dependency-free.
-- Publishing the DMG as a GitHub release asset next to the app-distribution plan's ZIP.
+- Publishing the DMG as a GitHub release asset next to the app-distribution plan's ZIP. Done for the DMG:
+  v0.4.2 (see Progress). The ZIP and the release workflow stay with the app-distribution plan.
 
 ## Files
 
@@ -300,6 +301,10 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - 2026-11-23: PR #5 merged. `just app-dmg` was run on the merged `main` with the hardened packager: both
   submissions accepted and stapled, the three files published, a quarantined copy passed `spctl`. Recorded
   in Findings. The UTM-guest and second-maintainer items in Phase 4 are still open.
+- 2026-11-23: release 0.4.2 (build 475) built from the version-bump commit on the owner's Mac, both submissions
+  accepted and stapled, and published as the stable GitHub release `v0.4.2` with only the `.dmg` and `.sha256` (the
+  manifest holds submission IDs and is not uploaded). The downloaded asset matched its checksum and a quarantined
+  copy passed `spctl`. 0.4.1 was the self-signed prerelease; 0.4.2 is the same app, Developer ID signed.
 
 ## Findings
 
@@ -317,6 +322,10 @@ replace the password-manager item. Never revoke a certificate that signed shippe
 - Post-merge validation run (`main` at the merge commit `8deeab1`): `Pipecat-Service-Toolbar-0.4.1-b474-8deeab1.dmg`,
   manifest `notarized: true`, SHA-256 `c8be64f79fa946de0b1ce2d058ec706ce6686a544b139ad26675f3db76ff8423`. `spctl`
   accepted a quarantined copy as notarized and `stapler validate` passed. This DMG is a validation build, not a release.
+- Phase 4 state at release: **pass** — install of the 0.4.2 build on the build Mac and Try it with Kokoro and
+  Whisper; `spctl` and `stapler validate` on the DMG. **Not run before release** — clean macOS 15 and 26 guests,
+  browser download there, offline launch, replacing a self-signed install, second-maintainer run. Those boxes
+  stay open.
 
 ## Issues & Solutions
 

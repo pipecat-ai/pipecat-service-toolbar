@@ -1,7 +1,8 @@
 # Install the app
 
-Install Pipecat Service Toolbar from a DMG someone on the team sent you, or one you downloaded from a
-release. You do not need Xcode, Python or a terminal.
+Install Pipecat Service Toolbar from a DMG someone on the team sent you, or one you downloaded from the
+[Releases page](https://github.com/pipecat-ai/pipecat-service-toolbar/releases). You do not need Xcode,
+Python or a terminal.
 
 ## Requirements
 

@@ -298,6 +298,20 @@ or build does not match its commit.
 Share the `.dmg` and its `.sha256`. The manifest (commit, checksum, notary submission IDs) is your
 record. Recipients follow [Install the app](install.md).
 
+To publish a GitHub release, build from the commit that bumped `app-version.json` (so the name has no
+`-<shortsha>`), then upload only the `.dmg` and the `.sha256`. Never upload the manifest: it holds the notary
+submission IDs, and this repository is public.
+
+```bash
+git switch --detach <version-bump commit> && just app-dmg && git switch main
+cd dist/dmg && gh release create v<version> Pipecat-Service-Toolbar-<version>-b<build>.dmg \
+  Pipecat-Service-Toolbar-<version>-b<build>.dmg.sha256 --target <version-bump commit> \
+  --title "Pipecat Service Toolbar <version>" --notes-file <the version's CHANGELOG.md section>
+```
+
+Afterwards download the asset, check it against the `.sha256`, and confirm `gh release view v<version>` shows
+the tag on the commit you built.
+
 `DMG_SKIP_NOTARIZE=1 just app-dmg` is a rehearsal: it signs but skips Apple's notary service, and the
 name ends in `-UNNOTARIZED`. It still needs the network: signing asks Apple's timestamp service for
 secure timestamps. Never share one. `DMG_APP_BUNDLE` packages a prebuilt bundle and is for tests only; the
