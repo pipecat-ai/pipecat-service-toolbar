@@ -135,7 +135,12 @@ public enum ToolLocator {
             guard let directory else { return nil }
             let requested = directory.appending(path: name)
             if FileManager.default.fileExists(atPath: requested.path) { return requested }
-            guard case .override = self, let legacy = ToolLocator.legacyDirectory(for: directory) else { return nil }
+            guard case .override = self else { return nil }
+            // A removed legacy directory earlier in the path can hide an existing explicit pin.
+            if ToolLocator.pathComponents(directory.path).contains(".."),
+               let recovered = ToolLocator.physicalDirectoryAfterPinMove(directory),
+               let pin = ToolLocator.existingPin(at: name, in: recovered) { return pin }
+            guard let legacy = ToolLocator.legacyDirectory(for: directory) else { return nil }
             return ToolLocator.existingPin(at: "\(ToolLocator.sttPinDirectory)/\(name)", in: legacy.checkout)
         }
     }
@@ -161,9 +166,14 @@ public enum ToolLocator {
         }
     }
 
+    private static func pathComponents(_ path: String, omittingEmptySubsequences: Bool = true) -> [String] {
+        // A POSIX separator can belong to the same Swift Character as a following combining mark.
+        path.unicodeScalars.split(separator: "/", omittingEmptySubsequences: omittingEmptySubsequences).map(String.init)
+    }
+
     private static func lexicalDirectory(_ directory: URL) -> URL {
-        var names: [Substring] = []
-        for name in directory.path.split(separator: "/") where name != "." {
+        var names: [String] = []
+        for name in pathComponents(directory.path) where name != "." {
             if name == ".." {
                 _ = names.popLast()
             } else {
@@ -178,14 +188,14 @@ public enum ToolLocator {
 
         // A checkout may have removed its old constraints directory. Skip only missing
         // legacy directory entries immediately followed by `..`. Keep all live traversal.
-        var prefix: [Substring] = []
-        for name in requested.path.split(separator: "/") where name != "." {
+        var prefix: [String] = []
+        for name in pathComponents(requested.path) where name != "." {
             if name == "..", let previous = prefix.last,
-               matchesLegacyPinName(previous, "constraints", caseSensitive: false),
+               matchesLegacyPinName(Substring(previous), "constraints", caseSensitive: false),
                let checkout = physicalDirectory(at: URL(filePath: "/" + prefix.dropLast().joined(separator: "/"))),
                hasCurrentWheelManifest(in: checkout),
-               matchesLegacyPinName(previous, "constraints", caseSensitive: caseSensitiveVolume(at: checkout)),
-               entryKind(at: checkout.appending(path: String(previous))) == .missing {
+               matchesLegacyPinName(Substring(previous), "constraints", caseSensitive: caseSensitiveVolume(at: checkout)),
+               entryKind(at: checkout.appending(path: previous)) == .missing {
                 prefix.removeLast()
             } else {
                 prefix.append(name)
@@ -196,7 +206,7 @@ public enum ToolLocator {
 
     /// Use the same URL as the original override. Resolve its live parent traversal only for relocation.
     private static func legacyDirectory(for requested: URL) -> (checkout: URL, directory: URL)? {
-        let parts = requested.path.split(separator: "/").filter { $0 != "." }
+        let parts = pathComponents(requested.path).filter { $0 != "." }
         guard let name = parts.last else { return nil }
         let checkout: URL
         let directory: URL
@@ -217,7 +227,7 @@ public enum ToolLocator {
             } else {
                 checkout = prefix
             }
-            directory = checkout.appending(path: String(name))
+            directory = checkout.appending(path: name)
         }
         guard matchesLegacyPinName(Substring(directory.lastPathComponent), "constraints",
                                    caseSensitive: caseSensitiveVolume(at: checkout)),
@@ -281,7 +291,7 @@ public enum ToolLocator {
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
             let ttsOverride = environment["PIPECAT_TOOLBAR_CONSTRAINTS"]
             // Preserve a directory-shaped override as written. Foundation can normalize a trailing `/.`.
-            let ttsLeaf = ttsOverride?.split(separator: "/", omittingEmptySubsequences: false).last
+            let ttsLeaf = ttsOverride.flatMap { pathComponents($0, omittingEmptySubsequences: false).last }
             let relocateTTS = ttsLeaf.map { !$0.isEmpty && $0 != "." && $0 != ".." } ?? false
             return Tools(
                 uv: uv, wheel: URL(filePath: wheelPath), constraints: ttsOverride.map { URL(filePath: $0) },

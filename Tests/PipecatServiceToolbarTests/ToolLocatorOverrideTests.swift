@@ -411,6 +411,12 @@ import Testing
             try await checkInstall(.tone, tools, pin: newTTS)
             try await checkInstall(.whisper, tools, pin: directory == throughRemovedDirectory ? newSTT : nil)
         }
+        let scratch = toolbar.appending(path: "\u{0301}scratch")
+        try fm.createDirectory(at: scratch, withIntermediateDirectories: false)
+        let unicodeTraversal = scratch.path + "/../constraints"
+        let unicodeTools = try await locate(tts: unicodeTraversal + "/tts.txt", stt: unicodeTraversal)
+        try await checkInstall(.tone, unicodeTools, pin: newTTS)
+        try await checkInstall(.whisper, unicodeTools, pin: newSTT)
         let repeatedLegacyTraversal = try await locate(stt: old.path + "/../constraints/../constraints")
         try await checkInstall(.whisper, repeatedLegacyTraversal, pin: newSTT)
         let innerChild = inner.appending(path: "constraints/local")
@@ -421,8 +427,23 @@ import Testing
         }
         try Data().write(to: innerPin)
         try Data().write(to: innerManifest)
-        let terminalTraversal = try await locate(stt: old.path + "/../../" + inner.lastPathComponent + "/constraints/local/..")
-        try await checkInstall(.whisper, terminalTraversal, pin: innerPin)
+        let innerRequested = inner.appending(path: "constraints/stt-whisper.txt")
+        try Data().write(to: innerRequested)
+        let innerTraversal = old.path + "/../../" + inner.lastPathComponent + "/constraints"
+        let directTraversal = try await locate(stt: innerTraversal)
+        let terminalTraversal = try await locate(stt: innerTraversal + "/local/..")
+        for tools in [directTraversal, terminalTraversal] {
+            try await checkInstall(.whisper, tools, pin: innerRequested)
+        }
+        try fm.removeItem(at: innerManifest)
+        for tools in [directTraversal, terminalTraversal] {
+            try await checkInstall(.whisper, tools, pin: innerRequested)
+        }
+        try fm.removeItem(at: innerRequested)
+        try Data().write(to: innerManifest)
+        for tools in [directTraversal, terminalTraversal] {
+            try await checkInstall(.whisper, tools, pin: innerPin)
+        }
         let child = old.appending(path: "local")
         try fm.createDirectory(at: child, withIntermediateDirectories: true)
         let traversed = try await locate(tts: child.path + "/../tts.txt", stt: child.path + "/..")

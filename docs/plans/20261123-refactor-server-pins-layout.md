@@ -75,3 +75,5 @@ The expanded fixture reported 17 failed assertions on the previous resolver. All
 The fresh reviewers found two ways a previously valid spelling can lose its pin after the move. TTS must use the lexical working directory used by its installer. STT can traverse past a removed legacy `constraints/..` pair after checking the checkout marker and confirming the directory entry is absent.
 
 The follow-up fixtures reported 11 failed assertions on the earlier resolver. All 11 override tests passed after the correction, including traversal of repeated removed legacy components and an existing directory symlink.
+
+Both spellings with parent traversal use the same STT resolver. If it recovers a directory after skipping a removed legacy component, probe that directory for the explicit engine pin before checking for a relocated pin. Split POSIX paths on literal slashes, including when the next component starts with a combining mark.
