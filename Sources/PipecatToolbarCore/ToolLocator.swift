@@ -100,7 +100,7 @@ public enum ToolLocator {
     private static let sttPinDirectory = "server-pins/stt/constraints"
 
     private static func hasCurrentWheelManifest(in root: URL) -> Bool {
-        FileManager.default.fileExists(atPath: root.appending(path: wheelManifest).path)
+        isRegularFile(at: root.appending(path: wheelManifest))
     }
 
     private static func isToolbarCheckout(_ root: URL) -> Bool {
@@ -109,7 +109,7 @@ public enum ToolLocator {
     }
 
     private static func hasLegacyWheelManifest(in root: URL) -> Bool {
-        FileManager.default.fileExists(atPath: root.appending(path: legacyWheelManifest).path)
+        isRegularFile(at: root.appending(path: legacyWheelManifest))
     }
 
     static func matchesLegacyPinName(_ name: Substring, _ expected: String, caseSensitive: @autoclosure () -> Bool?) -> Bool {
@@ -147,30 +147,44 @@ public enum ToolLocator {
             }
             guard case .override = self else { return requested }
             let movedPath = "\(ToolLocator.sttPinDirectory)/\(name)"
-            let workingDirectory = ToolLocator.installDirectory(for: pin)
+            guard let workingDirectory = ToolLocator.installDirectory(for: pin) else { return requested }
             let workingPin = workingDirectory.appending(path: name)
-            if FileManager.default.fileExists(atPath: workingPin.path) {
-                return requested ?? workingPin
+            switch ToolLocator.entryKind(at: workingPin, followingSymlinks: true) {
+            case .directory, .nonDirectory: return requested ?? workingPin
+            case .missing: return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested
+            case .unavailable: return requested
             }
-            return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested
         }
     }
 
-    private enum EntryKind { case directory, missing, other }
+    private enum EntryKind { case directory, nonDirectory, missing, unavailable }
 
-    private static func entryKind(at url: URL) -> EntryKind {
+    private static func entryKind(at url: URL, followingSymlinks: Bool = false) -> EntryKind {
         url.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return .other }
+            guard let path else { return .unavailable }
             var entry = stat()
-            if lstat(path, &entry) == 0 {
-                return (entry.st_mode & S_IFMT) == S_IFDIR ? .directory : .other
+            let result = followingSymlinks ? stat(path, &entry) : lstat(path, &entry)
+            if result == 0 {
+                return (entry.st_mode & S_IFMT) == S_IFDIR ? .directory : .nonDirectory
             }
-            return errno == ENOENT ? .missing : .other
+            return errno == ENOENT ? .missing : .unavailable
         }
     }
 
-    private static func installDirectory(for pin: URL) -> URL {
+    private static func installDirectory(for pin: URL) -> URL? {
         let directory = pin.deletingLastPathComponent()
+        // Foundation can raise an exception when the components reduce to the root.
+        // There is no checkout-local legacy directory to recover in that case.
+        var components: [String] = []
+        for part in directory.path.unicodeScalars.split(separator: "/", omittingEmptySubsequences: false) {
+            let name = String(part)
+            if name == ".." {
+                _ = components.popLast()
+            } else if name != ".", !name.isEmpty || !components.isEmpty {
+                components.append(name)
+            }
+        }
+        guard components.contains(where: { !$0.isEmpty }) else { return nil }
         let process = Process()
         // Use the same Foundation normalization as Subprocess without starting a process.
         process.currentDirectoryURL = directory
@@ -206,7 +220,7 @@ public enum ToolLocator {
     }
 
     fileprivate static func ttsPin(for requested: URL) -> URL {
-        let directory = installDirectory(for: requested)
+        guard let directory = installDirectory(for: requested) else { return requested }
         let name = requested.lastPathComponent
         guard entryKind(at: directory.appending(path: name)) == .missing else { return requested }
         guard let checkout = legacyCheckout(for: directory) else { return requested }

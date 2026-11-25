@@ -39,6 +39,12 @@ import Testing
         // A TTS source checkout carries none of the pins, so the executable's toolbar root still wins.
         let fromTTS = ToolLocator.defaultSTTConstraints(repo: tts, toolbarRoot: toolbar)
         #expect(fromTTS?.standardizedFileURL == toolbar.appending(path: "server-pins/stt/constraints").standardizedFileURL)
+
+        let nested = toolbar.appending(path: "nested")
+        for marker in ["server-pins/tts/wheel.json", "artifacts/tts.json"] {
+            try FileManager.default.createDirectory(at: nested.appending(path: marker), withIntermediateDirectories: true)
+        }
+        #expect(ToolLocator.toolbarRoot(from: [nested])?.standardizedFileURL == toolbar.standardizedFileURL)
     }
 
     @Test func aLegacyToolbarCheckoutOverrideUsesItsOwnToolsAndSTTConstraints() async throws {
@@ -400,6 +406,10 @@ import Testing
 
         let launchedAfterMove = try await locate(tts: oldTTS.path, stt: old.path)
         let defaultAfterMove = try await locate(repo: toolbar)
+        for spelling in ["/..", "/var/..", "//.."] {
+            let rootOverride = try await locate(stt: spelling)
+            #expect(try rootOverride.constraints(for: Service.whisper.info) == nil)
+        }
         #expect(launchedAfterMove.sttConstraints?.path == old.path)
         try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
         try await checkInstall(.tone, launchedAfterMove, pin: newTTS)
@@ -602,6 +612,15 @@ import Testing
         try fm.removeItem(at: oldSTT)
         try fm.createDirectory(at: oldSTT, withIntermediateDirectories: false)
         #expect(try launchedAfterMove.constraints(for: Service.whisper.info)?.path == oldSTT.path)
+        try fm.removeItem(at: oldSTT)
+        try Data().write(to: oldSTT)
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: old.path)
+        do {
+            defer { try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: old.path) }
+            if !fm.fileExists(atPath: oldSTT.path) {
+                try await checkInstall(.whisper, launchedAfterMove, pin: nil)
+            }
+        }
 
         try fm.removeItem(at: old)
         try Data().write(to: old)
