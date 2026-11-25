@@ -77,3 +77,7 @@ The fresh reviewers found two ways a previously valid spelling can lose its pin 
 The follow-up fixtures reported 11 failed assertions on the earlier resolver. All 11 override tests passed after the correction, including traversal of repeated removed legacy components and an existing directory symlink.
 
 Both spellings with parent traversal use the same STT resolver. If it recovers a directory after skipping a removed legacy component, probe that directory for the explicit engine pin before checking for a relocated pin. Split POSIX paths on literal slashes, including when the next component starts with a combining mark.
+
+The final filesystem review found that a symlink followed by `..` can send the STT file probe and `uv` to different checkouts. Keep an explicit pin in the directory `uv` uses when either checkout moves its pins. When a missing legacy directory also removes the descendant in a terminal `..` spelling, check that its surviving parent resolves to the same checkout before relocating the pin. The regression fixture exercises the package install in both checkout orders and after removal of the terminal traversal directory.
+
+When both checkout manifests exist, default STT lookup prefers the current engine pin and then checks the legacy pin. The same install fixture verifies both cases and checks the hash flag.

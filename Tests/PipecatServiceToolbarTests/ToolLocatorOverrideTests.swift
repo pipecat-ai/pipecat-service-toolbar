@@ -444,6 +444,19 @@ import Testing
         for tools in [directTraversal, terminalTraversal] {
             try await checkInstall(.whisper, tools, pin: innerPin)
         }
+
+        let linkedChild = toolbar.appending(path: "linked-child")
+        try fm.createSymbolicLink(at: linkedChild, withDestinationURL: innerChild.deletingLastPathComponent())
+        let acrossCheckouts = try await locate(stt: linkedChild.path + "/../constraints")
+        try Data().write(to: innerRequested)
+        try await checkInstall(.whisper, acrossCheckouts, pin: newSTT)
+        try fm.createDirectory(at: old, withIntermediateDirectories: false)
+        try Data().write(to: oldSTT)
+        try await checkInstall(.whisper, acrossCheckouts, pin: oldSTT)
+        try fm.removeItem(at: innerRequested)
+        try await checkInstall(.whisper, acrossCheckouts, pin: oldSTT)
+        try fm.removeItem(at: old)
+
         let child = old.appending(path: "local")
         try fm.createDirectory(at: child, withIntermediateDirectories: true)
         let traversed = try await locate(tts: child.path + "/../tts.txt", stt: child.path + "/..")
@@ -457,11 +470,13 @@ import Testing
             try await checkInstall(.tone, tools, pin: oldTTS)
         }
 
-        try fm.removeItem(at: newSTT)
-        try fm.removeItem(at: newTTS)
-        try fm.removeItem(at: manifest)
         try fm.createDirectory(at: legacyManifest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data().write(to: legacyManifest)
+        try await checkInstall(.whisper, defaultAfterMove, pin: newSTT)
+        try fm.removeItem(at: newSTT)
+        try await checkInstall(.whisper, defaultAfterMove, pin: oldSTT)
+        try fm.removeItem(at: newTTS)
+        try fm.removeItem(at: manifest)
         let launchedOnLegacy = try await locate(tts: oldTTS.path, stt: old.path)
         let defaultOnLegacy = try await locate(repo: toolbar)
         for tools in [defaultAfterMove, defaultOnLegacy] {
@@ -476,7 +491,7 @@ import Testing
         try Data().write(to: manifest)
         try Data().write(to: newSTT)
         try Data().write(to: newTTS)
-        for tools in [launchedOnLegacy, launchedAfterMove] {
+        for tools in [launchedOnLegacy, launchedAfterMove, traversed] {
             try await checkInstall(.whisper, tools, pin: newSTT)
             try await checkInstall(.tone, tools, pin: newTTS)
         }

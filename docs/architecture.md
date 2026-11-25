@@ -77,10 +77,15 @@ missing `constraints/tts.txt` in a current toolbar checkout, the app tries
 `constraints/` location keeps the explicit path. A TTS file override also keeps its
 explicit path when it names a symlink or uses a directory-style suffix. With the STT
 override unset, the app checks the selected checkout's layout again at each install.
+When both checkout manifests exist, it tries the current engine pin first, then the
+legacy engine pin.
 
 TTS checks the lexical working directory that Foundation passes to `uv`.
-STT follows filesystem traversal when probing for an engine pin. For relocation, it
-can skip a missing legacy `constraints/..` pair at a recognized checkout.
+STT follows filesystem traversal when probing for an engine pin. For an override
+containing `..`, it also checks the working directory Foundation gives `uv`, so an
+explicit pin there keeps precedence. When the move removed a legacy directory, STT
+can recover the path through a recognized checkout and try the explicit pin before
+the relocated pin.
 
 ## Runtimes
 
