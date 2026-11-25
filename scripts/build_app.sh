@@ -2,7 +2,7 @@
 # Build "Pipecat Service Toolbar.app": the SwiftUI menu bar app plus everything
 # it needs to install speech services on demand: a pinned uv, the pinned TTS
 # server wheel, a recorded TTS constraints file and the
-# STT environments' hash-pinned constraints (constraints/).
+# STT environments' hash-pinned constraints.
 # Python itself is NOT bundled; uv installs a managed CPython on first use.
 #
 #   scripts/build_app.sh                    # release build, ad-hoc signed
@@ -92,7 +92,7 @@ echo "$WHEEL" > "$APP/Contents/Resources/wheels/MANIFEST"
 # Hash-pinned STT constraints: checked in (regenerate with
 # scripts/compile_stt_constraints.py), so the build itself stays offline-reproducible.
 mkdir -p "$APP/Contents/Resources/constraints"
-cp "$MACOS_DIR"/constraints/stt-*.txt "$APP/Contents/Resources/constraints/"
+cp "$MACOS_DIR"/server-pins/stt/constraints/stt-*.txt "$APP/Contents/Resources/constraints/"
 
 step "Signing (identity: $SIGN_IDENTITY, $SIGN_MODE)"
 # Inside-out: the nested uv binary first, then the bundle seal. A release signature asks

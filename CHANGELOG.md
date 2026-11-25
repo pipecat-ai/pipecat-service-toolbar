@@ -6,7 +6,7 @@ Server-only changes belong to
 [pipecat-local-stt-server](https://github.com/vr000m/pipecat-local-stt-server/releases).
 
 The app has its own version (`app-version.json`), independent of the server packages it
-installs (`artifacts/tts.json`, `Service.swift`). Releases from this repository never upgrade
+installs (`server-pins/tts/wheel.json`, `Service.swift`). Releases from this repository never upgrade
 a server package implicitly; a changed server pin is listed as its own entry.
 
 ## Version history
@@ -28,6 +28,11 @@ with, and are renumbered here as the app's own history. Dates are unchanged. The
 | 0.1.0 | 0.7.0 (first release) | 2026-10-25 |
 
 ## [Unreleased]
+
+### Changed
+
+- Group the TTS wheel manifest and the TTS and STT constraints under `server-pins/`.
+  Source builds still accept overrides pointing at the pins' previous checkout paths.
 
 ## [0.4.2] - 2026-11-23
 

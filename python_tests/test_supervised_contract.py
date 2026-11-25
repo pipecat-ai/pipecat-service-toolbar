@@ -615,7 +615,7 @@ def test_every_stt_family_has_its_own_engine():
 
 def test_every_stt_engine_has_hash_pinned_constraints():
     engines = {e.engine: e.requirements for e in _stt_entries() if not e.is_variant}
-    folder = REPO / "constraints"
+    folder = REPO / "server-pins/stt/constraints"
     assert {p.name for p in folder.glob("stt-*.txt")} == {f"stt-{e}.txt" for e in engines}
     swift_python = re.search(
         r'pythonVersion = "([\d.]+)"', (CORE / "EnvironmentManager.swift").read_text()

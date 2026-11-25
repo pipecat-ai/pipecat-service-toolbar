@@ -16,7 +16,7 @@ import Testing
 
     /// The fixture records environments installed from the shipped baseline: a record of what is
     /// installed today. Every row must be ready under this checkout's fingerprints: the TTS wheel
-    /// filename (`artifacts/tts.json`) and each STT engine's requirements (which carry
+    /// filename (`server-pins/tts/wheel.json`) and each STT engine's requirements (which carry
     /// `ServiceCatalog.sttServerRequirement`). So moving the TTS pin or the STT pin fails here, and
     /// that failure means installed environments will refresh. Replace the rows with the new
     /// fingerprints only when that refresh is intended; never add rows beside the old ones
@@ -27,7 +27,7 @@ import Testing
         let rows = try JSONDecoder().decode([Installed].self, from: Data(contentsOf: fixture))
         let repo = tests.deletingLastPathComponent().deletingLastPathComponent()
         let wheel = try JSONDecoder().decode(
-            Artifact.self, from: Data(contentsOf: repo.appending(path: "artifacts/tts.json"))).filename
+            Artifact.self, from: Data(contentsOf: repo.appending(path: "server-pins/tts/wheel.json"))).filename
         #expect(Set(rows.map(\.service)) == Set(Service.allCases.filter { $0 != .appleSpeech }.map(\.rawValue)))
         for row in rows {
             let service = try #require(Service(rawValue: row.service))

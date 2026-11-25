@@ -24,10 +24,10 @@ def fixture(tmp_path, *, version="0.9.1"):
         )
         z.writestr("tts_server/__main__.py", "")
     content = raw.getvalue()
-    (tmp_path / "artifacts").mkdir()
-    (tmp_path / "constraints").mkdir()
-    (tmp_path / "constraints/tts.txt").write_bytes(CONSTRAINTS.encode())
-    (tmp_path / "artifacts/tts.json").write_text(
+    pins = tmp_path / "server-pins/tts"
+    pins.mkdir(parents=True)
+    (pins / "constraints.txt").write_bytes(CONSTRAINTS.encode())
+    (pins / "wheel.json").write_text(
         json.dumps(
             {
                 "filename": "pipecat_local_tts_server-0.9.1-py3-none-any.whl",
@@ -82,7 +82,7 @@ def test_checksum_alone_cannot_substitute_another_version(tmp_path):
 
 
 def respec(tmp_path, **changes):
-    path = tmp_path / "artifacts/tts.json"
+    path = tmp_path / "server-pins/tts/wheel.json"
     path.write_text(json.dumps({**json.loads(path.read_text()), **changes}))
 
 
@@ -129,7 +129,7 @@ def test_constraints_from_another_release_or_edited_never_ship(tmp_path, constra
     """``just app-build`` and ``swift run`` never run pytest, so prepare() itself must refuse
     constraints whose header does not match the wheel's pin, before fetching anything."""
     fixture(tmp_path)
-    (tmp_path / "constraints/tts.txt").write_bytes(constraints.encode())
+    (tmp_path / "server-pins/tts/constraints.txt").write_bytes(constraints.encode())
     with pytest.raises(ValueError, match=error):
         prepare(tmp_path / "out", root=tmp_path, fetch=lambda *_: pytest.fail("network"))
     assert not (tmp_path / "out").exists()
@@ -137,5 +137,5 @@ def test_constraints_from_another_release_or_edited_never_ship(tmp_path, constra
 
 def test_the_recorded_constraints_pass_the_check_prepare_applies():
     """prepare() must accept the repository's own constraints for its own pin."""
-    spec = json.loads((ROOT / "artifacts/tts.json").read_text())
-    verify_header((ROOT / "constraints/tts.txt").read_bytes(), spec)
+    spec = json.loads((ROOT / "server-pins/tts/wheel.json").read_text())
+    verify_header((ROOT / "server-pins/tts/constraints.txt").read_bytes(), spec)

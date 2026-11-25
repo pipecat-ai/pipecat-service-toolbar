@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def verify(wheel: Path, spec: dict) -> None:
     if hashlib.sha256(wheel.read_bytes()).hexdigest() != spec["sha256"]:
-        raise ValueError("TTS wheel SHA-256 does not match artifacts/tts.json")
+        raise ValueError("TTS wheel SHA-256 does not match server-pins/tts/wheel.json")
     with zipfile.ZipFile(wheel) as archive:
         metadata = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
         if len(metadata) != 1:
@@ -44,19 +44,23 @@ def download(url: str, target: Path) -> None:
 
 
 def prepare(output: Path, *, root: Path = ROOT, fetch=download) -> Path:
-    spec = json.loads((root / "artifacts/tts.json").read_text())
+    spec = json.loads((root / "server-pins/tts/wheel.json").read_text())
     filename = spec["filename"]
     if filename != f"pipecat_local_tts_server-{spec['version']}-py3-none-any.whl":
         raise ValueError("Unexpected TTS wheel filename")
     if not spec["url"].startswith("https://files.pythonhosted.org/"):
         raise ValueError("Expected a pinned PyPI artifact URL")
     if urlsplit(spec["url"]).path.rsplit("/", 1)[-1] != filename:
-        raise ValueError("artifacts/tts.json url does not point at the pinned wheel filename")
+        raise ValueError(
+            "server-pins/tts/wheel.json url does not point at the pinned wheel filename"
+        )
     if not re.fullmatch(r"[0-9a-f]{40}", spec.get("source_commit", "")):
-        raise ValueError("artifacts/tts.json needs the 40-character source_commit of the release")
+        raise ValueError(
+            "server-pins/tts/wheel.json needs the 40-character source_commit of the release"
+        )
     # Fail closed on pins from another release (a half-finished pin move): the header must name
     # this wheel's version and commit. The verified bytes are what the app ships.
-    constraints = (root / "constraints/tts.txt").read_bytes()
+    constraints = (root / "server-pins/tts/constraints.txt").read_bytes()
     verify_header(constraints, spec)
     cache = root / ".build/artifacts"
     cache.mkdir(parents=True, exist_ok=True)

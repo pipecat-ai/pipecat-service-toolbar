@@ -30,7 +30,7 @@ def test_identity_and_layout_files_match_the_installed_app():
 
 def test_build_version_and_server_fingerprint_are_independent():
     app = json.loads((ROOT / "app-version.json").read_text())
-    server = json.loads((ROOT / "artifacts/tts.json").read_text())
+    server = json.loads((ROOT / "server-pins/tts/wheel.json").read_text())
     assert re.fullmatch(r"\d+\.\d+\.\d+", app["version"])
     assert isinstance(app["build"], int) and app["build"] >= FIRST_BUILD_HERE
     # The fingerprint of installed TTS environments is the wheel name, not anything of the app's.

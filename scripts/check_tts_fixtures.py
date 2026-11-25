@@ -5,7 +5,7 @@
 
 Each file ``python_tests/fixtures/provenance.json`` records from the TTS repository (its ``tts``
 and ``contract`` sections; each entry's ``source`` is its path in that repository) is compared
-with its source at the ``source_commit`` in ``artifacts/tts.json`` (``git cat-file``, so the
+with its source at the ``source_commit`` in ``server-pins/tts/wheel.json`` (``git cat-file``, so the
 checkout's working tree and current branch are irrelevant). The digests in ``provenance.json``
 only catch an edit after recording; this catches a version bump without re-recording. CI runs it
 against a clone of ``source_repository`` (``just tts-fixtures-check <path>`` locally). Reading

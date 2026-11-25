@@ -70,7 +70,7 @@ public enum ServiceRuntime: Sendable, Equatable {
     /// Pinned PyPI requirements (built on `pipecat-local-stt-server`), run with the
     /// upstream CLI: `python -m stt_server serve --supervised --backend <b>`, where
     /// `<b>` is the entry's `expectedBackendName`. `engine` names the environment's
-    /// hash-pinned constraints file (`constraints/stt-<engine>.txt`).
+    /// hash-pinned constraints file (`server-pins/stt/constraints/stt-<engine>.txt`).
     case sttHelper(engine: String, requirements: [String])
     /// Apple's on-device SpeechAnalyzer, served by the app itself (macOS 26+).
     case appleSpeech
