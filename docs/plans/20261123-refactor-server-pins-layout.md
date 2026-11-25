@@ -80,4 +80,4 @@ Both spellings with parent traversal use the same STT resolver. If it recovers a
 
 The final filesystem review found that a symlink followed by `..` can send the STT file probe and `uv` to different checkouts. Keep an explicit pin in the directory `uv` uses when either checkout moves its pins. When a missing legacy directory also removes the descendant in a terminal `..` spelling, check that its surviving parent resolves to the same checkout before relocating the pin. The regression fixture exercises the package install in both checkout orders and after removal of the terminal traversal directory.
 
-When both checkout manifests exist, default STT lookup prefers the current engine pin and then checks the legacy pin. The same install fixture verifies both cases and checks the hash flag.
+When both checkout manifests exist, default STT lookup prefers the current engine pin and then checks the legacy pin. The same install fixture verifies both cases and checks the hash flag. It also verifies that an explicit pin in `uv`'s working directory wins even when the physical path cannot qualify for relocation.

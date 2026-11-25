@@ -151,15 +151,15 @@ public enum ToolLocator {
             // The file probe follows live symlinks. Process collapses parent components
             // in its working directory before it follows symlinks.
             let workingDirectory = ToolLocator.lexicalDirectory(directory.appending(path: name).deletingLastPathComponent())
-            let workingPin = ToolLocator.existingPin(at: name, in: workingDirectory)
+            if let workingPin = ToolLocator.existingPin(at: name, in: workingDirectory) {
+                return requested ?? workingPin
+            }
             if let requested {
-                if workingPin != nil { return requested }
                 return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested
             }
             if let recovered = ToolLocator.physicalDirectoryAfterPinMove(directory),
-               let pin = ToolLocator.existingPin(at: name, in: recovered) { return workingPin ?? pin }
-            guard let legacy = ToolLocator.legacyDirectory(for: directory) else { return nil }
-            return workingPin ?? ToolLocator.existingPin(at: movedPath, in: legacy.checkout)
+               let pin = ToolLocator.existingPin(at: name, in: recovered) { return pin }
+            return ToolLocator.relocatedPin(at: movedPath, from: directory)
         }
     }
 
