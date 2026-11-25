@@ -139,11 +139,11 @@ public enum ToolLocator {
             guard let directory else { return nil }
             let pin = directory.appending(path: name)
             let requested = FileManager.default.fileExists(atPath: pin.path) ? pin : nil
-            if case .checkout(let checkout) = self,
-               ToolLocator.hasLegacyWheelManifest(in: checkout),
-               !ToolLocator.isRegularFile(at: pin),
-               let legacyPin = ToolLocator.existingPin(at: "constraints/\(name)", in: checkout) {
-                return legacyPin
+            if case .checkout(let checkout) = self {
+                if ToolLocator.isRegularFile(at: pin) { return pin }
+                let legacyPath = checkout.appending(path: "constraints").path
+                let alternate = directory.path == legacyPath ? ToolLocator.sttPinDirectory : "constraints"
+                return ToolLocator.existingPin(at: name, in: checkout.appending(path: alternate)) ?? requested
             }
             guard case .override = self else { return requested }
             let movedPath = "\(ToolLocator.sttPinDirectory)/\(name)"
@@ -357,18 +357,20 @@ public enum ToolLocator {
     }
 
     private static func defaultSTTPinSource(repo: URL?, toolbarRoot: URL?) -> STTPinSource {
-        let selected: URL?
         if let repo, isToolbarCheckout(repo) {
-            selected = repo
-        } else {
-            selected = toolbarRoot ?? repo
+            return .checkout(repo)
         }
-        return selected.map(STTPinSource.checkout) ?? .fixed(nil)
+        if let toolbarRoot { return .checkout(toolbarRoot) }
+        return .fixed(repo?.appending(path: "constraints"))
     }
 
     private static func sttConstraints(at checkout: URL) -> URL {
-        let pinDirectory = hasCurrentWheelManifest(in: checkout) ? sttPinDirectory : "constraints"
-        return checkout.appending(path: pinDirectory)
+        let current = checkout.appending(path: sttPinDirectory)
+        if hasCurrentWheelManifest(in: checkout)
+            || (!hasLegacyWheelManifest(in: checkout) && FileManager.default.fileExists(atPath: current.path)) {
+            return current
+        }
+        return checkout.appending(path: "constraints")
     }
 
     static func buildFromRepository(

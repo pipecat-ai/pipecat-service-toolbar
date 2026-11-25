@@ -91,3 +91,5 @@ In a mixed checkout, a directory at the current engine's constraints filename ca
 All fallback candidates must resolve to regular files. The fixture checks a directory at each relocated filename and confirms that a symlink to a regular pin still works.
 
 For an explicit STT override, keep the existing path at the legacy filename even if it is a directory. This preserves the installer's error for an invalid explicit pin. File-type validation applies to the fallback candidates.
+
+An already selected toolbar checkout can temporarily contain either, both, or neither manifest. Default STT searches both directories in that checkout and uses the manifests to choose the preferred layout. The fixture verifies the install when the preferred pin is unavailable and the other layout still has it.

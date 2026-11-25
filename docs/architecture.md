@@ -77,8 +77,10 @@ missing `constraints/tts.txt` in a current toolbar checkout, the app tries
 `constraints/` location keeps the explicit path. A TTS file override also keeps its
 explicit path when it names a symlink or `uv` sees a different filename. With the STT
 override unset, the app checks the selected checkout's layout again at each install.
-When both checkout manifests exist, it tries the current engine pin first, then the
-legacy engine pin.
+The manifests determine which directory the app tries first. If the preferred
+engine pin is unavailable, the app checks the other directory in the selected
+toolbar checkout. If neither manifest exists, it prefers the current pin directory
+when present.
 
 TTS and STT check for explicit and relocated pins from the working directory
 Foundation gives `uv`. Foundation resolves `..` before following symlinks in that

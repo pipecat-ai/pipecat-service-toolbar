@@ -404,6 +404,9 @@ import Testing
         try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
         try await checkInstall(.tone, launchedAfterMove, pin: newTTS)
         try await checkInstall(.whisper, defaultAfterMove, pin: newSTT)
+        try fm.removeItem(at: manifest)
+        try await checkInstall(.whisper, defaultAfterMove, pin: newSTT)
+        try Data().write(to: manifest)
         let throughRemovedDirectory = old.path + "/../constraints"
         let throughMissingDirectory = toolbar.path + "/never-created/../constraints"
         for directory in [throughRemovedDirectory, throughMissingDirectory] {
@@ -488,13 +491,22 @@ import Testing
         try await checkInstall(.whisper, defaultAfterMove, pin: oldSTT)
         try fm.removeItem(at: newSTT)
         try await checkInstall(.whisper, defaultAfterMove, pin: oldSTT)
-        try fm.removeItem(at: newTTS)
+        try fm.removeItem(at: legacyManifest)
+        try await checkInstall(.whisper, defaultAfterMove, pin: oldSTT)
         try fm.removeItem(at: manifest)
+        try await checkInstall(.whisper, defaultAfterMove, pin: oldSTT)
+        try Data().write(to: legacyManifest)
+        try fm.removeItem(at: newTTS)
         let launchedOnLegacy = try await locate(tts: oldTTS.path, stt: old.path)
         let defaultOnLegacy = try await locate(repo: toolbar)
         for tools in [defaultAfterMove, defaultOnLegacy] {
             try await checkInstall(.whisper, tools, pin: oldSTT)
         }
+        try fm.removeItem(at: oldSTT)
+        try Data().write(to: newSTT)
+        try await checkInstall(.whisper, defaultOnLegacy, pin: newSTT)
+        try fm.removeItem(at: newSTT)
+        try Data().write(to: oldSTT)
         for tools in [launchedOnLegacy, launchedAfterMove, traversed] {
             try await checkInstall(.whisper, tools, pin: oldSTT)
             try await checkInstall(.tone, tools, pin: oldTTS)
