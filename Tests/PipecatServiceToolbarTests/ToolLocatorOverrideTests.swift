@@ -192,7 +192,7 @@ import Testing
         let traversedTTSPin = traversedDirectory.appending(path: "tts.txt")
         let outside = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
         #expect(outside.constraints?.path == newTTSPin.path)
-        #expect(try outside.constraints(for: Service.whisper.info) == nil)
+        #expect(try outside.constraints(for: Service.whisper.info)?.path == newSTTPin.path)
         try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
         try Data().write(to: oldTTSPin)
         try Data().write(to: oldSTTPin)
@@ -217,17 +217,17 @@ import Testing
         #expect(try withOriginalPin.constraints(for: Service.tone.info)?.path == traversedTTSPin.path)
         try fm.removeItem(at: oldDirectory)
 
-        // STT's original file probe follows the symlink. TTS's Process working directory is lexical.
+        // Both replacements come from the checkout whose working directory uv uses.
         try Data().write(to: tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt"))
         let traversed = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
         #expect(try traversed.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
             == newTTSPin.resolvingSymlinksInPath().path)
         #expect(try traversed.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
-            == tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt").resolvingSymlinksInPath().path)
+            == newSTTPin.resolvingSymlinksInPath().path)
         let manager = EnvironmentManager(paths: paths, tools: traversed)
         for (service, pin): (Service, URL) in [
             (.tone, newTTSPin),
-            (.whisper, tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt")),
+            (.whisper, newSTTPin),
         ] {
             try await VariantTests.fakeEnvironment(service, manager, paths)
             try await manager.install(service, mode: .packages).consume { _ in }
@@ -269,7 +269,7 @@ import Testing
         }
         try fm.removeItem(at: oldDirectory)
 
-        // The absolute spelling follows the live symlink when a relocated pin is needed.
+        // Retargeting a symlink that Process collapses leaves the chosen checkout unchanged.
         let toolbarChild = toolbar.appending(path: "child")
         try fm.createDirectory(at: toolbarChild, withIntermediateDirectories: false)
         try fm.removeItem(at: link)
@@ -409,7 +409,7 @@ import Testing
         for directory in [throughRemovedDirectory, throughMissingDirectory] {
             let tools = try await locate(tts: directory + "/tts.txt", stt: directory)
             try await checkInstall(.tone, tools, pin: newTTS)
-            try await checkInstall(.whisper, tools, pin: directory == throughRemovedDirectory ? newSTT : nil)
+            try await checkInstall(.whisper, tools, pin: newSTT)
         }
         let scratch = toolbar.appending(path: "\u{0301}scratch")
         try fm.createDirectory(at: scratch, withIntermediateDirectories: false)
@@ -460,6 +460,9 @@ import Testing
         try fm.removeItem(at: innerRequested)
         try await checkInstall(.whisper, acrossCheckouts, pin: oldSTT)
         try await checkInstall(.whisper, terminalLink, pin: oldSTT)
+        try fm.removeItem(at: oldSTT)
+        try await checkInstall(.whisper, acrossCheckouts, pin: newSTT)
+        try await checkInstall(.whisper, terminalLink, pin: newSTT)
         try fm.removeItem(at: old)
 
         let child = old.appending(path: "local")
@@ -570,7 +573,7 @@ import Testing
         try fm.removeItem(at: old)
         try fm.createSymbolicLink(at: old, withDestinationURL: otherChild)
         let liveTraversal = try await locate(stt: old.path + "/../constraints")
-        try await checkInstall(.whisper, liveTraversal, pin: otherNew.appending(path: "stt-whisper.txt"))
+        try await checkInstall(.whisper, liveTraversal, pin: nil)
         try fm.removeItem(at: old)
         try fm.createSymbolicLink(at: old, withDestinationURL: otherOld)
         let throughCustom = try await locate(stt: old.path + "/local/..")

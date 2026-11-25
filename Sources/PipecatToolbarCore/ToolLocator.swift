@@ -144,22 +144,11 @@ public enum ToolLocator {
             }
             guard case .override = self else { return requested }
             let movedPath = "\(ToolLocator.sttPinDirectory)/\(name)"
-            guard ToolLocator.pathComponents(directory.path).contains("..") else {
-                return requested ?? ToolLocator.relocatedPin(at: movedPath, from: directory)
-            }
-
-            // The file probe follows live symlinks. Process collapses parent components
-            // in its working directory before it follows symlinks.
-            let workingDirectory = ToolLocator.lexicalDirectory(directory.appending(path: name).deletingLastPathComponent())
+            let workingDirectory = ToolLocator.installDirectory(for: directory.appending(path: name))
             if let workingPin = ToolLocator.existingPin(at: name, in: workingDirectory) {
                 return requested ?? workingPin
             }
-            if let requested {
-                return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested
-            }
-            if let recovered = ToolLocator.physicalDirectoryAfterPinMove(directory),
-               let pin = ToolLocator.existingPin(at: name, in: recovered) { return pin }
-            return ToolLocator.relocatedPin(at: movedPath, from: directory)
+            return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested
         }
     }
 
@@ -176,22 +165,16 @@ public enum ToolLocator {
         }
     }
 
-    private static func physicalDirectory(at url: URL) -> URL? {
-        url.withUnsafeFileSystemRepresentation { path -> URL? in
-            guard let path, let physical = realpath(path, nil) else { return nil }
-            defer { free(physical) }
-            return URL(fileURLWithFileSystemRepresentation: physical, isDirectory: true, relativeTo: nil)
-        }
-    }
-
     private static func pathComponents(_ path: String, omittingEmptySubsequences: Bool = true) -> [String] {
         // A POSIX separator can belong to the same Swift Character as a following combining mark.
         path.unicodeScalars.split(separator: "/", omittingEmptySubsequences: omittingEmptySubsequences).map(String.init)
     }
 
-    private static func lexicalDirectory(_ directory: URL) -> URL {
+    private static func installDirectory(for pin: URL) -> URL {
+        // Foundation's Process collapses parent components in the working directory
+        // before following symlinks. Use that directory for both the probe and relocation.
         var names: [String] = []
-        for name in pathComponents(directory.path) where name != "." {
+        for name in pathComponents(pin.deletingLastPathComponent().path) where name != "." {
             if name == ".." {
                 _ = names.popLast()
             } else {
@@ -201,85 +184,14 @@ public enum ToolLocator {
         return URL(filePath: "/" + names.joined(separator: "/"), directoryHint: .isDirectory)
     }
 
-    private static func physicalDirectoryAfterPinMove(_ requested: URL) -> URL? {
-        if let directory = physicalDirectory(at: requested) { return directory }
-
-        // A checkout may have removed its old constraints directory. Skip only missing
-        // legacy directory entries immediately followed by `..`. Keep all live traversal.
-        var prefix: [String] = []
-        for name in pathComponents(requested.path) where name != "." {
-            if name == "..", let previous = prefix.last,
-               matchesLegacyPinName(Substring(previous), "constraints", caseSensitive: false),
-               let checkout = physicalDirectory(at: URL(filePath: "/" + prefix.dropLast().joined(separator: "/"))),
-               hasCurrentWheelManifest(in: checkout),
-               matchesLegacyPinName(Substring(previous), "constraints", caseSensitive: caseSensitiveVolume(at: checkout)),
-               entryKind(at: checkout.appending(path: previous)) == .missing {
-                prefix.removeLast()
-            } else {
-                prefix.append(name)
-            }
-        }
-        return physicalDirectory(at: URL(filePath: "/" + prefix.joined(separator: "/")))
-    }
-
-    /// Use the same URL as the original override. Resolve its live parent traversal only for relocation.
-    private static func legacyDirectory(for requested: URL) -> (checkout: URL, directory: URL)? {
-        let parts = pathComponents(requested.path).filter { $0 != "." }
-        guard let name = parts.last else { return nil }
-        let checkout: URL
-        let directory: URL
-        if name == ".." {
-            // The two views must identify the same real legacy directory. An explicit alias
-            // ending in a parent component is a custom path even if it lands in a legacy directory.
-            let spelled = lexicalDirectory(requested)
-            switch entryKind(at: spelled) {
-            case .directory:
-                guard let physical = physicalDirectoryAfterPinMove(requested),
-                      physicalDirectory(at: spelled)?.path == physical.path else { return nil }
-                checkout = physical.deletingLastPathComponent()
-                directory = physical
-            case .missing:
-                // The move can remove the directory and every descendant in this spelling.
-                // The still-traversable prefix must lead to the same checkout as the lexical path.
-                guard let anchor = lastLexicalComponent(in: parts),
-                      let parent = physicalDirectoryAfterPinMove(URL(filePath: "/" + parts[..<anchor].joined(separator: "/"))),
-                      let spelledParent = physicalDirectory(at: spelled.deletingLastPathComponent()),
-                      parent.path == spelledParent.path else { return nil }
-                checkout = parent
-                directory = parent.appending(path: parts[anchor])
-            case .other:
-                return nil
-            }
-        } else {
-            let prefix = URL(filePath: "/" + parts.dropLast().joined(separator: "/"), directoryHint: .isDirectory)
-            if parts.contains("..") {
-                guard let physical = physicalDirectoryAfterPinMove(prefix) else { return nil }
-                checkout = physical
-            } else {
-                checkout = prefix
-            }
-            directory = checkout.appending(path: name)
-        }
+    private static func legacyCheckout(for directory: URL) -> URL? {
+        let checkout = directory.deletingLastPathComponent()
         guard matchesLegacyPinName(Substring(directory.lastPathComponent), "constraints",
                                    caseSensitive: caseSensitiveVolume(at: checkout)),
               hasCurrentWheelManifest(in: checkout) else { return nil }
         let kind = entryKind(at: directory)
         guard kind == .directory || kind == .missing else { return nil }
-        return (checkout, directory)
-    }
-
-    private static func lastLexicalComponent(in parts: [String]) -> Int? {
-        var parents = 0
-        for index in parts.indices.reversed() {
-            if parts[index] == ".." {
-                parents += 1
-            } else if parents == 0 {
-                return index
-            } else {
-                parents -= 1
-            }
-        }
-        return nil
+        return checkout
     }
 
     private static func existingPin(at path: String, in checkout: URL) -> URL? {
@@ -288,21 +200,20 @@ public enum ToolLocator {
     }
 
     private static func relocatedPin(at path: String, from directory: URL) -> URL? {
-        guard let legacy = legacyDirectory(for: directory) else { return nil }
-        return existingPin(at: path, in: legacy.checkout)
+        guard let checkout = legacyCheckout(for: directory) else { return nil }
+        return existingPin(at: path, in: checkout)
     }
 
     fileprivate static func ttsPin(for requested: URL) -> URL {
-        // Foundation's Process normalizes its working directory before launching uv.
-        let directory = lexicalDirectory(requested.deletingLastPathComponent())
+        let directory = installDirectory(for: requested)
         let name = requested.lastPathComponent
         guard entryKind(at: directory.appending(path: name)) == .missing else { return requested }
-        guard let legacy = legacyDirectory(for: directory) else { return requested }
-        let volume = entryKind(at: legacy.directory) == .directory ? legacy.directory : legacy.checkout
+        guard let checkout = legacyCheckout(for: directory) else { return requested }
+        let volume = entryKind(at: directory) == .directory ? directory : checkout
         guard matchesLegacyPinName(Substring(name), "tts.txt", caseSensitive: caseSensitiveVolume(at: volume)) else {
             return requested
         }
-        return existingPin(at: "server-pins/tts/constraints.txt", in: legacy.checkout) ?? requested
+        return existingPin(at: "server-pins/tts/constraints.txt", in: checkout) ?? requested
     }
 
     public static func locate(
