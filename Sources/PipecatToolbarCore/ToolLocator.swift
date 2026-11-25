@@ -165,19 +165,17 @@ public enum ToolLocator {
         }
     }
 
-    private static func pathComponents(_ path: String, omittingEmptySubsequences: Bool = true) -> [String] {
-        // A POSIX separator can belong to the same Swift Character as a following combining mark.
-        path.unicodeScalars.split(separator: "/", omittingEmptySubsequences: omittingEmptySubsequences).map(String.init)
-    }
-
     private static func installDirectory(for pin: URL) -> URL {
         // Foundation's Process collapses parent components in the working directory
         // before following symlinks. Use that directory for both the probe and relocation.
+        // A POSIX separator can belong to the same Swift Character as a following combining mark.
+        let components = pin.deletingLastPathComponent().path.unicodeScalars.split(separator: "/")
         var names: [String] = []
-        for name in pathComponents(pin.deletingLastPathComponent().path) where name != "." {
+        for component in components {
+            let name = String(component)
             if name == ".." {
                 _ = names.popLast()
-            } else {
+            } else if name != "." {
                 names.append(name)
             }
         }
@@ -251,12 +249,9 @@ public enum ToolLocator {
 
         if let wheelPath = environment["PIPECAT_TOOLBAR_WHEEL"], fm.fileExists(atPath: wheelPath) {
             let ttsOverride = environment["PIPECAT_TOOLBAR_CONSTRAINTS"]
-            // Preserve a directory-shaped override as written. Foundation can normalize a trailing `/.`.
-            let ttsLeaf = ttsOverride.flatMap { pathComponents($0, omittingEmptySubsequences: false).last }
-            let relocateTTS = ttsLeaf.map { !$0.isEmpty && $0 != "." && $0 != ".." } ?? false
             return Tools(
                 uv: uv, wheel: URL(filePath: wheelPath), constraints: ttsOverride.map { URL(filePath: $0) },
-                sttPinSource: sttPinSource, relocateTTSOverride: relocateTTS, source: .override)
+                sttPinSource: sttPinSource, relocateTTSOverride: true, source: .override)
         }
 
         // An explicit checkout that matches nothing is a mistake, not a request for the pinned

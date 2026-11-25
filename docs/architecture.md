@@ -75,7 +75,7 @@ missing `constraints/tts.txt` in a current toolbar checkout, the app tries
 `constraints/` directory and the engine pin is missing, the app tries
 `server-pins/stt/constraints/` there. A symlink or a non-directory at the old
 `constraints/` location keeps the explicit path. A TTS file override also keeps its
-explicit path when it names a symlink or uses a directory-style suffix. With the STT
+explicit path when it names a symlink or `uv` sees a different filename. With the STT
 override unset, the app checks the selected checkout's layout again at each install.
 When both checkout manifests exist, it tries the current engine pin first, then the
 legacy engine pin.

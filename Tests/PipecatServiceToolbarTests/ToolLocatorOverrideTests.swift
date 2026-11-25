@@ -473,6 +473,8 @@ import Testing
         let launchedBeforeMove = try await locate(tts: oldTTS.path, stt: old.path)
         try Data().write(to: oldSTT)
         try Data().write(to: oldTTS)
+        let trailingSlash = try await locate(tts: oldTTS.path + "/")
+        try await checkInstall(.tone, trailingSlash, pin: oldTTS)
         for tools in [launchedBeforeMove, launchedAfterMove, traversed] {
             try await checkInstall(.whisper, tools, pin: oldSTT)
             try await checkInstall(.tone, tools, pin: oldTTS)
@@ -503,6 +505,7 @@ import Testing
             try await checkInstall(.whisper, tools, pin: newSTT)
             try await checkInstall(.tone, tools, pin: newTTS)
         }
+        try await checkInstall(.tone, trailingSlash, pin: newTTS)
         for tools in [defaultAfterMove, defaultOnLegacy] {
             try await checkInstall(.whisper, tools, pin: newSTT)
         }
@@ -536,9 +539,7 @@ import Testing
             }
         }
         try fm.removeItem(at: oldTTS)
-        for suffix in ["/.", "/"] {
-            #expect(try await locate(tts: oldTTS.path + suffix).constraints?.path != newTTS.path)
-        }
+        #expect(try await locate(tts: oldTTS.path + "/.").constraints?.path != newTTS.path)
 
         try fm.createSymbolicLink(at: oldSTT, withDestinationURL: old.appending(path: "missing-stt.txt"))
         try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
