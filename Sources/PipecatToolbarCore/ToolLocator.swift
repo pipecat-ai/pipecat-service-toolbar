@@ -148,7 +148,8 @@ public enum ToolLocator {
             guard case .override = self else { return requested }
             let movedPath = "\(ToolLocator.sttPinDirectory)/\(name)"
             let workingDirectory = ToolLocator.installDirectory(for: pin)
-            if let workingPin = ToolLocator.existingPin(at: name, in: workingDirectory) {
+            let workingPin = workingDirectory.appending(path: name)
+            if FileManager.default.fileExists(atPath: workingPin.path) {
                 return requested ?? workingPin
             }
             return ToolLocator.relocatedPin(at: movedPath, from: workingDirectory) ?? requested

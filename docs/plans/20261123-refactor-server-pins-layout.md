@@ -89,3 +89,5 @@ Use Foundation's constraint filename for TTS relocation too. The installer recei
 In a mixed checkout, a directory at the current engine's constraints filename cannot serve as a pin. The install fixture verifies that this case still uses the available legacy pin.
 
 All fallback candidates must resolve to regular files. The fixture checks a directory at each relocated filename and confirms that a symlink to a regular pin still works.
+
+For an explicit STT override, keep the existing path at the legacy filename even if it is a directory. This preserves the installer's error for an invalid explicit pin. File-type validation applies to the fallback candidates.

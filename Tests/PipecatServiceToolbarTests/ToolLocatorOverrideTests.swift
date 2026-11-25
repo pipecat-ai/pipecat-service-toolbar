@@ -563,6 +563,9 @@ import Testing
         try fm.removeItem(at: newSTT)
         try await checkInstall(.whisper, launchedAfterMove, pin: nil)
         try Data().write(to: newSTT)
+        try fm.removeItem(at: oldSTT)
+        try fm.createDirectory(at: oldSTT, withIntermediateDirectories: false)
+        #expect(try launchedAfterMove.constraints(for: Service.whisper.info)?.path == oldSTT.path)
 
         try fm.removeItem(at: old)
         try Data().write(to: old)
