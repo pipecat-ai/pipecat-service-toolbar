@@ -85,3 +85,5 @@ When both checkout manifests exist, default STT lookup prefers the current engin
 When both linked checkouts move their pins, the physical fallback can still pick a different checkout from `uv`. Use the working directory that Foundation gives `uv` for all relocation decisions. This supersedes physical traversal for STT relocation. The install fixture covers both checkouts moving, including an override ending in a symlink followed by `..`.
 
 Use Foundation's constraint filename for TTS relocation too. The installer receives `tts.txt` when the override spells it `tts.txt/`. The install fixture checks that spelling with both pin layouts and keeps a dangling explicit symlink as written.
+
+In a mixed checkout, a directory at the current engine's constraints filename cannot serve as a pin. The install fixture verifies that this case still uses the available legacy pin.

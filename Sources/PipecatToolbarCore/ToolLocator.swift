@@ -137,14 +137,18 @@ public enum ToolLocator {
 
         func pin(named name: String) -> URL? {
             guard let directory else { return nil }
-            let requested = ToolLocator.existingPin(at: name, in: directory)
-            if case .checkout(let checkout) = self, requested == nil,
-               ToolLocator.hasLegacyWheelManifest(in: checkout) {
-                return ToolLocator.existingPin(at: "constraints/\(name)", in: checkout)
+            let pin = directory.appending(path: name)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: pin.path, isDirectory: &isDirectory)
+            let requested = exists ? pin : nil
+            if case .checkout(let checkout) = self, !exists || isDirectory.boolValue,
+               ToolLocator.hasLegacyWheelManifest(in: checkout),
+               let legacyPin = ToolLocator.existingPin(at: "constraints/\(name)", in: checkout) {
+                return legacyPin
             }
             guard case .override = self else { return requested }
             let movedPath = "\(ToolLocator.sttPinDirectory)/\(name)"
-            let workingDirectory = ToolLocator.installDirectory(for: directory.appending(path: name))
+            let workingDirectory = ToolLocator.installDirectory(for: pin)
             if let workingPin = ToolLocator.existingPin(at: name, in: workingDirectory) {
                 return requested ?? workingPin
             }
