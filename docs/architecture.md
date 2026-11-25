@@ -83,9 +83,9 @@ toolbar checkout. If neither manifest exists, it prefers the current pin directo
 when present.
 
 TTS and STT check for explicit and relocated pins from the working directory
-Foundation gives `uv`. Foundation resolves `..` before following symlinks in that
-directory. If a normalized override names `constraints/` inside a current toolbar
-checkout, the fallback stays in that checkout and requires a regular file.
+Foundation gives `uv`. If the normalized override names `constraints/` inside a
+current toolbar checkout, the fallback stays in that checkout and requires a
+regular file.
 
 ## Runtimes
 

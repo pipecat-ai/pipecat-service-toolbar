@@ -170,20 +170,11 @@ public enum ToolLocator {
     }
 
     private static func installDirectory(for pin: URL) -> URL {
-        // Foundation's Process collapses parent components in the working directory
-        // before following symlinks. Use that directory for both the probe and relocation.
-        // A POSIX separator can belong to the same Swift Character as a following combining mark.
-        let components = pin.deletingLastPathComponent().path.unicodeScalars.split(separator: "/")
-        var names: [String] = []
-        for component in components {
-            let name = String(component)
-            if name == ".." {
-                _ = names.popLast()
-            } else if name != "." {
-                names.append(name)
-            }
-        }
-        return URL(filePath: "/" + names.joined(separator: "/"), directoryHint: .isDirectory)
+        let directory = pin.deletingLastPathComponent()
+        let process = Process()
+        // Use the same Foundation normalization as Subprocess without starting a process.
+        process.currentDirectoryURL = directory
+        return process.currentDirectoryURL ?? directory
     }
 
     private static func legacyCheckout(for directory: URL) -> URL? {

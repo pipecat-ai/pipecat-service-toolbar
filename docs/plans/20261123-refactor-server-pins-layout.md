@@ -93,3 +93,5 @@ All fallback candidates must resolve to regular files. The fixture checks a dire
 For an explicit STT override, keep the existing path at the legacy filename even if it is a directory. This preserves the installer's error for an invalid explicit pin. File-type validation applies to the fallback candidates.
 
 An already selected toolbar checkout can temporarily contain either, both, or neither manifest. Default STT searches both directories in that checkout and uses the manifests to choose the preferred layout. The fixture verifies the install when the preferred pin is unavailable and the other layout still has it.
+
+Foundation normalizes repeated separators and `..` together. Read back the working directory from `Process.currentDirectoryURL` before launch so pin lookup and `uv` use the same normalization. The fixture verifies both services with repeated separators before and after a nested checkout moves its pins.
