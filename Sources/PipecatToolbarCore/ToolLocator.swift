@@ -138,11 +138,10 @@ public enum ToolLocator {
         func pin(named name: String) -> URL? {
             guard let directory else { return nil }
             let pin = directory.appending(path: name)
-            var isDirectory: ObjCBool = false
-            let exists = FileManager.default.fileExists(atPath: pin.path, isDirectory: &isDirectory)
-            let requested = exists ? pin : nil
-            if case .checkout(let checkout) = self, !exists || isDirectory.boolValue,
+            let requested = FileManager.default.fileExists(atPath: pin.path) ? pin : nil
+            if case .checkout(let checkout) = self,
                ToolLocator.hasLegacyWheelManifest(in: checkout),
+               !ToolLocator.isRegularFile(at: pin),
                let legacyPin = ToolLocator.existingPin(at: "constraints/\(name)", in: checkout) {
                 return legacyPin
             }
@@ -198,7 +197,15 @@ public enum ToolLocator {
 
     private static func existingPin(at path: String, in checkout: URL) -> URL? {
         let pin = checkout.appending(path: path)
-        return FileManager.default.fileExists(atPath: pin.path) ? pin : nil
+        return isRegularFile(at: pin) ? pin : nil
+    }
+
+    private static func isRegularFile(at url: URL) -> Bool {
+        url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return false }
+            var entry = stat()
+            return stat(path, &entry) == 0 && (entry.st_mode & S_IFMT) == S_IFREG
+        }
     }
 
     private static func relocatedPin(at path: String, from directory: URL) -> URL? {

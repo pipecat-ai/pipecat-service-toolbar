@@ -513,6 +513,20 @@ import Testing
             try await checkInstall(.whisper, tools, pin: newSTT)
         }
 
+        try fm.removeItem(at: newSTT)
+        try fm.createDirectory(at: newSTT, withIntermediateDirectories: false)
+        try await checkInstall(.whisper, launchedAfterMove, pin: nil)
+        try fm.removeItem(at: newSTT)
+        let linkedPin = root.appending(path: "linked-pin.txt")
+        try Data().write(to: linkedPin)
+        try fm.createSymbolicLink(at: newSTT, withDestinationURL: linkedPin)
+        try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
+        try fm.removeItem(at: newTTS)
+        try fm.createDirectory(at: newTTS, withIntermediateDirectories: false)
+        #expect(launchedAfterMove.constraints?.path == oldTTS.path)
+        try fm.removeItem(at: newTTS)
+        try Data().write(to: newTTS)
+
         let custom = root.appending(path: "custom pins")
         try fm.createDirectory(at: custom, withIntermediateDirectories: true)
         let customTTS = custom.appending(path: "tts.txt")

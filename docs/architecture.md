@@ -83,7 +83,7 @@ legacy engine pin.
 TTS and STT check for explicit and relocated pins from the working directory
 Foundation gives `uv`. Foundation resolves `..` before following symlinks in that
 directory. If a normalized override names `constraints/` inside a current toolbar
-checkout, the fallback stays in that checkout.
+checkout, the fallback stays in that checkout and requires a regular file.
 
 ## Runtimes
 

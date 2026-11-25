@@ -87,3 +87,5 @@ When both linked checkouts move their pins, the physical fallback can still pick
 Use Foundation's constraint filename for TTS relocation too. The installer receives `tts.txt` when the override spells it `tts.txt/`. The install fixture checks that spelling with both pin layouts and keeps a dangling explicit symlink as written.
 
 In a mixed checkout, a directory at the current engine's constraints filename cannot serve as a pin. The install fixture verifies that this case still uses the available legacy pin.
+
+All fallback candidates must resolve to regular files. The fixture checks a directory at each relocated filename and confirms that a symlink to a regular pin still works.
