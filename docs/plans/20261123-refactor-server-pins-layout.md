@@ -63,3 +63,11 @@ The corrected branch passed the full Swift suite (521 tests) and 39 focused Pyth
 ## 2026-11-24 per-engine override correction
 
 A legacy STT directory can survive the move if it contains local files. The override now checks for each engine's pin in that directory before trying the relocated pin in the same checkout. Legacy matching follows filesystem traversal and casing rules. [Development overrides](../architecture.md#development-overrides)
+
+## 2026-11-24 install-time lookup decision
+
+Resolve the pin at each package install. Give an existing explicit pin its original Foundation path semantics. Try the relocated pin only when the original pin is missing at a recognized legacy path in that checkout. With no STT override, read the selected checkout's current layout. Keep the original override URL or default checkout in `Tools` so file changes and symlink retargets can take effect between installs.
+
+Exercise checkout changes in both directions with the same `Tools` instance. Use a fake `uv` to verify the constraint filename, working directory and STT hash flag. Cover relative overrides whose original path and raw symlink traversal would reach different checkouts.
+
+The expanded fixture reported 17 failed assertions on the previous resolver. All 11 override tests passed with the install-time lookup, including both repository-built and explicit wheel runs.

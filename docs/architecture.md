@@ -66,18 +66,17 @@ built `.app` always uses its bundle.
 | `PIPECAT_TOOLBAR_WHEEL` | The TTS server wheel (used only if the file exists). |
 | `PIPECAT_TOOLBAR_CONSTRAINTS` | The TTS constraints file. This override applies only when `PIPECAT_TOOLBAR_WHEEL` points to an existing file. |
 | `PIPECAT_TOOLBAR_STT_CONSTRAINTS` | A folder of hash-pinned `stt-<engine>.txt` files. Defaults to `server-pins/stt/constraints/` in the selected or discovered toolbar checkout. Older toolbar checkouts use `constraints/`. A missing file allows an unbundled install to proceed unpinned. A bundled build refuses the install. |
-| `PIPECAT_TOOLBAR_REPO` | Selects a toolbar or TTS source checkout. When it names a TTS checkout, STT still uses pins from the discovered toolbar checkout if available. An empty value is treated as unset. A path with no checkout at or above it fails with `repositoryOverrideNotFound`. |
+| `PIPECAT_TOOLBAR_REPO` | Selects a toolbar or TTS source checkout. When it names a TTS checkout, STT uses pins from the discovered toolbar checkout if available. An empty value is treated as unset. A path with no checkout at or above it fails with `repositoryOverrideNotFound` when the app needs a repository wheel. |
 | `PIPECAT_TOOLBAR_E2E` | Set to `1` to run the end-to-end tests (real installs). |
 
-At each TTS package install, if an active constraints override points to a missing
-`constraints/tts.txt` in a current toolbar checkout, the app tries
-`server-pins/tts/constraints.txt` in that checkout. At each STT package install,
-the app checks the requested directory for the engine's pin first. If the pin is
-missing and the override names the checkout's old `constraints/` directory, it tries
-`server-pins/stt/constraints/` in the same checkout. A symlink or a non-directory at the
-old `constraints/` location disables relocation for both overrides. A TTS file override
-that names a symlink, even one with a missing target, or uses a directory-style suffix also
-keeps its explicit path.
+Each package install checks the original override first. If a TTS override names a
+missing `constraints/tts.txt` in a current toolbar checkout, the app tries
+`server-pins/tts/constraints.txt` there. If an STT override names that checkout's old
+`constraints/` directory and the engine pin is missing, the app tries
+`server-pins/stt/constraints/` there. A symlink or a non-directory at the old
+`constraints/` location keeps the explicit path. A TTS file override also keeps its
+explicit path when it names a symlink or uses a directory-style suffix. With the STT
+override unset, the app checks the selected checkout's layout again at each install.
 
 ## Runtimes
 

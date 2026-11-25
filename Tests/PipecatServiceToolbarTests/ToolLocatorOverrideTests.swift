@@ -100,6 +100,15 @@ import Testing
             #expect(built.constraints?.path == paths.cacheDir.appending(path: "dev-wheel/constraints.txt").path)
             #expect(try built.constraints(for: Service.whisper.info)?.path == currentPin.path)
         }
+
+        let migratedPin = legacy.appending(path: "server-pins/stt/constraints/stt-whisper.txt")
+        try fm.createDirectory(at: migratedPin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createDirectory(at: legacy.appending(path: "server-pins/tts"), withIntermediateDirectories: true)
+        try Data().write(to: migratedPin)
+        try Data().write(to: legacy.appending(path: "server-pins/tts/wheel.json"))
+        try fm.removeItem(at: legacy.appending(path: "artifacts/tts.json"))
+        try fm.removeItem(at: pin)
+        #expect(try tools.constraints(for: Service.whisper.info)?.path == migratedPin.path)
     }
 
     @Test func checkoutLocalPinOverridesFollowTheMoveOnlyWhenMissing() async throws {
@@ -203,10 +212,12 @@ import Testing
         let originalWorkingDirectory = try #require(originalLog.split(separator: "\n").first)
         #expect(URL(filePath: String(originalWorkingDirectory)).resolvingSymlinksInPath().path
             == oldDirectory.resolvingSymlinksInPath().path)
+        try Data("{}".utf8).write(to: tts.appending(path: "server-pins/tts/wheel.json"))
+        let withOriginalPin = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
+        #expect(try withOriginalPin.constraints(for: Service.tone.info)?.path == traversedTTSPin.path)
         try fm.removeItem(at: oldDirectory)
 
         // With the marker present, both migrated overrides follow the symlink to its physical checkout.
-        try Data("{}".utf8).write(to: tts.appending(path: "server-pins/tts/wheel.json"))
         try Data().write(to: tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt"))
         let traversed = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
         #expect(try traversed.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
@@ -229,17 +240,44 @@ import Testing
             #expect(args.contains("--require-hashes") == (service == .whisper))
         }
 
-        // Construct relative overrides without changing the process-wide working directory.
+        // A relative override uses Foundation's original path, including its lexical parent traversal.
         let relative = try await ToolLocator.locate(bundle: noTools, environment: [
-            "PIPECAT_TOOLBAR_UV": "/usr/bin/true",
+            "PIPECAT_TOOLBAR_UV": uv.path,
             "PIPECAT_TOOLBAR_WHEEL": wheel.path,
             "PIPECAT_TOOLBAR_CONSTRAINTS": relativeDirectory + "/tts.txt",
             "PIPECAT_TOOLBAR_STT_CONSTRAINTS": relativeDirectory,
         ], paths: paths)
         #expect(try relative.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
-            == tts.appending(path: "server-pins/tts/constraints.txt").resolvingSymlinksInPath().path)
+            == newTTSPin.resolvingSymlinksInPath().path)
         #expect(try relative.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
-            == tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt").resolvingSymlinksInPath().path)
+            == newSTTPin.resolvingSymlinksInPath().path)
+
+        try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
+        try Data().write(to: oldTTSPin)
+        try Data().write(to: oldSTTPin)
+        let relativeManager = EnvironmentManager(paths: paths, tools: relative)
+        for (service, pin): (Service, URL) in [(.tone, oldTTSPin), (.whisper, oldSTTPin)] {
+            #expect(try relative.constraints(for: service.info)?.path == pin.path)
+            try await VariantTests.fakeEnvironment(service, relativeManager, paths)
+            try await relativeManager.install(service, mode: .packages).consume { _ in }
+            let args = try String(contentsOf: uvArgs, encoding: .utf8).split(separator: "\n")
+            #expect(args.contains("--require-hashes") == (service == .whisper))
+            #expect(args.contains(Substring(pin.lastPathComponent)))
+            let cwd = try #require(args.first)
+            #expect(URL(filePath: String(cwd)).resolvingSymlinksInPath().path
+                == oldDirectory.resolvingSymlinksInPath().path)
+        }
+        try fm.removeItem(at: oldDirectory)
+
+        // The absolute spelling follows the live symlink when a relocated pin is needed.
+        let toolbarChild = toolbar.appending(path: "child")
+        try fm.createDirectory(at: toolbarChild, withIntermediateDirectories: false)
+        try fm.removeItem(at: link)
+        try fm.createSymbolicLink(at: link, withDestinationURL: toolbarChild)
+        #expect(try traversed.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
+            == newTTSPin.resolvingSymlinksInPath().path)
+        #expect(try traversed.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
+            == newSTTPin.resolvingSymlinksInPath().path)
 
         try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
         try Data().write(to: oldDirectory.appending(path: ".DS_Store"))
@@ -329,10 +367,11 @@ import Testing
         try Data().write(to: newTTS)
         try Data().write(to: newSTT)
 
-        func locate(tts: String? = nil, stt: String? = nil) async throws -> Tools {
+        func locate(tts: String? = nil, stt: String? = nil, repo: URL? = nil) async throws -> Tools {
             var environment = ["PIPECAT_TOOLBAR_UV": uv.path, "PIPECAT_TOOLBAR_WHEEL": wheel.path]
             environment["PIPECAT_TOOLBAR_CONSTRAINTS"] = tts
             environment["PIPECAT_TOOLBAR_STT_CONSTRAINTS"] = stt
+            environment["PIPECAT_TOOLBAR_REPO"] = repo?.path
             return try await ToolLocator.locate(bundle: bundle, environment: environment, paths: paths)
         }
 
@@ -360,9 +399,11 @@ import Testing
         }
 
         let launchedAfterMove = try await locate(tts: oldTTS.path, stt: old.path)
+        let defaultAfterMove = try await locate(repo: toolbar)
         #expect(launchedAfterMove.sttConstraints?.path == old.path)
         try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
         try await checkInstall(.tone, launchedAfterMove, pin: newTTS)
+        try await checkInstall(.whisper, defaultAfterMove, pin: newSTT)
         let child = old.appending(path: "local")
         try fm.createDirectory(at: child, withIntermediateDirectories: true)
         let traversed = try await locate(tts: child.path + "/../tts.txt", stt: child.path + "/..")
@@ -382,6 +423,10 @@ import Testing
         try fm.createDirectory(at: legacyManifest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data().write(to: legacyManifest)
         let launchedOnLegacy = try await locate(tts: oldTTS.path, stt: old.path)
+        let defaultOnLegacy = try await locate(repo: toolbar)
+        for tools in [defaultAfterMove, defaultOnLegacy] {
+            try await checkInstall(.whisper, tools, pin: oldSTT)
+        }
         for tools in [launchedOnLegacy, launchedAfterMove, traversed] {
             try await checkInstall(.whisper, tools, pin: oldSTT)
             try await checkInstall(.tone, tools, pin: oldTTS)
@@ -391,9 +436,12 @@ import Testing
         try Data().write(to: manifest)
         try Data().write(to: newSTT)
         try Data().write(to: newTTS)
-        for tools in [launchedOnLegacy, launchedAfterMove, traversed] {
+        for tools in [launchedOnLegacy, launchedAfterMove] {
             try await checkInstall(.whisper, tools, pin: newSTT)
             try await checkInstall(.tone, tools, pin: newTTS)
+        }
+        for tools in [defaultAfterMove, defaultOnLegacy] {
+            try await checkInstall(.whisper, tools, pin: newSTT)
         }
 
         let custom = root.appending(path: "custom pins")
@@ -455,11 +503,17 @@ import Testing
         try fm.createDirectory(at: otherNew, withIntermediateDirectories: true)
         try fm.createDirectory(at: otherManifest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data().write(to: otherManifest)
+        try Data().write(to: otherToolbar.appending(path: "server-pins/tts/constraints.txt"))
         try Data().write(to: otherNew.appending(path: "stt-whisper.txt"))
         try fm.removeItem(at: old)
         try fm.createSymbolicLink(at: old, withDestinationURL: otherOld)
         let throughCustom = try await locate(stt: old.path + "/local/..")
         try await checkInstall(.whisper, throughCustom, pin: nil)
+        try fm.removeItem(at: old)
+        try fm.createSymbolicLink(at: old, withDestinationURL: otherOld.appending(path: "local"))
+        let throughCustomChild = try await locate(tts: old.path + "/../tts.txt", stt: old.path + "/..")
+        try await checkInstall(.whisper, throughCustomChild, pin: nil)
+        #expect(throughCustomChild.constraints?.path == URL(filePath: old.path + "/../tts.txt").path)
     }
 
     @Test(arguments: [true, false, nil] as [Bool?])
