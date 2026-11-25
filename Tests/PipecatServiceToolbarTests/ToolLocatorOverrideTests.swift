@@ -191,7 +191,7 @@ import Testing
         let traversedDirectory = toolbar.appending(path: "linked-child/../constraints")
         let traversedTTSPin = traversedDirectory.appending(path: "tts.txt")
         let outside = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
-        #expect(outside.constraints?.path == traversedTTSPin.path)
+        #expect(outside.constraints?.path == newTTSPin.path)
         #expect(try outside.constraints(for: Service.whisper.info) == nil)
         try fm.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
         try Data().write(to: oldTTSPin)
@@ -217,16 +217,16 @@ import Testing
         #expect(try withOriginalPin.constraints(for: Service.tone.info)?.path == traversedTTSPin.path)
         try fm.removeItem(at: oldDirectory)
 
-        // With the marker present, both migrated overrides follow the symlink to its physical checkout.
+        // STT's original file probe follows the symlink. TTS's Process working directory is lexical.
         try Data().write(to: tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt"))
         let traversed = try await locate(ttsPin: traversedTTSPin, sttDirectory: traversedDirectory)
         #expect(try traversed.constraints(for: Service.tone.info)?.resolvingSymlinksInPath().path
-            == tts.appending(path: "server-pins/tts/constraints.txt").resolvingSymlinksInPath().path)
+            == newTTSPin.resolvingSymlinksInPath().path)
         #expect(try traversed.constraints(for: Service.whisper.info)?.resolvingSymlinksInPath().path
             == tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt").resolvingSymlinksInPath().path)
         let manager = EnvironmentManager(paths: paths, tools: traversed)
         for (service, pin): (Service, URL) in [
-            (.tone, tts.appending(path: "server-pins/tts/constraints.txt")),
+            (.tone, newTTSPin),
             (.whisper, tts.appending(path: "server-pins/stt/constraints/stt-whisper.txt")),
         ] {
             try await VariantTests.fakeEnvironment(service, manager, paths)
@@ -404,6 +404,15 @@ import Testing
         try await checkInstall(.whisper, launchedAfterMove, pin: newSTT)
         try await checkInstall(.tone, launchedAfterMove, pin: newTTS)
         try await checkInstall(.whisper, defaultAfterMove, pin: newSTT)
+        let throughRemovedDirectory = old.path + "/../constraints"
+        let throughMissingDirectory = toolbar.path + "/never-created/../constraints"
+        for directory in [throughRemovedDirectory, throughMissingDirectory] {
+            let tools = try await locate(tts: directory + "/tts.txt", stt: directory)
+            try await checkInstall(.tone, tools, pin: newTTS)
+            try await checkInstall(.whisper, tools, pin: directory == throughRemovedDirectory ? newSTT : nil)
+        }
+        let repeatedLegacyTraversal = try await locate(stt: old.path + "/../constraints/../constraints")
+        try await checkInstall(.whisper, repeatedLegacyTraversal, pin: newSTT)
         let child = old.appending(path: "local")
         try fm.createDirectory(at: child, withIntermediateDirectories: true)
         let traversed = try await locate(tts: child.path + "/../tts.txt", stt: child.path + "/..")
@@ -505,6 +514,12 @@ import Testing
         try Data().write(to: otherManifest)
         try Data().write(to: otherToolbar.appending(path: "server-pins/tts/constraints.txt"))
         try Data().write(to: otherNew.appending(path: "stt-whisper.txt"))
+        let otherChild = otherToolbar.appending(path: "child")
+        try fm.createDirectory(at: otherChild, withIntermediateDirectories: false)
+        try fm.removeItem(at: old)
+        try fm.createSymbolicLink(at: old, withDestinationURL: otherChild)
+        let liveTraversal = try await locate(stt: old.path + "/../constraints")
+        try await checkInstall(.whisper, liveTraversal, pin: otherNew.appending(path: "stt-whisper.txt"))
         try fm.removeItem(at: old)
         try fm.createSymbolicLink(at: old, withDestinationURL: otherOld)
         let throughCustom = try await locate(stt: old.path + "/local/..")

@@ -78,6 +78,10 @@ missing `constraints/tts.txt` in a current toolbar checkout, the app tries
 explicit path when it names a symlink or uses a directory-style suffix. With the STT
 override unset, the app checks the selected checkout's layout again at each install.
 
+TTS checks the lexical working directory that Foundation passes to `uv`.
+STT follows filesystem traversal when probing for an engine pin. For relocation, it
+can skip a missing legacy `constraints/..` pair at a recognized checkout.
+
 ## Runtimes
 
 Each service has one of three `ServiceRuntime` values:

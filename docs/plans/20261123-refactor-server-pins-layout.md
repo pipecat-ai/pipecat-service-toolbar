@@ -71,3 +71,7 @@ Resolve the pin at each package install. Give an existing explicit pin its origi
 Exercise checkout changes in both directions with the same `Tools` instance. Use a fake `uv` to verify the constraint filename, working directory and STT hash flag. Cover relative overrides whose original path and raw symlink traversal would reach different checkouts.
 
 The expanded fixture reported 17 failed assertions on the previous resolver. All 11 override tests passed with the install-time lookup, including both repository-built and explicit wheel runs.
+
+The fresh reviewers found two ways a previously valid spelling can lose its pin after the move. TTS must use the lexical working directory used by its installer. STT can traverse past a removed legacy `constraints/..` pair after checking the checkout marker and confirming the directory entry is absent.
+
+The follow-up fixtures reported 11 failed assertions on the earlier resolver. All 11 override tests passed after the correction, including traversal of repeated removed legacy components and an existing directory symlink.
