@@ -205,7 +205,7 @@ public enum ToolLocator {
             // ending in a parent component is a custom path even if it lands in a legacy directory.
             let spelled = lexicalDirectory(requested)
             guard entryKind(at: spelled) == .directory,
-                  let physical = physicalDirectory(at: requested),
+                  let physical = physicalDirectoryAfterPinMove(requested),
                   physicalDirectory(at: spelled)?.path == physical.path else { return nil }
             checkout = physical.deletingLastPathComponent()
             directory = physical

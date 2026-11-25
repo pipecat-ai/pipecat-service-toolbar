@@ -331,7 +331,7 @@ import Testing
     }
 
     @Test func explicitPinsKeepTheirMeaningAcrossPackageInstalls() async throws {
-        let (toolbar, _, cleanup) = try Self.tree()
+        let (toolbar, inner, cleanup) = try Self.tree()
         defer { cleanup() }
         let root = toolbar.deletingLastPathComponent()
         let fm = FileManager.default
@@ -413,6 +413,16 @@ import Testing
         }
         let repeatedLegacyTraversal = try await locate(stt: old.path + "/../constraints/../constraints")
         try await checkInstall(.whisper, repeatedLegacyTraversal, pin: newSTT)
+        let innerChild = inner.appending(path: "constraints/local")
+        let innerPin = inner.appending(path: "server-pins/stt/constraints/stt-whisper.txt")
+        let innerManifest = inner.appending(path: "server-pins/tts/wheel.json")
+        for dir in [innerChild, innerPin.deletingLastPathComponent(), innerManifest.deletingLastPathComponent()] {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        try Data().write(to: innerPin)
+        try Data().write(to: innerManifest)
+        let terminalTraversal = try await locate(stt: old.path + "/../../" + inner.lastPathComponent + "/constraints/local/..")
+        try await checkInstall(.whisper, terminalTraversal, pin: innerPin)
         let child = old.appending(path: "local")
         try fm.createDirectory(at: child, withIntermediateDirectories: true)
         let traversed = try await locate(tts: child.path + "/../tts.txt", stt: child.path + "/..")
